@@ -1,0 +1,22 @@
+# Use your Docker image from Docker Hub
+image: anvarxadja35/solana-sniper-bot:latest
+
+stages:
+  - test
+  - deploy
+
+# Run tests and linting
+test-job:
+  stage: test
+  script:
+    - npm run lint
+    - npm test
+
+# Simple deployment
+deploy-job:
+  stage: deploy
+  script:
+    - echo "Add your deployment commands here"
+  only:
+    - main
+  when: manual
