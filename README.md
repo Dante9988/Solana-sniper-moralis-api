@@ -1,93 +1,85 @@
-# Solana-sniper-bot
+This repository contains all the code "as is", following the "Solana Sniper Trading Bot in TypeScript"
 
+Part 1: Snipe New Tokens from Raydium LP
 
+Part 2: Track and sell tokens (SL/TP)
 
-## Getting started
+## Project Description
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+The Solana Token Sniper is a Node.js project built with TypeScript, designed to automate the buying and selling of tokens on the Solana blockchain. This script is configured to detect the creation of new liquidity pools and execute token purchases automatically.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+With customizable parameters, you can tailor the strategy to suit your needs. The primary goal of this project is to educate users about the essential components required to develop a simple token sniper, offering insights into its functionality and implementation!
 
-## Add your files
+### Features
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+- Token Sniper for Raydium for the Solana blockchain
+- Rug check using a third party service rugcheck.xyz
+- Possibility to skip pump.fun tokens
+- Auto-buy with parameters for amount, slippage and priority
+- Possibility to set own RPC nodes
+- Track and store tokens in local database
+- Auto-sell feature using Stop Loss and Take Profit
+- Utils: Solana Wallet (keypair) creator
 
-```
-cd existing_repo
-git remote add origin https://gitlab.com/xadja35/solana-sniper-bot.git
-git branch -M main
-git push -uf origin main
-```
+### Prerequisites, Installation and Usage Instructions
 
-## Integrate with your tools
+1. Ensure [Node.js](https://nodejs.org/en) is installed on your computer.
+2. Clone the repository to your local machine.
+3. Navigate to the project folder and run the following command to install all dependencies: "npm i"
+4. To start the sniper, run: "npm run dev"
+5. To start the tracker, run: "npm run tracker"
+6. Optional: To start the sniper and tracker after being compiled, run: "npm run start" and "npm run start:tracker"
 
-- [ ] [Set up project integrations](https://gitlab.com/xadja35/solana-sniper-bot/-/settings/integrations)
+### Update Log
 
-## Collaborate with your team
+- Added Dexscreener Tokens API as price source for tracker with option in config.
+- Added token wallet balance, an amount mismatch check before trying to sell TP or SL to prevent quoting fees.
+- Added .env validator to check if all .env variables are properly set
+- Add rugcheck option: Exclude LP from topholders
+- Change Metadata RCP request to local database lookup
+- Expanded Rug check
+- Added new token tracker for rug check duplicates functionality and meta data
+- Added Simulation Mode to skip the actual swap
+- Added logsUnsubscribe before subscribing to RPC logsSubscribe method
+- Improved fetchTransactionDetails() error handling
+- Updated fetchTransactionDetails() to use retry based on count instead of time
+- Process transaction asynchronously and add max concurrent transactions
+- Revert back to native punycode as libraries are identical.
+- Added patch-package dev dependency to apply patches/tr46+0.0.3.patch
+- Added punycode.js package to resolve [issue]
+- Added createSellTransaction() in transactions.ts to sell SL and TP tokens.
+- Added Retry logic for Swap Quote requests
+- Added Verbose loging option
+- Added tracker functionality in "src\tracker\index.ts".
+- Updated fetchAndSaveSwapDetails() in transactions.ts to use sqlite3.
+- Updated config.ts: Addded sell parameters
+- Added packages: luxon, sqlite, sqlite3
+- Added fetchAndSaveSwapDetails() in transactions.ts to track confirmed swaps.
+- Updated test.ts
+- Added JUP_HTTPS_PRICE_URI to .env.backup
+- Web3.js updated from 1.95.8 to 1.98.0
+- Initial Commit: Solana Sniper Bot
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+### Third Party documentation
 
-## Test and Deploy
+- [Helius RPC nodes](https://docs.helius.dev)
+- [Jupiter V6 Swap API](https://station.jup.ag/docs/apis/swap-api)
+- [Rugcheck API](https://api.rugcheck.xyz/swagger/index.html)
+- [Solana](https://solana.com/docs)
+- [Solscan](https://solscan.io)
 
-Use the built-in continuous integration in GitLab.
+### Disclaimer
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+The course videos accompanying this project are provided free of charge and are intended solely for educational purposes. This software does not guarantee profitability or financial success and is not designed to generate profitable trades.
 
-***
+You are solely responsible for your own financial decisions. Before making any trades or investments, it is strongly recommended that you consult with a qualified financial professional.
 
-# Editing this README
+By using this software, you acknowledge that the creators and contributors of this project shall not be held liable for any financial losses, damages, or other consequences resulting from its use. Use the software at your own risk.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+The software (code in this repository) must not be used to engage in any form of market manipulation, fraud, illegal activities, or unethical behavior. The creators of this project do not endorse or support malicious use cases, such as front-running, exploiting contracts, or harming other users. Users are expected to adhere to ethical trading practices and comply with applicable laws and regulations.
 
-## Suggestions for a good README
+The software (code in this repository) is intended solely to facilitate learning and enhance the educational experience provided by the accompanying videos. Any other use is strictly prohibited.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+All trading involves risk and may not be suitable for all individuals. You should carefully consider your investment objectives, level of experience, and risk appetite before engaging in any trading activities. Past performance is not indicative of future results, and there is no guarantee that any trading strategy, algorithm or tool discussed will result in profits or avoid losses.
 
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+I am not a licensed financial advisor or a registered broker-dealer. The content shared is based solely on personal experience and knowledge and should not be relied upon as financial advice or a guarantee of success. Always conduct your own research and consult with a professional financial advisor before making any investment decisions.
