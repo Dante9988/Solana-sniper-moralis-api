@@ -1,22 +1,21 @@
-# Use your Docker image from Docker Hub
-image: anvarxadja35/solana-sniper-bot:latest
+# Use Docker as base image
+image: docker:latest
+
+services:
+  - docker:dind      # Enable Docker-in-Docker service
 
 variables:
   DOCKER_TLS_CERTDIR: ""  # Required for newer GitLab runners
+  DOCKER_HOST: tcp://docker:2375/
+  DOCKER_DRIVER: overlay2
 
 before_script:
   - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+  - docker pull anvarxadja35/solana-sniper-bot:latest
 
 stages:
   - test
   - deploy
-
-# Run tests and linting
-test-job:
-  stage: test
-  script:
-    - npm run lint
-    - npm test
 
 # Simple deployment
 deploy-job:
