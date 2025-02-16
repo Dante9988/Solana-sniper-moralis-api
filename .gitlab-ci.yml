@@ -1,6 +1,12 @@
 # Use your Docker image from Docker Hub
 image: anvarxadja35/solana-sniper-bot:latest
 
+variables:
+  DOCKER_TLS_CERTDIR: ""  # Required for newer GitLab runners
+
+before_script:
+  - echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+
 stages:
   - test
   - deploy
