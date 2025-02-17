@@ -83,21 +83,22 @@ export const config = {
     allow_freeze_authority: false, // The freeze authority is the address that can freeze token transfers, effectively locking up funds. Strongly Advised to set to false
     allow_rugged: false,
     // Critical
-    allow_mutable: true,
+    allow_mutable: false, // Changed to false to prevent rug pulls
     block_returning_token_names: true,
     block_returning_token_creators: true,
     block_symbols: ["XXX"],
     block_names: ["XXX"],
-    allow_insider_topholders: true, // Allow insider accounts to be part of the topholders
-    max_alowed_pct_topholders: 30, // Max allowed percentage an individual topholder might hold
+    allow_insider_topholders: false, // Allow insider accounts to be part of the topholders // changed to false to prevent rug pulls
+    max_alowed_pct_topholders: 20, // Max allowed percentage an individual topholder might hold
     exclude_lp_from_topholders: true, // If true, Liquidity Pools will not be seen as top holders
     // Warning
     min_total_markets: 1,
     min_total_lp_providers: 1,
-    min_total_market_Liquidity: 7000,
+    min_total_market_Liquidity: 10000,
     // Misc
     ignore_pump_fun: false,
-    max_score: 5000, // Set to 0 to ignore
+    max_score: 3000, // Set to 0 to ignore
+    min_holder_count: 100, // New: minimum number of holders
     legacy_not_allowed: [
       //"Low Liquidity",
       "Freeze Authority still enabled",
@@ -105,9 +106,9 @@ export const config = {
       "High holder concentration",
       "Freeze Authority still enabled",
       "Large Amount of LP Unlocked",
-      //"Low Liquidity",
-      //"Copycat token",
-      //"Low amount of LP Providers",
+      "Low Liquidity",
+      "Copycat token",
+      "Low amount of LP Providers",
     ],
   },
 };

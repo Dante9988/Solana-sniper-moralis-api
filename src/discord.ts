@@ -1,8 +1,14 @@
 import { Client, TextChannel, Message, GatewayIntentBits } from 'discord.js';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import { PublicKey, Connection } from '@solana/web3.js';
+import { getMint } from '@solana/spl-token';
+import { CallStatsAnalyzer } from './callStats';
 
 dotenv.config();
+
+// Create connection instance
+const connection = new Connection(process.env.HELIUS_HTTPS_URI || 'https://api.mainnet-beta.solana.com');
 
 const client = new Client({
     intents: [
@@ -44,7 +50,6 @@ interface TokenData {
     marketCap?: string;
     liquidity?: string;
     volume?: string;
-    pair?: string;
 }
 
 function formatPrice(price: string | number | undefined): string {
@@ -70,18 +75,27 @@ function formatPrice(price: string | number | undefined): string {
 
 async function fetchTokenData(tokenMint: string): Promise<TokenData> {
     try {
-        const response = await axios.get(
-            `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`
-        );
+        // Get all necessary data in parallel
+        const [solPrice, totalSupply, tokenData, liquidity, volume] = await Promise.all([
+            getSolPrice(),
+            getTokenTotalSupply(tokenMint),
+            getTokenPriceFromJupiter(tokenMint),
+            getTokenLiquidity(tokenMint),
+            getTokenVolumeAndLiquidity(tokenMint)
+        ]);
 
-        const pair = response.data?.pairs?.[0];
-        if (pair) {
+        if (tokenData.priceInSol > 0) {
+            // Calculate token price in USD (token/SOL ratio * SOL price in USD)
+            const priceInUsd = tokenData.priceInSol * solPrice;
+            
+            // Calculate market cap
+            const marketCap = priceInUsd * totalSupply;
+
             return {
-                price: formatPrice(pair.priceUsd),
-                marketCap: pair.fdv ? `$${Number(pair.fdv).toLocaleString()}` : 'Unknown',
-                liquidity: pair.liquidity?.usd ? `$${Number(pair.liquidity.usd).toLocaleString()}` : 'Unknown',
-                volume: pair.volume?.h24 ? `$${Number(pair.volume.h24).toLocaleString()}` : 'Unknown',
-                pair: pair.pairAddress || 'Unknown'
+                price: formatPrice(priceInUsd),
+                marketCap: marketCap ? `$${marketCap.toLocaleString()}` : 'Unknown',
+                liquidity: liquidity || 'failed to get liquidity',
+                volume: volume.volume24h || 'failed to get volume'
             };
         }
         
@@ -91,6 +105,65 @@ async function fetchTokenData(tokenMint: string): Promise<TokenData> {
         return {};
     }
 }
+
+async function getTokenVolumeAndLiquidity(tokenMint: string): Promise<{volume1h?: string, volume24h?: string, liquidity?: string}> {
+    try {
+        const response = await axios.get(
+            `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`
+        );
+
+        const pair = response.data?.pairs?.[0];
+        return {
+            volume1h: pair?.volume?.h1 ? `$${Number(pair.volume.h1).toLocaleString()}` : 'Unknown',
+            volume24h: pair?.volume?.h24 ? `$${Number(pair.volume.h24).toLocaleString()}` : 'Unknown',
+            liquidity: pair?.liquidity?.usd ? `$${Number(pair.liquidity.usd).toLocaleString()}` : 'Unknown'
+        };
+    } catch (error) {
+        console.error('Error fetching token data from DexScreener:', error);
+        return {};
+    }
+}
+
+async function getTokenTotalSupply(tokenMint: string): Promise<number> {
+    try {
+        const mint = await getMint(
+            connection,
+            new PublicKey(tokenMint)
+        );
+        
+        // Calculate total supply considering decimals
+        const totalSupply = Number(mint.supply) / Math.pow(10, mint.decimals);
+        
+        return totalSupply;
+    } catch (error) {
+        console.error('Error fetching token supply:', error);
+        return 0;
+    }
+}
+
+// async function fetchTokenData(tokenMint: string): Promise<TokenData> {
+//     try {
+//         const response = await axios.get(
+//             `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`
+//         );
+
+//         const pair = response.data?.pairs?.[0];
+//         if (pair) {
+//             return {
+//                 price: formatPrice(pair.priceUsd),
+//                 marketCap: pair.fdv ? `$${Number(pair.fdv).toLocaleString()}` : 'Unknown',
+//                 liquidity: pair.liquidity?.usd ? `$${Number(pair.liquidity.usd).toLocaleString()}` : 'Unknown',
+//                 volume: pair.volume?.h24 ? `$${Number(pair.volume.h24).toLocaleString()}` : 'Unknown',
+//                 pair: pair.pairAddress || 'Unknown'
+//             };
+//         }
+        
+//         return {};
+//     } catch (error) {
+//         console.error('Error fetching token data:', error);
+//         return {};
+//     }
+// }
 
 interface TrenchBundleData {
     ticker?: string;
@@ -124,6 +197,78 @@ async function fetchTrenchData(tokenMint: string): Promise<TrenchBundleData> {
         console.error('Error fetching Trench data:', error);
         return {};
     }
+}
+
+async function getSolPrice(): Promise<number> {
+    try {
+        const response = await axios.get(
+            'https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112'
+        );
+        
+        const pair = response.data?.pairs?.[0];
+        if (pair?.priceUsd) {
+            return Number(pair.priceUsd);
+        }
+        
+        return 0;
+    } catch (error) {
+        console.error('Error fetching SOL price from DexScreener:', error);
+        return 0;
+    }
+}
+
+async function getTokenLiquidity(tokenMint: string): Promise<string> {
+    try {
+        const response = await axios.get(
+            `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`
+        );
+
+        const pair = response.data?.pairs?.[0];
+        if (pair?.liquidity?.usd) {
+            return `$${Number(pair.liquidity.usd).toLocaleString()}`;
+        }
+        
+        return 'Unknown';
+    } catch (error) {
+        console.error('Error fetching token liquidity from DexScreener:', error);
+        return 'Unknown';
+    }
+}
+
+async function getTokenPriceFromJupiter(tokenMint: string): Promise<{priceInSol: number, liquidity?: string}> {
+    try {
+        const response = await axios.get(`https://api.jup.ag/price/v2`, {
+            params: {
+                ids: tokenMint,
+                vsToken: 'So11111111111111111111111111111111111111112' // SOL mint address
+            }
+        });
+        
+        const priceData = response.data?.data?.[tokenMint];
+        if (!priceData) {
+            throw new Error('No price data found for token');
+        }
+
+        return {
+            priceInSol: priceData.price || 0,
+            liquidity: 'From Jupiter' // You can format this if needed
+        };
+    } catch (error) {
+        console.error('Error getting token price from Jupiter:', error);
+        return { priceInSol: 0 };
+    }
+}
+
+function getEasternTime(): string {
+    const options: Intl.DateTimeFormatOptions = {
+        timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+    };
+
+    return new Date().toLocaleString('en-US', options);
 }
 
 export async function sendTokenAlert(tokenMint: string) {
@@ -172,7 +317,7 @@ export async function sendTokenAlert(tokenMint: string) {
 ⚠️ *Always DYOR (Do Your Own Research)*
             `,
             footer: {
-                text: '🕒 Time: ' + new Date().toLocaleString()
+                text: `🕒 Time: ${getEasternTime()} EST`
             }
         }]
     };
@@ -235,7 +380,7 @@ client.on('messageCreate', async (message: Message) => {
 ⚠️ *Always DYOR (Do Your Own Research)*
                         `,
                         footer: {
-                            text: '🕒 Time: ' + new Date().toLocaleString()
+                            text: `🕒 Time: ${getEasternTime()} EST`
                         }
                     }]
                 };
@@ -255,6 +400,21 @@ client.on('messageCreate', async (message: Message) => {
 
 client.on('error', (error) => {
     console.error('Discord client error:', error);
+});
+
+client.on('messageCreate', async (message) => {
+    if (message.content.toLowerCase() === '!callstats') {
+        try {
+            const analyzer = new CallStatsAnalyzer(message.channel as TextChannel);
+            const stats = await analyzer.getStatistics();
+            const embed = analyzer.createStatsEmbed(stats);
+            
+            await message.reply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Error handling callstats command:', error);
+            await message.reply('Error fetching call statistics. Please try again later.');
+        }
+    }
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN)
