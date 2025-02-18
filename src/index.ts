@@ -69,7 +69,7 @@ app.get('/metrics', (req, res) => {
     res.json(metrics);
 });
 
-const metricsPort = process.env.METRICS_PORT || 3000;
+const metricsPort = process.env.METRICS_PORT || 3030;
 app.listen(metricsPort, () => {
     console.log(`📊 Metrics server running on port ${metricsPort}`);
 });
