@@ -164,7 +164,7 @@ const withGayser = (
 
       // Fetch transaction details after finalization
       console.log("🔍 Fetching transaction details...");
-      const data = await fetchTransactionDetails(signature);
+      const data = await fetchTransactionDetails(signature, connection);
       if (!data) {
         console.log("⛔ Transaction aborted. No data returned.");
         console.log("🟢 Resuming looking for new tokens...\n");

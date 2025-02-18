@@ -1,10 +1,13 @@
 import { selectAllTokens } from "./tracker/db";
 import { fetchTransactionDetails, createSwapTransaction, getRugCheckConfirmed, fetchAndSaveSwapDetails, createSellTransaction } from "./transactions";
+import { Connection } from "@solana/web3.js";
+
+const connection = new Connection(process.env.HELIUS_HTTPS_URI || "");
 
 (async () => {
   const testId = null;
   if (testId) {
-    const tx = await fetchTransactionDetails(testId);
+    const tx = await fetchTransactionDetails(testId, connection);
     console.log(tx);
   }
 })();

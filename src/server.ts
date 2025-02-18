@@ -14,6 +14,7 @@ import {
   fetchAndSaveSwapDetails 
 } from './transactions';
 import player from "play-sound";
+import { Connection } from "@solana/web3.js";
 
 const HOST = "0.0.0.0";
 const PORT = 9090;
@@ -30,6 +31,7 @@ let activeWS: WebSocket | null = null;
 let isListening = false;
 let activeTransactions = 0;
 const MAX_CONCURRENT = config.tx.concurrent_transactions;
+const connection = new Connection(process.env.HELIUS_HTTPS_URI || "");
 
 // WebSocket helper functions
 function sendSubscribeRequest(ws: WebSocket): void {
@@ -55,7 +57,7 @@ async function processTransaction(signature: string): Promise<void> {
   console.log("🔎 New Liquidity Pool found.");
   console.log("🔃 Fetching transaction details ...");
 
-  const data = await fetchTransactionDetails(signature);
+  const data = await fetchTransactionDetails(signature, connection);
   if (!data) {
     console.log("⛔ Transaction aborted. No data returned.");
     console.log("🟢 Resuming looking for new tokens...\n");
