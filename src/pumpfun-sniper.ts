@@ -1,320 +1,213 @@
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import base58 from "bs58";
-import dotnet from "dotenv";
-import { PUMP_FUN_PROGRAM } from "./constants";
-import { convertHttpToWebSocket, formatDate } from "./utils/commonFunc";
-import buyToken from "./pumputils/utils/buyToken";
-import { Metaplex } from "@metaplex-foundation/js";
 import WebSocket from "ws";
-import { WebSocketRequest } from "./types";
-import { fetchTransactionDetails, getRugCheckConfirmed } from "./transactions";
+import axios from "axios";
+import base58 from "bs58";
+import dotenv from "dotenv";
+import { Metaplex } from "@metaplex-foundation/js";
+import { PUMP_FUN_PROGRAM } from "./constants";  // Ensure this contains "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+import { fetchTokenMintFromTx, getRugCheckConfirmed } from "./transactions";
 
-dotnet.config();
+dotenv.config();
 
-// Environment variables and setup
-const rpc = process.env.RPC_ENDPOINT;
-console.log("🚀 RPC:", rpc);
+const RPC_ENDPOINT = process.env.RPC_ENDPOINT || "";
+const connection = new Connection(RPC_ENDPOINT, "confirmed");
 
-const payer = process.env.PRIVATE_KEY;
-console.log("🚀 Private Key:", `${payer?.slice(0, 6)}...`);
+// Processing queue
+let isProcessing = false;
+const tokenQueue: string[] = [];
 
-const isDevMode = process.env.DEV_MODE === "true";
-const devwallet = process.env.DEV_WALLET_ADDRESS;
-if (isDevMode) {
-  console.log("🚀 Dev Wallet:", devwallet);
-}
-
-const isTickerMode = process.env.TICKER_MODE === "true";
-const tokenTicker = process.env.TOKEN_TICKER;
-if (isTickerMode) {
-  console.log("🚀 Token Ticker:", tokenTicker);
-}
-
-const buyamount = process.env.BUY_AMOUNT;
-console.log("🚀 Buy Amount:", buyamount);
-
-const isGeyser = process.env.IS_GEYSER === "true";
-
-// Token metadata helper
-const getTokenMetadata = async (
-  mintAddress: string,
-  connection: Connection
-) => {
-  try {
-    const metaplex = Metaplex.make(connection);
-    const mintPublicKey = new PublicKey(mintAddress);
-    const nft = await metaplex
-      .nfts()
-      .findByMint({ mintAddress: mintPublicKey });
-    return nft;
-  } catch (error) {
-    return false;
-  }
-};
-
-async function waitForFinalization(connection: Connection, signature: string): Promise<boolean> {
+async function processToken(signature: string) {
     try {
-        console.log("⏳ Waiting for transaction finalization (32 blocks)...");
-        const result = await connection.confirmTransaction(
-            signature,
-            "finalized"  // Wait for 32 blocks
-        );
+        console.log(`\n🎯 Processing Token Tx: https://solscan.io/tx/${signature}`);
         
-        if (result.value.err) {
-            console.log("❌ Transaction failed:", result.value.err);
-            return false;
+        // Fetch transaction details
+        console.log("🔎 Fetching transaction details...");
+        const txData = await fetchTokenMintFromTx(signature, connection);
+        if (!txData || !txData.tokenMint) {
+            console.log("⛔ Could not fetch token details. Skipping...");
+            return;
         }
 
-        // Double check finalization status
-        const status = await connection.getSignatureStatus(signature, {
-            searchTransactionHistory: true,
-        });
+        console.log(`📌 Token Mint: ${txData.tokenMint}`);
 
-        if (status.value?.confirmationStatus === 'finalized') {
-            console.log("✅ Transaction finalized!");
-            return true;
-        } else {
-            console.log("⚠️ Transaction not finalized:", status.value?.confirmationStatus);
-            return false;
+        // Get Market Data
+        console.log("📊 Fetching Market Data...");
+        const marketData = await fetchTokenMarketData(txData.tokenMint);
+        if (!marketData) {
+            console.log("⛔ Market data unavailable. Skipping...");
+            return;
         }
+
+        // Perform Rug Check
+        console.log("🔍 Performing Rug Check...");
+        const rugCheckPassed = await getRugCheckConfirmed(txData.tokenMint);
+        if (!rugCheckPassed) {
+            console.log("🚨 Rug check failed! Skipping...");
+            return;
+        }
+
+        console.log(`\n✅ SAFE TOKEN FOUND:
+• Mint: ${txData.tokenMint}
+• Market Cap: $${marketData.marketCap}
+• Supply: ${marketData.totalSupply}
+• Liquidity: $${marketData.liquidityUSD}
+• Price: $${marketData.priceUSD}
+• Bonding Complete: ${marketData.complete}
+
+🚀 Trading Links:
+• Pump.fun: https://pump.fun/${txData.tokenMint}
+• GMGN: https://gmgn.ai/sol/token/${txData.tokenMint}
+• BullX: https://neo.bullx.io/terminal?chainId=1399811149&address=${txData.tokenMint}
+• Raydium: https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${txData.tokenMint}`);
+
     } catch (error) {
-        console.error("❌ Error waiting for finalization:", error);
-        return false;
+        console.error("💥 Error processing token:", error);
     }
 }
 
-const withGayser = (
-  rpcEndPoint: string,
-  payer: string,
-  solIn: number,
-  devAddr: string
-) => {
-  const GEYSER_RPC = process.env.GEYSER_RPC;
-  if (!GEYSER_RPC) return console.log("Geyser RPC is not provided!");
-  
-  const ws = new WebSocket(GEYSER_RPC);
-  const connection = new Connection(rpcEndPoint, {
-    wsEndpoint: convertHttpToWebSocket(rpcEndPoint),
-    commitment: "confirmed",
-  });
-  const payerKeypair = Keypair.fromSecretKey(base58.decode(payer));
-
-  function sendRequest(ws: WebSocket): void {
-    const request: WebSocketRequest = {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "logsSubscribe",
-      params: [
-        {
-          mentions: [PUMP_FUN_PROGRAM], // Listening for logs from Pump.fun program
-        },
-        {
-          commitment: "processed",
-        },
-      ],
-    };
-    ws.send(JSON.stringify(request));
-  }
-  
-
-  let init = false;
-  ws.on("open", () => {
-    // Subscribe
-    if (ws) sendRequest(ws); // Send a request once the WebSocket is open
-    console.log("\n🔓 WebSocket is open and listening.");
-    init = true;
-  });
-
-  ws.on("message", async function incoming(data) {
-    const messageStr = data.toString("utf8");
-    try {
-      const messageObj = JSON.parse(messageStr);
-  
-      // Confirm Subscription
-      if (messageObj.result !== undefined) {
-        console.log("✅ Subscription confirmed, ID:", messageObj.result);
+async function processNextToken() {
+    if (tokenQueue.length === 0 || isProcessing) {
         return;
-      }
-  
-      // Check for logs
-      if (!messageObj.params?.result?.value?.logs) {
-        console.log("⚠️ No logs found in transaction");
-        return;
-      }
-  
-      const logs = messageObj.params.result.value.logs;
-      
-      // Detect New Token Creation
-      if (!logs.some((log: string) => log.includes("Program log: Instruction: InitializeMint2"))) {
-        return;
-      }
-  
-      const signature = messageObj.params.result.value.signature;
-      console.log("=============================================");
-      console.log("🎯 New Mint Event Detected!");
-      console.log(`🔍 Transaction: https://solscan.io/tx/${signature}`);
-
-      // Wait for transaction finalization
-      const isFinalized = await waitForFinalization(connection, signature);
-      if (!isFinalized) {
-        console.log("⛔ Transaction not finalized, skipping...");
-        console.log("🟢 Resuming looking for new tokens...\n");
-        return;
-      }
-
-      // Fetch transaction details after finalization
-      console.log("🔍 Fetching transaction details...");
-      const data = await fetchTransactionDetails(signature, connection);
-      if (!data) {
-        console.log("⛔ Transaction aborted. No data returned.");
-        console.log("🟢 Resuming looking for new tokens...\n");
-        return;
-      }
-
-      // Ensure required data is available
-      if (!data.solMint || !data.tokenMint) {
-        console.log("⛔ Missing token data.");
-        return;
-      }
-
-      console.log(`🎯 Token Found:`);
-      console.log(`• Token Address: ${data.tokenMint}`);
-      console.log(`• Trading Links:`);
-      console.log(`  • 👽 GMGN: https://gmgn.ai/sol/token/${data.tokenMint}`);
-      console.log(`  • 😈 BullX: https://neo.bullx.io/terminal?chainId=1399811149&address=${data.tokenMint}`);
-      console.log(`  • 🌊 Raydium: https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${data.tokenMint}`);
-
-      // Check Rug Check
-      console.log("🔍 Running rug check...");
-      const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);
-      if (!isRugCheckPassed) {
-        console.log("🚫 Rug Check not passed! Transaction aborted.");
-        console.log("🟢 Resuming looking for new tokens...\n");
-        return;
-      }
-
-      console.log("✅ Rug Check passed!");
-
-      // Add your buying logic here if needed
-      // const sig = await buyToken(new PublicKey(data.tokenMint), connection, payerKeypair, solIn, 1);
-      
-      console.log("=============================================\n");
-
-    } catch (error) {
-      console.error("💥 Error processing message:", error instanceof Error ? error.message : "Unknown error");
     }
-  });
-  
 
-//   ws.on("message", async function incoming(data) {
-//     const messageStr = data.toString("utf8");
-//     try {
-//       const messageObj = JSON.parse(messageStr);
+    isProcessing = true;
+    const signature = tokenQueue.shift()!;
+    
+    await processToken(signature);
+    
+    isProcessing = false;
+    // Process next token if any
+    processNextToken();
+}
 
-//       // Handle subscription confirmation
-//       if (messageObj.result !== undefined) {
-//         console.log("✅ Subscription confirmed, ID:", messageObj.result);
-//         return;
-//       }
+// WebSocket setup
+const GEYSER_RPC = process.env.GEYSER_RPC || "";
+if (!GEYSER_RPC) throw new Error("Missing Geyser RPC!");
 
-//       // Skip if no params or result
-//       if (!messageObj.params?.result?.value?.logs) {
-//         return;
-//       }
+const ws = new WebSocket(GEYSER_RPC);
 
-//       const logs = messageObj.params.result.value.logs;
-      
-//       // We're only interested in mint creation
-//       if (!logs.some((log: any) => log.includes("Program log: Instruction: InitializeMint2"))) {
-//         return;
-//       }
+/**
+ * Listens for new token creations from Pump.fun.
+ */
+ws.on("open", () => {
+  console.log("🚀 Listening for new tokens on Pump.fun...");
+  const request = {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "logsSubscribe",
+    params: [
+      {
+        mentions: [PUMP_FUN_PROGRAM], // Listening for logs from Pump.fun program
+      },
+      {
+        commitment: "processed",
+      },
+    ],
+  };
+  ws.send(JSON.stringify(request));
+});
 
-//       const signature = messageObj.params.result.value.signature;
-//       const accountKeys = messageObj.params.result.value.transaction?.transaction?.message?.accountKeys;
-      
-//       if (!accountKeys) {
-//         console.log("No account keys found in transaction");
-//         return;
-//       }
+/**
+ * Handles new token creation events.
+ */
+ws.on("message", async (data) => {
+  try {
+    const message = JSON.parse(data.toString("utf8"));
 
-//       const dev = accountKeys[0].pubkey;
-//       const mint = accountKeys[1].pubkey;
+    if (message.result !== undefined) {
+      console.log("✅ Subscribed to Pump.fun!");
+      return;
+    }
 
-//       console.log(
-//         "🎯 New token creation detected => ",
-//         `https://solscan.io/tx/${signature}`,
-//         await formatDate()
-//       );
-      
-//       if (isDevMode) {
-//         console.log("Dev wallet => ", `https://solscan.io/address/${dev}`);
-//         if (dev !== devAddr) {
-//           console.log("Skipping: Not from target dev wallet");
-//           return;
-//         }
-//       }
+    const logs = message.params?.result?.value?.logs;
+    if (!logs || !logs.some((log: string) => log.includes("Program log: Instruction: InitializeMint2"))) {
+      return;
+    }
 
-//       if (isTickerMode) {
-//         if (!tokenTicker) {
-//           console.log("Token Ticker is not defined!");
-//           return;
-//         }
-//         const tokenInfo = await getTokenMetadata(mint.toString(), connection);
-//         if (!tokenInfo) {
-//           console.log("Could not fetch token metadata");
-//           return;
-//         }
-//         const isTarget = tokenInfo.symbol
-//           .toUpperCase()
-//           .includes(tokenTicker.toUpperCase());
-//         if (!isTarget) {
-//           console.log(`Skipping: Token symbol doesn't match ${tokenTicker}`);
-//           return;
-//         }
-//         console.log(`Found $${tokenInfo.symbol} token!`);
-//       }
+    const signature = message.params.result.value.signature;
+    tokenQueue.push(signature);
+    processNextToken();
 
-//       console.log(
-//         "🎯 Attempting to buy => ",
-//         `https://solscan.io/token/${mint.toString()}`
-//       );
-      
-//       const sig = await buyToken(new PublicKey(mint), connection, payerKeypair, solIn, 1);
-//       console.log('Buy Transaction => ', `https://solscan.io/tx/${sig}`);
-      
-//       if (sig) {
-//         console.log('🚀 Buy Success!!!');
-//         console.log('Try to sell on pumpfun: ', `https://pump.fun/${mint.toString()}`);
-//       }
-
-//     } catch (e) {
-//       if (e instanceof Error) {
-//         console.error("Error processing message:", {
-//           error: e.message,
-//           data: messageStr.slice(0, 200) + "..." // Log first 200 chars of message for debugging
-//         });
-//       }
-//     }
-//   });
-
-  ws.on("error", (err) => {
-    console.error("WebSocket error:", err);
-  });
-
-  ws.on("close", () => {
-    console.log("WebSocket connection closed, attempting to reconnect...");
-    setTimeout(() => withGayser(rpcEndPoint, payer, solIn, devAddr), 5000);
-  });
-};
-
-const main = () => {
-  if (!isGeyser) {
-    console.log("Please enable Geyser mode to use Pump.fun sniper!");
-    return;
+  } catch (error) {
+    console.error("💥 Error processing message:", error);
   }
-  
-  console.log("--------------- Pump.fun Sniper Started! ---------------\n");
-  withGayser(rpc!, payer!, Number(buyamount!), devwallet!);
-};
+});
 
-main();
+/**
+ * Fetches token market data from Pump.fun bonding curve
+ */
+async function fetchTokenMarketData(mintAddress: string) {
+  try {
+    // Get bonding curve PDA
+    const [bondingCurvePDA] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("bonding-curve"),
+        new PublicKey(mintAddress).toBuffer()
+      ],
+      new PublicKey(PUMP_FUN_PROGRAM)
+    );
+
+    // Fetch raw account data
+    const accountInfo = await connection.getAccountInfo(bondingCurvePDA);
+    if (!accountInfo) {
+      console.log("❌ No bonding curve account found.");
+      return null;
+    }
+
+    // First 8 bytes are discriminator, skip them when deserializing
+    const bondingCurveData = {
+      virtualTokenReserves: accountInfo.data.readBigUInt64LE(8),
+      virtualSolReserves: accountInfo.data.readBigUInt64LE(16),
+      realTokenReserves: accountInfo.data.readBigUInt64LE(24),
+      realSolReserves: accountInfo.data.readBigUInt64LE(32),
+      tokenTotalSupply: accountInfo.data.readBigUInt64LE(40),
+      complete: accountInfo.data.readUInt8(48) === 1
+    };
+
+    // Get SOL price for USD calculations
+    const solPrice = await getSolPrice();
+
+    // Calculate liquidity in SOL
+    const solLiquidity = Number(bondingCurveData.realSolReserves) / 1e9;
+    
+    // Calculate liquidity in USD
+    const liquidityUSD = solLiquidity * solPrice;
+
+    // Calculate virtual price from reserves
+    const virtualPrice = Number(bondingCurveData.virtualSolReserves) / 
+                        Number(bondingCurveData.virtualTokenReserves);
+    
+    // Calculate market cap
+    const totalSupply = Number(bondingCurveData.tokenTotalSupply);
+    const marketCapUSD = (totalSupply * virtualPrice * solPrice) / 1e9;
+
+    return {
+      marketCap: marketCapUSD.toFixed(2),
+      totalSupply: totalSupply,
+      liquidityUSD: liquidityUSD.toFixed(2),
+      priceUSD: ((virtualPrice * solPrice) / 1e9).toFixed(6),
+      complete: bondingCurveData.complete
+    };
+  } catch (error) {
+    console.error("❌ Error fetching market data:", error);
+    return null;
+  }
+}
+
+async function getSolPrice(): Promise<number> {
+  try {
+      const response = await axios.get(
+          'https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112'
+      );
+      
+      const pair = response.data?.pairs?.[0];
+      if (pair?.priceUsd) {
+          return Number(pair.priceUsd);
+      }
+      
+      return 0;
+  } catch (error) {
+      console.error('Error fetching SOL price from DexScreener:', error);
+      return 0;
+  }
+}
