@@ -1,6 +1,6 @@
 import { Client, TextChannel, EmbedBuilder, Message, MessageReaction } from 'discord.js';
 
-type MultiplierKey = '2x' | '3x' | '5x' | '10x' | '25x' | '50x' | '100x' | 'poop';
+type MultiplierKey = '2x' | '3x' | '5x' | '10x' | '25x' | '50x' | '100x' | 'poop' | 'stoploss';
 
 type MultiplierStats = {
     [key in MultiplierKey]: number;
@@ -15,8 +15,8 @@ interface CallStatistics extends MultiplierStats {
     '25x': number;
     '50x': number;
     '100x': number;
-    'poop': number;
-    'stoploss': number;
+    'poop': number;    // 💀 Actual rugs
+    'stoploss': number; // 🛑 Stop losses
 }
 
 export class CallStatsAnalyzer {
@@ -119,15 +119,16 @@ export class CallStatsAnalyzer {
                         `• 50x: ${stats['50x']} calls`,
                         `• 100x: ${stats['100x']} calls`,
                         `• 🛑 Stop Loss (-40%): ${stats.stoploss} calls`,
-                        `• 💩 Rugged (-100%): ${stats.poop} calls`
+                        `• 💀 Rugged (-100%): ${stats.poop} calls`
                     ].join('\n')
                 },
                 {
                     name: '📊 Performance Rates',
                     value: [
                         `✅ Profit Rate: ${profitRate}%`,
-                        `⚠️ Stop Loss Rate: ${stopLossRate}%`,
-                        `❌ Rug Rate: ${rugRate}%`
+                        `🛑 Stop Loss Rate: ${stopLossRate}%`,
+                        `💀 Rug Rate: ${rugRate}%`,
+                        `\n💡 Total Risk Rate: ${(parseFloat(stopLossRate) + parseFloat(rugRate)).toFixed(2)}%`
                     ].join('\n')
                 },
                 {

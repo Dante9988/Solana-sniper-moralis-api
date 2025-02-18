@@ -48,10 +48,10 @@ export const config = {
   },
   tx: {
     fetch_tx_max_retries: 10,
-    fetch_tx_initial_delay: 3000, // Initial delay before fetching LP creation transaction details (3 seconds)
+    fetch_tx_initial_delay: 1000, // Initial delay before fetching LP creation transaction details (3 seconds)
     swap_tx_initial_delay: 1000, // Initial delay before first buy (1 second)
     get_timeout: 10000, // Timeout for API requests
-    concurrent_transactions: 2, // Number of simultaneous transactions
+    concurrent_transactions: 5, // Number of simultaneous transactions
     retry_delay: 500, // Delay between retries (0.5 seconds)
   },
   swap: {
@@ -83,7 +83,7 @@ export const config = {
     allow_freeze_authority: false, // The freeze authority is the address that can freeze token transfers, effectively locking up funds. Strongly Advised to set to false
     allow_rugged: false,
     // Critical
-    allow_mutable: false, // Changed to false to prevent rug pulls
+    allow_mutable: true, // Changed to false to prevent rug pulls
     block_returning_token_names: true,
     block_returning_token_creators: true,
     block_symbols: ["XXX"],
@@ -92,13 +92,13 @@ export const config = {
     max_alowed_pct_topholders: 20, // Max allowed percentage an individual topholder might hold
     exclude_lp_from_topholders: true, // If true, Liquidity Pools will not be seen as top holders
     // Warning
-    min_total_markets: 1,
-    min_total_lp_providers: 1,
+    min_total_markets: 0,
+    min_total_lp_providers: 0,
     min_total_market_Liquidity: 10000,
     // Misc
     ignore_pump_fun: false,
     max_score: 3000, // Set to 0 to ignore
-    min_holder_count: 100, // New: minimum number of holders
+    
     legacy_not_allowed: [
       //"Low Liquidity",
       "Freeze Authority still enabled",
@@ -106,9 +106,9 @@ export const config = {
       "High holder concentration",
       "Freeze Authority still enabled",
       "Large Amount of LP Unlocked",
-      "Low Liquidity",
-      "Copycat token",
-      "Low amount of LP Providers",
+      //"Low Liquidity",
+      //"Copycat token",
+      //"Low amount of LP Providers",
     ],
   },
 };

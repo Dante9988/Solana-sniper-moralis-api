@@ -52,6 +52,37 @@ const getTokenMetadata = async (
   }
 };
 
+async function waitForFinalization(connection: Connection, signature: string): Promise<boolean> {
+    try {
+        console.log("⏳ Waiting for transaction finalization (32 blocks)...");
+        const result = await connection.confirmTransaction(
+            signature,
+            "finalized"  // Wait for 32 blocks
+        );
+        
+        if (result.value.err) {
+            console.log("❌ Transaction failed:", result.value.err);
+            return false;
+        }
+
+        // Double check finalization status
+        const status = await connection.getSignatureStatus(signature, {
+            searchTransactionHistory: true,
+        });
+
+        if (status.value?.confirmationStatus === 'finalized') {
+            console.log("✅ Transaction finalized!");
+            return true;
+        } else {
+            console.log("⚠️ Transaction not finalized:", status.value?.confirmationStatus);
+            return false;
+        }
+    } catch (error) {
+        console.error("❌ Error waiting for finalization:", error);
+        return false;
+    }
+}
+
 const withGayser = (
   rpcEndPoint: string,
   payer: string,
@@ -113,46 +144,64 @@ const withGayser = (
   
       const logs = messageObj.params.result.value.logs;
       
-      // Detect New Token Creation by Looking for InitializeMint2 Log
+      // Detect New Token Creation
       if (!logs.some((log: string) => log.includes("Program log: Instruction: InitializeMint2"))) {
-        //console.log("🚫 Not a new token creation event");
         return;
       }
   
-      console.log("🎯 New Mint Event Detected!");
-  
       const signature = messageObj.params.result.value.signature;
+      console.log("=============================================");
+      console.log("🎯 New Mint Event Detected!");
       console.log(`🔍 Transaction: https://solscan.io/tx/${signature}`);
+
+      // Wait for transaction finalization
+      const isFinalized = await waitForFinalization(connection, signature);
+      if (!isFinalized) {
+        console.log("⛔ Transaction not finalized, skipping...");
+        console.log("🟢 Resuming looking for new tokens...\n");
+        return;
+      }
+
+      // Fetch transaction details after finalization
       console.log("🔍 Fetching transaction details...");
+      const data = await fetchTransactionDetails(signature);
+      if (!data) {
+        console.log("⛔ Transaction aborted. No data returned.");
+        console.log("🟢 Resuming looking for new tokens...\n");
+        return;
+      }
+
+      // Ensure required data is available
+      if (!data.solMint || !data.tokenMint) {
+        console.log("⛔ Missing token data.");
+        return;
+      }
+
+      console.log(`🎯 Token Found:`);
+      console.log(`• Token Address: ${data.tokenMint}`);
+      console.log(`• Trading Links:`);
+      console.log(`  • 👽 GMGN: https://gmgn.ai/sol/token/${data.tokenMint}`);
+      console.log(`  • 😈 BullX: https://neo.bullx.io/terminal?chainId=1399811149&address=${data.tokenMint}`);
+      console.log(`  • 🌊 Raydium: https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${data.tokenMint}`);
+
+      // Check Rug Check
+      console.log("🔍 Running rug check...");
+      const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);
+      if (!isRugCheckPassed) {
+        console.log("🚫 Rug Check not passed! Transaction aborted.");
+        console.log("🟢 Resuming looking for new tokens...\n");
+        return;
+      }
+
+      console.log("✅ Rug Check passed!");
+
+      // Add your buying logic here if needed
+      // const sig = await buyToken(new PublicKey(data.tokenMint), connection, payerKeypair, solIn, 1);
+      
       console.log("=============================================\n");
 
-      // Fetch the transaction details
-    // const data = await fetchTransactionDetails(signature);
-    // if (!data) {
-    //     console.log("⛔ Transaction aborted. No data returned.");
-    //     console.log("🟢 Resuming looking for new tokens...\n");
-    //     return;
-    // }
-
-    // Ensure required data is available
-    // if (!data.solMint || !data.tokenMint) return;
-
-    //     console.log(`🚀 Token Mint Address: ${data.tokenMint}`);
-      
-    //     // Log BullX and GMGN URLs
-    //     console.log(`👽 GMGN: https://gmgn.ai/sol/token/${data.tokenMint}`);
-    //     console.log(`😈 BullX: https://neo.bullx.io/terminal?chainId=1399811149&address=${data.tokenMint}\n`);
-      
-    //     // Check Rug Check
-    //     const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);
-    //     if (!isRugCheckPassed) {
-    //         console.log("🚫 Rug Check not passed! Transaction aborted.");
-    //         console.log("🟢 Resuming looking for new tokens...\n");
-    //         return;
-    //     }
-
-    } catch (e) {
-      console.error("Error processing message:", e);
+    } catch (error) {
+      console.error("💥 Error processing message:", error instanceof Error ? error.message : "Unknown error");
     }
   });
   

@@ -49,7 +49,8 @@ interface TokenData {
     price?: string;
     marketCap?: string;
     liquidity?: string;
-    volume?: string;
+    volume1h?: string;
+    volume24h?: string;
 }
 
 function formatPrice(price: string | number | undefined): string {
@@ -73,35 +74,90 @@ function formatPrice(price: string | number | undefined): string {
     })}`;
 }
 
+// async function fetchTokenData(tokenMint: string): Promise<TokenData> {
+//     try {
+//         // Get all necessary data in parallel
+//         const [solPrice, totalSupply, tokenData] = await Promise.all([
+//             getSolPrice(),
+//             getTokenTotalSupply(tokenMint),
+//             getTokenPriceFromJupiter(tokenMint)
+//         ]);
+
+//         const { volume1h, volume24h, liquidity } = await getTokenVolumeAndLiquidity(tokenMint);
+
+//         if (tokenData.priceInSol > 0) {
+//             // Calculate token price in USD (token/SOL ratio * SOL price in USD)
+//             const priceInUsd = tokenData.priceInSol * solPrice;
+            
+//             // Calculate market cap
+//             const marketCap = priceInUsd * totalSupply;
+
+//             return {
+//                 price: formatPrice(priceInUsd),
+//                 marketCap: marketCap ? `$${marketCap.toLocaleString()}` : 'Unknown',
+//                 liquidity: liquidity || 'failed to get liquidity',
+//                 volume1h: volume1h || 'failed to get volume',
+//                 volume24h: volume24h || 'failed to get volume'
+//             };
+//         }
+        
+//         return {};
+//     } catch (error) {
+//         console.error('Error fetching token data:', error);
+//         return {};
+//     }
+// }
+
 async function fetchTokenData(tokenMint: string): Promise<TokenData> {
+    const metrics = {
+        start: performance.now(),
+        parallel: 0,
+        total: 0
+    };
+
     try {
-        // Get all necessary data in parallel
-        const [solPrice, totalSupply, tokenData, liquidity, volume] = await Promise.all([
+        // Get all necessary data in parallel including volume/liquidity
+        const startParallel = performance.now();
+        const [
+            solPrice, 
+            totalSupply, 
+            tokenData,
+            volumeLiquidity
+        ] = await Promise.all([
             getSolPrice(),
             getTokenTotalSupply(tokenMint),
             getTokenPriceFromJupiter(tokenMint),
-            getTokenLiquidity(tokenMint),
             getTokenVolumeAndLiquidity(tokenMint)
         ]);
+        metrics.parallel = performance.now() - startParallel;
 
         if (tokenData.priceInSol > 0) {
-            // Calculate token price in USD (token/SOL ratio * SOL price in USD)
             const priceInUsd = tokenData.priceInSol * solPrice;
-            
-            // Calculate market cap
             const marketCap = priceInUsd * totalSupply;
+
+            metrics.total = performance.now() - metrics.start;
+            console.log(`\n📊 Token Data Fetch:
+• Total Time: ${metrics.total.toFixed(2)}ms
+• Parallel Fetch: ${metrics.parallel.toFixed(2)}ms
+• Price: $${priceInUsd.toFixed(6)}
+• Market Cap: $${marketCap.toLocaleString()}`);
 
             return {
                 price: formatPrice(priceInUsd),
                 marketCap: marketCap ? `$${marketCap.toLocaleString()}` : 'Unknown',
-                liquidity: liquidity || 'failed to get liquidity',
-                volume: volume.volume24h || 'failed to get volume'
+                liquidity: volumeLiquidity.liquidity || 'Unknown',
+                volume1h: volumeLiquidity.volume1h || 'Unknown',
+                volume24h: volumeLiquidity.volume24h || 'Unknown'
             };
         }
         
+        metrics.total = performance.now() - metrics.start;
+        console.log(`⚠️ No price data found (${metrics.total.toFixed(2)}ms)`);
         return {};
+
     } catch (error) {
-        console.error('Error fetching token data:', error);
+        metrics.total = performance.now() - metrics.start;
+        console.error(`❌ Error fetching token data (${metrics.total.toFixed(2)}ms):`, error);
         return {};
     }
 }
@@ -272,6 +328,15 @@ function getEasternTime(): string {
 }
 
 export async function sendTokenAlert(tokenMint: string) {
+    const metrics = {
+        tokenData: 0,
+        trenchData: 0,
+        discordPost: 0,
+        total: 0
+    };
+
+    const startTotal = performance.now();
+
     if (!channel) {
         console.log('❌ Cannot send message - channel not found');
         return;
@@ -279,21 +344,29 @@ export async function sendTokenAlert(tokenMint: string) {
 
     console.log('🔄 Attempting to send message for token:', tokenMint);
 
-    const tokenData = await fetchTokenData(tokenMint);
-    const trenchData = await fetchTrenchData(tokenMint);
+    try {
+        // Fetch both token and trench data in parallel
+        const startDataFetch = performance.now();
+        const [tokenData, trenchData] = await Promise.all([
+            fetchTokenData(tokenMint),
+            fetchTrenchData(tokenMint)
+        ]);
+        
+        metrics.tokenData = performance.now() - startDataFetch;
 
-    const message = {
-        content: '🚀 **NEW TOKEN DETECTED** 🚀',
-        embeds: [{
-            color: 0x00FF00,
-            description: `
+        const message = {
+            content: '🚀 **NEW TOKEN DETECTED** 🚀',
+            embeds: [{
+                color: 0x00FF00,
+                description: `
 💎 **Token Address:** \`${tokenMint}\`
 
 📊 **Token Info:**
 • 💵 Price: ${tokenData.price || 'Unknown'}
 • 💰 Market Cap: ${tokenData.marketCap || 'Unknown'}
 • 💧 Liquidity: ${tokenData.liquidity || 'Unknown'}
-• 📈 24h Volume: ${tokenData.volume || 'Unknown'}
+• 📈 1h Volume: ${tokenData.volume1h || 'Unknown'}
+• 📈 24h Volume: ${tokenData.volume24h || 'Unknown'}
 
 🔍 **Trench Analysis:**
 • 📝 Ticker: ${trenchData.ticker || 'Unknown'}
@@ -306,7 +379,7 @@ export async function sendTokenAlert(tokenMint: string) {
 • [BullX](https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenMint})
 • [Axiom](https://axiom.trade/t/${tokenMint})
 • [GMGN](https://gmgn.ai/sol/token/${tokenMint})
-• [Photon](https://photon-sol.com/token/${tokenMint})
+• [Photon](https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenMint})
 • [Dexscreener](https://dexscreener.com/solana/${tokenMint})
 • [Birdeye](https://birdeye.so/token/${tokenMint}?chain=solana)
 
@@ -315,22 +388,123 @@ export async function sendTokenAlert(tokenMint: string) {
 • 📊 [View Chart](https://dexscreener.com/solana/${tokenMint})
 
 ⚠️ *Always DYOR (Do Your Own Research)*
-            `,
-            footer: {
-                text: `🕒 Time: ${getEasternTime()} EST`
-            }
-        }]
-    };
+                `,
+                footer: {
+                    text: `🕒 Time: ${getEasternTime()} EST`
+                }
+            }]
+        };
 
-    try {
+        const startDiscordPost = performance.now();
         await channel.send(message);
-        console.log('✅ Message sent successfully');
+        metrics.discordPost = performance.now() - startDiscordPost;
+
+        metrics.total = performance.now() - startTotal;
+        console.log(`\n📊 Discord Alert Performance:
+• Total Time: ${metrics.total.toFixed(2)}ms
+• Data Fetch: ${metrics.tokenData.toFixed(2)}ms
+• Discord Post: ${metrics.discordPost.toFixed(2)}ms
+✅ Message sent successfully`);
+
     } catch (error) {
+        metrics.total = performance.now() - startTotal;
         console.error('❌ Failed to send Discord message:', error);
     }
 }
 
+// export async function sendTokenAlert(tokenMint: string, connection: Connection) {
+//     const metrics = {
+//         tokenData: 0,
+//         trenchData: 0,
+//         discordPost: 0,
+//         total: 0
+//     };
+
+//     const startTotal = performance.now();
+
+//     if (!channel) {
+//         console.log('❌ Cannot send message - channel not found');
+//         return;
+//     }
+
+//     console.log('🔄 Attempting to send message for token:', tokenMint);
+
+//     try {
+//         // Fetch token data with timing
+//         const startTokenData = performance.now();
+//         const tokenData = await fetchTokenData(tokenMint);
+//         metrics.tokenData = performance.now() - startTokenData;
+//         console.log(`⏱️ Token data fetched in ${metrics.tokenData.toFixed(2)}ms`);
+
+//         // Fetch trench data with timing
+//         const startTrenchData = performance.now();
+//         const trenchData = await fetchTrenchData(tokenMint);
+//         metrics.trenchData = performance.now() - startTrenchData;
+//         console.log(`⏱️ Trench data fetched in ${metrics.trenchData.toFixed(2)}ms`);
+
+//         const message = {
+//             content: '🚀 **NEW TOKEN DETECTED** 🚀',
+//             embeds: [{
+//                 color: 0x00FF00,
+//                 description: `
+// 💎 **Token Address:** \`${tokenMint}\`
+
+// 📊 **Token Info:**
+// • 💵 Price: ${tokenData.price || 'Unknown'}
+// • 💰 Market Cap: ${tokenData.marketCap || 'Unknown'}
+// • 💧 Liquidity: ${tokenData.liquidity || 'Unknown'}
+// • 📈 1h Volume: ${tokenData.volume1h || 'Unknown'}
+// • 📈 24h Volume: ${tokenData.volume24h || 'Unknown'}
+
+// 🔍 **Trench Analysis:**
+// • 📝 Ticker: ${trenchData.ticker || 'Unknown'}
+// • 📦 Total Bundles: ${trenchData.holdingBundles || '0'} (Holding) / ${trenchData.totalBundles || 'Unknown'} (Total)
+// • 💰 Total SOL Spent: ${trenchData.totalSolSpent?.toFixed(2) || 'Unknown'} SOL
+// • 📈 Current Held Percentage: ${trenchData.holdingPercentage?.toFixed(4) || 'Unknown'}%
+// • 🔗 Bonded: ${trenchData.bonded ? 'Yes' : 'No'}
+
+// 🔗 **Trading Links:**
+// • [BullX](https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenMint})
+// • [Axiom](https://axiom.trade/t/${tokenMint})
+// • [GMGN](https://gmgn.ai/sol/token/${tokenMint})
+// • [Photon](https://photon-sol.com/token/${tokenMint})
+// • [Dexscreener](https://dexscreener.com/solana/${tokenMint})
+// • [Birdeye](https://birdeye.so/token/${tokenMint}?chain=solana)
+
+// ⚡ **Quick Links:**
+// • 💱 [Trade on Raydium](https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenMint})
+// • 📊 [View Chart](https://dexscreener.com/solana/${tokenMint})
+
+// ⚠️ *Always DYOR (Do Your Own Research)*
+//                 `,
+//                 footer: {
+//                     text: `🕒 Time: ${getEasternTime()} EST | ⏱️ Processing: ${(performance.now() - startTotal).toFixed(2)}ms`
+//                 }
+//             }]
+//         };
+
+//         // Send to Discord with timing
+//         const startDiscordPost = performance.now();
+//         await channel.send(message);
+//         metrics.discordPost = performance.now() - startDiscordPost;
+
+//         metrics.total = performance.now() - startTotal;
+
+//         console.log(`\n📊 Discord Alert Performance:
+// • Total Time: ${metrics.total.toFixed(2)}ms
+// • Token Data Fetch: ${metrics.tokenData.toFixed(2)}ms
+// • Trench Data Fetch: ${metrics.trenchData.toFixed(2)}ms
+// • Discord Post: ${metrics.discordPost.toFixed(2)}ms
+// ${metrics.total > 5000 ? '⚠️ Warning: Alert took longer than 5 seconds!' : '✅ Message sent successfully'}`);
+
+//     } catch (error) {
+//         metrics.total = performance.now() - startTotal;
+//         console.error(`❌ Failed to send Discord message (${metrics.total.toFixed(2)}ms):`, error);
+//     }
+// }
+
 // Add message listener
+
 client.on('messageCreate', async (message: Message) => {
     if (message.author.bot) return;
 
@@ -356,7 +530,8 @@ client.on('messageCreate', async (message: Message) => {
 • 💵 Price: ${tokenData.price || 'Unknown'}
 • 💰 Market Cap: ${tokenData.marketCap || 'Unknown'}
 • 💧 Liquidity: ${tokenData.liquidity || 'Unknown'}
-• 📈 24h Volume: ${tokenData.volume || 'Unknown'}
+• 📈 1h Volume: ${tokenData.volume1h || 'Unknown'}
+• 📈 24h Volume: ${tokenData.volume24h || 'Unknown'}
 
 🔍 **Trench Analysis:**
 • 📝 Ticker: ${trenchData.ticker || 'Unknown'}
@@ -369,7 +544,7 @@ client.on('messageCreate', async (message: Message) => {
 • [BullX](https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenMint})
 • [Axiom](https://axiom.trade/t/${tokenMint})
 • [GMGN](https://gmgn.ai/sol/token/${tokenMint})
-• [Photon](https://photon-sol.com/token/${tokenMint})
+• [Photon](https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenMint})
 • [Dexscreener](https://dexscreener.com/solana/${tokenMint})
 • [Birdeye](https://birdeye.so/token/${tokenMint}?chain=solana)
 

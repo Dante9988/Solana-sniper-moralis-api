@@ -1,16 +1,78 @@
 import WebSocket from "ws"; // Node.js websocket library
 import { WebSocketRequest } from "./types"; // Typescript Types for type safety
 import { config } from "./config"; // Configuration parameters for our bot
-import { fetchTransactionDetails, createSwapTransaction, getRugCheckConfirmed, fetchAndSaveSwapDetails } from "./transactions";
+import { fetchTransactionDetails, createSwapTransaction, getRugCheckConfirmed, fetchAndSaveSwapDetails, fetchTokenMintFromTx } from "./transactions";
 import { validateEnv } from "./utils/env-validator";
 import player from "play-sound";
 import { sendTokenAlert } from './discord';
+import { performance } from 'perf_hooks';
+import express from 'express';
+import { Connection } from "@solana/web3.js";
+import { MintsDataReponse } from "./types";
 
 const audioPlayer = player({});
 
 // Regional Variables
 let activeTransactions = 0;
 const MAX_CONCURRENT = config.tx.concurrent_transactions;
+
+const connection = new Connection(process.env.HELIUS_HTTPS_URI || "");
+
+// Performance metrics object
+const metrics = {
+    websocket: {
+        connections: 0,
+        reconnects: 0,
+        lastReconnect: null as Date | null,
+    },
+    transactions: {
+        total: 0,
+        successful: 0,
+        failed: 0,
+        skipped: 0,
+        avgProcessingTime: 0,
+        maxProcessingTime: 0,
+        minProcessingTime: Infinity,
+    },
+    rugCheck: {
+        total: 0,
+        passed: 0,
+        failed: 0,
+        avgCheckTime: 0,
+    },
+    swaps: {
+        attempted: 0,
+        successful: 0,
+        failed: 0,
+        avgSwapTime: 0,
+    },
+    errors: {
+        count: 0,
+        lastError: null as string | null,
+        lastErrorTime: null as Date | null,
+    },
+    performance: {
+        lastMinute: {
+            transactions: 0,
+            startTime: Date.now(),
+        },
+        memoryUsage: process.memoryUsage(),
+        uptime: 0,
+    }
+};
+
+// Setup Express server for metrics
+const app = express();
+app.get('/metrics', (req, res) => {
+    metrics.performance.uptime = process.uptime();
+    metrics.performance.memoryUsage = process.memoryUsage();
+    res.json(metrics);
+});
+
+const metricsPort = process.env.METRICS_PORT || 3000;
+app.listen(metricsPort, () => {
+    console.log(`📊 Metrics server running on port ${metricsPort}`);
+});
 
 // Function used to open our websocket connection
 function sendSubscribeRequest(ws: WebSocket): void {
@@ -32,37 +94,43 @@ function sendSubscribeRequest(ws: WebSocket): void {
 
 // Function used to handle the transaction once a new pool creation is found
 async function processTransaction(signature: string): Promise<void> {
+  const start = performance.now();
+  
   // Output logs
   console.log("=============================================");
   console.log("🔎 New Liquidity Pool found.");
   console.log("🔃 Fetching transaction details ...");
 
   // Fetch the transaction details
-  const data = await fetchTransactionDetails(signature);
+  let data: MintsDataReponse | null;
+  //data = await fetchTransactionDetails(signature, connection);
+  data = await fetchTokenMintFromTx(signature, connection);
   if (!data) {
+    metrics.transactions.failed++;
     console.log("⛔ Transaction aborted. No data returned.");
-    console.log("🟢 Resuming looking for new tokens...\n");
     return;
   }
 
   // Ensure required data is available
   if (!data.solMint || !data.tokenMint) return;
 
-  // Check rug check
+  // Track rug check metrics
+  metrics.rugCheck.total++;
+  const rugCheckStart = performance.now();
   const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);
+  
+  const rugCheckTime = performance.now() - rugCheckStart;
+  metrics.rugCheck.avgCheckTime = 
+      (metrics.rugCheck.avgCheckTime * (metrics.rugCheck.total - 1) + rugCheckTime) 
+      / metrics.rugCheck.total;
+
   if (!isRugCheckPassed) {
+    metrics.rugCheck.failed++;
+    console.log(`🚫 Rug Check failed for token: ${data.tokenMint}`);
     console.log("🚫 Rug Check not passed! Transaction aborted.");
-    console.log("🟢 Resuming looking for new tokens...\n");
     return;
   }
-
-  // Handle ignored tokens
-  // if (data.tokenMint.trim().toLowerCase().endsWith("pump") && config.rug_check.ignore_pump_fun) {
-  //   // Check if ignored
-  //   console.log("🚫 Transaction skipped. Ignoring Pump.fun.");
-  //   console.log("🟢 Resuming looking for new tokens..\n");
-  //   return;
-  // }
+  metrics.rugCheck.passed++;
 
   // Ouput logs
   console.log("Token found");
@@ -110,17 +178,23 @@ async function processTransaction(signature: string): Promise<void> {
   if (!saveConfirmation) {
     console.log("❌ Warning: Transaction not saved for tracking! Track Manually!");
   }
+
+  const processingTime = performance.now() - start;
+  metrics.transactions.avgProcessingTime = 
+      (metrics.transactions.avgProcessingTime * (metrics.transactions.total - 1) + processingTime) 
+      / metrics.transactions.total;
+  metrics.transactions.maxProcessingTime = Math.max(metrics.transactions.maxProcessingTime, processingTime);
+  metrics.transactions.minProcessingTime = Math.min(metrics.transactions.minProcessingTime, processingTime);
 }
 
 // Websocket Handler for listening to the Solana logSubscribe method
 let init = false;
 async function websocketHandler(): Promise<void> {
-  // Load environment variables from the .env file
   const env = validateEnv();
-
-  // Create a WebSocket connection
   let ws: WebSocket | null = new WebSocket(env.HELIUS_WSS_URI);
+  
   if (!init) console.clear();
+  metrics.websocket.connections++;
 
   // @TODO, test with hosting our app on a Cloud instance closer to the RPC nodes physical location for minimal latency
   // @TODO, test with different RPC and API nodes (free and paid) from quicknode and shyft to test speed
@@ -135,6 +209,8 @@ async function websocketHandler(): Promise<void> {
 
   // Logic for the message event for the .on event listener
   ws.on("message", async (data: WebSocket.Data) => {
+    const messageStart = performance.now();
+    
     try {
       const jsonString = data.toString(); // Convert data to a string
       const parsedData = JSON.parse(jsonString); // Parse the JSON string
@@ -147,6 +223,9 @@ async function websocketHandler(): Promise<void> {
 
       // Only log RPC errors for debugging
       if (parsedData.error) {
+        metrics.errors.count++;
+        metrics.errors.lastError = parsedData.error;
+        metrics.errors.lastErrorTime = new Date();
         console.error("🚫 RPC Error:", parsedData.error);
         return;
       }
@@ -164,6 +243,7 @@ async function websocketHandler(): Promise<void> {
 
       // Verify if we have reached the max concurrent transactions
       if (activeTransactions >= MAX_CONCURRENT) {
+        metrics.transactions.skipped++;
         console.log("⏳ Max concurrent transactions reached, skipping...");
         return;
       }
@@ -171,27 +251,62 @@ async function websocketHandler(): Promise<void> {
       // Add additional concurrent transaction
       activeTransactions++;
 
-      // Process transaction asynchronously
-      processTransaction(signature)
-        .catch((error) => {
-          console.error("Error processing transaction:", error);
-        })
-        .finally(() => {
-          activeTransactions--;
-        });
+      // Process transaction with performance monitoring
+      const processStart = performance.now();
+      
+      try {
+        await processTransaction(signature);
+        metrics.transactions.successful++;
+        
+        const processingTime = performance.now() - processStart;
+        metrics.transactions.avgProcessingTime = 
+            (metrics.transactions.avgProcessingTime * (metrics.transactions.total - 1) + processingTime) 
+            / metrics.transactions.total;
+        metrics.transactions.maxProcessingTime = Math.max(metrics.transactions.maxProcessingTime, processingTime);
+        metrics.transactions.minProcessingTime = Math.min(metrics.transactions.minProcessingTime, processingTime);
+        
+      } catch (error) {
+        metrics.transactions.failed++;
+        metrics.errors.count++;
+        metrics.errors.lastError = error instanceof Error ? error.message : 'Unknown error';
+        metrics.errors.lastErrorTime = new Date();
+        console.error("Error processing transaction:", error);
+      } finally {
+        activeTransactions--;
+      }
+
+      // Log performance stats every minute
+      if (Date.now() - metrics.performance.lastMinute.startTime > 60000) {
+        console.log(`
+📊 Last Minute Performance:
+• Transactions Processed: ${metrics.performance.lastMinute.transactions}
+• Average Processing Time: ${metrics.transactions.avgProcessingTime.toFixed(2)}ms
+• Success Rate: ${((metrics.transactions.successful / metrics.transactions.total) * 100).toFixed(2)}%
+• Memory Usage: ${(metrics.performance.memoryUsage.heapUsed / 1024 / 1024).toFixed(2)}MB
+        `);
+
+        metrics.performance.lastMinute.transactions = 0;
+        metrics.performance.lastMinute.startTime = Date.now();
+      }
+
     } catch (error) {
-      console.error("💥 Error processing message:", {
-        error: error instanceof Error ? error.message : "Unknown error",
-        timestamp: new Date().toISOString(),
-      });
+      metrics.errors.count++;
+      metrics.errors.lastError = error instanceof Error ? error.message : 'Unknown error';
+      metrics.errors.lastErrorTime = new Date();
+      console.error("💥 Error processing message:", error);
     }
   });
 
   ws.on("error", (err: Error) => {
+    metrics.errors.count++;
+    metrics.errors.lastError = err.message;
+    metrics.errors.lastErrorTime = new Date();
     console.error("WebSocket error:", err);
   });
 
   ws.on("close", () => {
+    metrics.websocket.reconnects++;
+    metrics.websocket.lastReconnect = new Date();
     console.log("📴 WebSocket connection closed, cleaning up...");
     if (ws) {
       ws.removeAllListeners();
