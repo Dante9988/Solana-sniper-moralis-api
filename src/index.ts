@@ -139,14 +139,14 @@ async function processTransaction(signature: string): Promise<void> {
   console.log("🌌 Axiom: https://axiom.trade/t/" + data.tokenMint);
 
   // Play notification sound for found token
-  try {
-    console.log("🔊 Playing notification sound");
-    audioPlayer.play("src/sounds/notification.wav", (err) => {
-      if (err) console.error("Error playing sound:", err);
-    });
-  } catch (error) {
-    console.error("Failed to play notification sound:", error);
-  }
+  // try {
+  //   console.log("🔊 Playing notification sound");
+  //   audioPlayer.play("src/sounds/notification.wav", (err) => {
+  //     if (err) console.error("Error playing sound:", err);
+  //   });
+  // } catch (error) {
+  //   console.error("Failed to play notification sound:", error);
+  // }
 
   // Only send Discord notification if it's a valid token
   await sendTokenAlert(data.tokenMint);
