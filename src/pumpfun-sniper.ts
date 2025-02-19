@@ -6,6 +6,7 @@ import dotenv from "dotenv";
 import { Metaplex } from "@metaplex-foundation/js";
 import { PUMP_FUN_PROGRAM } from "./constants";  // Ensure this contains "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 import { fetchTokenMintFromTx, getRugCheckConfirmed } from "./transactions";
+import { sendPumpFunAlert } from './discord-pumpfun';
 
 dotenv.config();
 
@@ -46,6 +47,13 @@ async function processToken(signature: string) {
             return;
         }
 
+        // Add more detailed logging
+        console.log("📨 Attempting to send Discord alert...");
+        console.log("Channel ID:", process.env.DISCORD_CHANNEL_ID);
+        console.log("Bot Token present:", !!process.env.DISCORD_BOT_TOKEN);
+        await sendPumpFunAlert(txData.tokenMint, rugCheckPassed);
+        console.log("✅ Discord alert sent successfully");
+
         console.log(`\n✅ SAFE TOKEN FOUND:
 • Mint: ${txData.tokenMint}
 • Market Cap: $${marketData.marketCap}
@@ -62,6 +70,9 @@ async function processToken(signature: string) {
 
     } catch (error) {
         console.error("💥 Error processing token:", error);
+        if (error instanceof Error) {
+            console.error(error.stack);
+        }
     }
 }
 

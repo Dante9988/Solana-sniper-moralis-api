@@ -92,6 +92,7 @@ function sendSubscribeRequest(ws: WebSocket): void {
   ws.send(JSON.stringify(request));
 }
 
+export let rugCheckPassed: boolean;
 // Function used to handle the transaction once a new pool creation is found
 async function processTransaction(signature: string): Promise<void> {
   const start = performance.now();
@@ -118,6 +119,7 @@ async function processTransaction(signature: string): Promise<void> {
   metrics.rugCheck.total++;
   const rugCheckStart = performance.now();
   const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);
+  rugCheckPassed = isRugCheckPassed;
   
   const rugCheckTime = performance.now() - rugCheckStart;
   metrics.rugCheck.avgCheckTime = 
@@ -149,7 +151,7 @@ async function processTransaction(signature: string): Promise<void> {
   // }
 
   // Only send Discord notification if it's a valid token
-  await sendTokenAlert(data.tokenMint);
+  await sendTokenAlert(data.tokenMint, isRugCheckPassed);
 
   // Check if simulation mode is enabled
   if (config.rug_check.simulation_mode) {
