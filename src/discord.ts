@@ -310,10 +310,38 @@ async function getTokenPriceFromJupiter(tokenMint: string): Promise<{priceInSol:
     }
 }
 
-async function getTokenPriceInUSDC(tokenMint: string): Promise<number> {
-    const response = await fetch(`https://api.jup.ag/price/v2?ids=${tokenMint}`);
-    const data = await response.json() as any;
-    return parseFloat(data.data[tokenMint]?.price || '0');
+async function getTokenPriceInUSDC(tokenMint: string, retries = 3): Promise<number> {
+    try {
+        const response = await fetch(`https://api.jup.ag/price/v2?ids=${tokenMint}`);
+        const data = await response.json() as any;
+        const price = data?.data?.[tokenMint]?.price;
+
+        if (!price && retries > 0) {
+            console.log(`Retrying price fetch for ${tokenMint}, attempts left: ${retries}`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            return getTokenPriceInUSDC(tokenMint, retries - 1);
+        }
+
+        return parseFloat(price || '0');
+    } catch (error) {
+        if (retries > 0) {
+            console.log(`Error fetching price, retrying... attempts left: ${retries}`);
+            await new Promise(resolve => setTimeout(resolve, 500));
+            return getTokenPriceInUSDC(tokenMint, retries - 1);
+        }
+        console.error('Failed to fetch price after all retries:', error);
+        return 0;
+    }
+}
+
+async function calculateMarketCap(tokenMint: string): Promise<number> {
+
+    const [price, totalSupply] = await Promise.all([
+        getTokenPriceInUSDC(tokenMint),
+        getTokenTotalSupply(tokenMint)
+    ]);
+
+    return price * totalSupply;
 }
 
 function getEasternTime(): string {
@@ -366,17 +394,17 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
     }
 
     try {
-        const [marketResult, trenchResult, volumeLiquidityResult] = await Promise.allSettled([
-            fetchTokenData(tokenMint),
+
+        // Initial data fetch for quick alert
+        const [trenchResult] = await Promise.allSettled([
+            //fetchTokenData(tokenMint),
             fetchTrenchData(tokenMint),
-            getTokenVolumeAndLiquidity(tokenMint)
-            //checkBondingCurveStatus(tokenMint)
         ]);
-        
-        const initialMarketData = marketResult.status === "fulfilled" ? marketResult.value : {};
+        const marketCap = await calculateMarketCap(tokenMint);
+        const initialMarketData = {
+            marketCap: marketCap.toString()
+        };
         const trenchData = trenchResult.status === "fulfilled" ? trenchResult.value : {};
-        const volumeLiquidity = volumeLiquidityResult.status === "fulfilled" ? volumeLiquidityResult.value : {};
-        //const isBonded = bondingResult.status === "fulfilled" ? bondingResult.value : false;
 
         const detectedTime = getEasternTime();
         const quickMessage = {
@@ -388,7 +416,17 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
 Token: ${tokenMint}
 \`\`\`
 
-🔄 *Fetching market data...*`,
+**💹 Initial Market Data**
+━━━━━━━━━━━━━━━━━━━━━━
+💰 **Market Cap:** ${initialMarketData.marketCap || 'Unknown'}
+
+**🎯 Quick Stats**
+━━━━━━━━━━━━━━━━━━━━━━
+📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
+📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
+💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
+
+🔄 *Fetching additional data...*`,
                 footer: {
                     text: `🕒 Detected at ${detectedTime} EST`,
                     icon_url: 'https://pump.fun/favicon.ico'
@@ -432,10 +470,9 @@ Token: ${tokenMint}
 
         const quickAlert = await channel.send(quickMessage);
 
-        if (!initialMarketData || !trenchData) {
-            throw new Error('Failed to fetch token data');
-        }
-
+        // Fetch additional data for update
+        const volumeLiquidityResult = await getTokenVolumeAndLiquidity(tokenMint);
+        
         const updateTime = getEasternTime();
         const updatedMessage = {
             embeds: [{
@@ -449,14 +486,12 @@ Token: ${tokenMint}
 **💹 Market Analysis**
 ━━━━━━━━━━━━━━━━━━━━━━
 💰 **Market Cap:** ${initialMarketData.marketCap || 'Unknown'}
-📈 **Price:** ${initialMarketData.price || 'Unknown'}
-💧 **Liquidity:** ${volumeLiquidity.liquidity || 'Unknown'}
-📊 **1H Volume:** ${volumeLiquidity.volume1h || 'Unknown'}
-📊 **24H Volume:** ${volumeLiquidity.volume24h || 'Unknown'}
+💧 **Liquidity:** ${volumeLiquidityResult.liquidity || 'Unknown'}
+📊 **1H Volume:** ${volumeLiquidityResult.volume1h || 'Unknown'}
+📊 **24H Volume:** ${volumeLiquidityResult.volume24h || 'Unknown'}
 
 **🎯 Quick Stats**
 ━━━━━━━━━━━━━━━━━━━━━━
-
 📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
 📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
 💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
@@ -468,7 +503,7 @@ Token: ${tokenMint}
                     icon_url: 'https://pump.fun/favicon.ico'
                 }
             }],
-            components: quickMessage.components // Reuse the same buttons
+            components: quickMessage.components
         };
 
         await quickAlert.edit(updatedMessage);

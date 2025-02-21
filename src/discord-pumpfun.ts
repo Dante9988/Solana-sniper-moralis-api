@@ -21,7 +21,7 @@ let channel: TextChannel | null = null;
 
 client.once('ready', () => {
     console.log('🤖 Pump.fun Discord bot is ready!');
-    const channelId = process.env.DISCORD_CHANNEL_ID;
+    const channelId = process.env.PUMPFUN_DISCORD_CHANNEL_ID;
     console.log('Channel ID from env:', channelId);
     
     if (channelId) {

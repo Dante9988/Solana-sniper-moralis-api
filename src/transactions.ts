@@ -16,6 +16,7 @@ import {
   createSellTransactionResponse,
 } from "./types";
 import { insertHolding, insertNewToken, removeHolding, selectTokenByMint, selectTokenByNameAndCreator } from "./tracker/db";
+import nacl from 'tweetnacl';
 
 // Load environment variables from the .env file
 dotenv.config();
@@ -552,11 +553,19 @@ export async function getRugCheckConfirmed(tokenMint: string): Promise<boolean> 
     const startTotal = performance.now();
 
     try {
-        // Fetch rug check data
+        // Get authentication token first
+        const token = await authenticateRugcheck();
+        console.log("🔑 Authenticated with Rugcheck: ", token);
+        // Fetch rug check data with auth header
         const startRugCheck = performance.now();
         const rugResponse = await axios.get<RugResponseExtended>(
             "https://api.rugcheck.xyz/v1/tokens/" + tokenMint + "/report", 
-            { timeout: config.tx.get_timeout }
+            { 
+                timeout: config.tx.get_timeout,
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            }
         );
         metrics.rugCheckApi = performance.now() - startRugCheck;
 
@@ -953,5 +962,48 @@ export async function createSellTransaction(solMint: string, tokenMint: string, 
       msg: error instanceof Error ? error.message : "Unknown error",
       tx: null,
     };
+  }
+}
+
+let rugcheckJWT: string | null = null;
+
+async function authenticateRugcheck(): Promise<string> {
+  try {
+      if (rugcheckJWT) return rugcheckJWT;
+
+      // Create keypair from private key
+      const privateKey = bs58.decode(process.env.RUGCHECK_PRIVATE_KEY || '');
+      const keypair = Keypair.fromSecretKey(privateKey);
+
+      const message = "Sign-in to Rugcheck.xyz";
+      const encodedMessage = new TextEncoder().encode(message);
+      const signedData = nacl.sign.detached(encodedMessage, keypair.secretKey);
+
+      const authData = {
+          message: {
+              message: message,
+              publicKey: keypair.publicKey.toString(),
+              timestamp: Date.now()
+          },
+          signature: {
+              data: Array.from(signedData),
+              type: "ed25519"
+          },
+          wallet: keypair.publicKey.toString()
+      };
+
+      const response = await axios.post(
+          "https://api.rugcheck.xyz/auth/login/solana",
+          authData
+      );
+
+      if (!response.data.token) {
+          throw new Error('No token received from Rugcheck');
+      }
+      rugcheckJWT = response.data.token;
+      return response.data.token;
+  } catch (error) {
+      console.error('Failed to authenticate with Rugcheck:', error);
+      throw error;
   }
 }

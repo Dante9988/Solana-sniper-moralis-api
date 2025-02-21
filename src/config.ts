@@ -56,21 +56,21 @@ export const config = {
   },
   swap: {
     verbose_log: false,
-    prio_fee_max_lamports: 1000000, // 0.001 SOL
+    prio_fee_max_lamports: 9000000, // 0.009 SOL
     prio_level: "veryHigh", // If you want to land transaction fast, set this to use `veryHigh`. You will pay on average higher priority fee.
-    amount: "10000000", //0.01 SOL
-    slippageBps: "2000", // 20%
+    amount: "1000000", //0.1 SOL
+    slippageBps: "4000", // 20%
     db_name_tracker_holdings: "src/tracker/holdings.db", // Sqlite Database location
     token_not_tradable_400_error_retries: 5, // How many times should the bot try to get a quote if the token is not tradable yet
     token_not_tradable_400_error_delay: 2000, // How many seconds should the bot wait before retrying to get a quote again
   },
   sell: {
     price_source: "dex", // dex=Dexscreener,jup=Jupiter Agregator (Dex is most accurate and Jupiter is always used as fallback)
-    prio_fee_max_lamports: 1000000, // 0.001 SOL
+    prio_fee_max_lamports: 9000000, // 0.009 SOL
     prio_level: "veryHigh", // If you want to land transaction fast, set this to use `veryHigh`. You will pay on average higher priority fee.
-    slippageBps: "2000", // 20%
-    auto_sell: false, // If set to true, stop loss and take profit triggers automatically when set.
-    stop_loss_percent: 10,
+    slippageBps: "4000", // 40%
+    auto_sell: true, // If set to true, stop loss and take profit triggers automatically when set.
+    stop_loss_percent: 20,
     take_profit_percent: 100,
     track_public_wallet: "", // If set an additional log line will be shown with a link to track your wallet
   },
@@ -92,8 +92,8 @@ export const config = {
     max_alowed_pct_topholders: 20, // Max allowed percentage an individual topholder might hold
     exclude_lp_from_topholders: true, // If true, Liquidity Pools will not be seen as top holders
     // Warning
-    min_total_markets: 0,
-    min_total_lp_providers: 0,
+    min_total_markets: 1,
+    min_total_lp_providers: 1,
     min_total_market_Liquidity: 3000,
     // Misc
     ignore_pump_fun: false,
@@ -110,5 +110,15 @@ export const config = {
       //"Copycat token",
       //"Low amount of LP Providers",
     ],
+  },
+  rugSafe: {
+    simulation_mode: true,
+    requiredAuditRisk: {
+      mintDisabled: true,    // Mint authority must be disabled
+      freezeDisabled: true,  // Freeze authority must be disabled
+      lpBurned: true,       // LP tokens must be burned
+      top10Holders: false,   // Top 10 holders should not have concentration
+    },
+    verbose_log: false,      // Enable for debugging
   },
 };
