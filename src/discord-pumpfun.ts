@@ -1,4 +1,4 @@
-import { Client, TextChannel, Message, GatewayIntentBits } from 'discord.js';
+import { Client, TextChannel, Message, GatewayIntentBits, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -43,6 +43,8 @@ client.once('ready', () => {
         console.log('❌ No channel ID found in .env file');
     }
 });
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fetchTokenMarketData(mintAddress: string) {
     try {
@@ -104,18 +106,10 @@ async function fetchTokenMarketData(mintAddress: string) {
 
 async function getSolPrice(): Promise<number> {
     try {
-        const response = await axios.get(
-            'https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112'
-        );
-        
-        const pair = response.data?.pairs?.[0];
-        if (pair?.priceUsd) {
-            return Number(pair.priceUsd);
-        }
-        
-        return 0;
+        const response = await axios.get('https://frontend-api-v3.pump.fun/sol-price');
+        return Number(response.data.solPrice);
     } catch (error) {
-        console.error('Error fetching SOL price from DexScreener:', error);
+        console.error('Error fetching SOL price from Pump.fun:', error);
         return 0;
     }
 }
@@ -132,7 +126,16 @@ function getEasternTime(): string {
     return new Date().toLocaleString('en-US', options);
 }
 
-export async function sendPumpFunAlert(tokenMint: string, rugCheckPassed: boolean) {
+function createProgressBar(percent: number): string {
+    const filled = '█';
+    const empty = '░';
+    const totalBars = 20;
+    const filledBars = Math.round(percent * totalBars);
+    const emptyBars = totalBars - filledBars;
+    return filled.repeat(filledBars) + empty.repeat(emptyBars);
+}
+
+export async function sendPumpFunAlert(tokenMint: string) {
     if (!channel) {
         console.error('❌ Cannot send message - channel not found');
         return;
@@ -177,15 +180,34 @@ export async function sendPumpFunAlert(tokenMint: string, rugCheckPassed: boolea
             return;
         }
 
+        // Fetch token metadata
+        const tokenMetadata = await axios.get(`https://frontend-api-v3.pump.fun/coins/${tokenMint}`);
+        const tokenData = tokenMetadata.data;
+
+        // Calculate bonding curve percentage based on market cap
+        const marketCapThreshold = 85000; // $85k threshold
+        const currentMarketCap = Number(tokenData.usd_market_cap);
+        const maxBondingPercent = currentMarketCap >= marketCapThreshold ? 1 : 0.5; // 100% if above threshold, 50% if below
+
+        // Calculate actual bonding percentage from virtual reserves
+        const actualBondingPercent = Number(tokenData.virtual_sol_reserves) / 
+                                   Number(tokenData.virtual_token_reserves);
+        const bondingPercent = Math.min(actualBondingPercent, maxBondingPercent);
+
+        const progressBar = createProgressBar(bondingPercent);
+        const devBuyAmount = Number(tokenData.virtual_sol_reserves) / 1e9; // Convert lamports to SOL
+
         const message = {
             content: '🎯 **NEW PUMP.FUN TOKEN DETECTED** 🎯',
             embeds: [{
-                color: rugCheckPassed ? 0x00FF00 : 0xFF0000,
-                title: '💎 New Token Alert',
+                title: `💎 New Token Alert: ${tokenData.symbol}`,
                 description: `
 \`\`\`
 Token: ${tokenMint}
+Creator: ${tokenData.creator}
 \`\`\`
+
+${tokenData.description ? `📝 **Description:** ${tokenData.description}` : '📝 **Description:** No description found'}
 
 **📊 Token Metrics**
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -193,36 +215,78 @@ Token: ${tokenMint}
 💰 **Market Cap:** $${marketData.marketCap}
 💧 **Liquidity:** $${marketData.liquidityUSD}
 📈 **Total Supply:** ${marketData.totalSupply}
+
+**⚡ Bonding Curve**
+${progressBar} ${(bondingPercent * 100).toFixed(2)}%
+**Dev Buy:** ${devBuyAmount.toFixed(2)} SOL
+
 🔒 **Bonding Complete:** ${marketData.complete ? 'Yes ✅' : 'No ⏳'}
-🛡️ **Rug Check:** ${rugCheckPassed ? '✅ PASSED' : '❌ FAILED'}
 
-**🚀 Trading Platforms**
-━━━━━━━━━━━━━━━━━━━━━━
-🌊 • [Pump.fun](https://pump.fun/${tokenMint})
-👽 • [GMGN](https://gmgn.ai/sol/token/${tokenMint})
-🐂 • [BullX](https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenMint})
-⭐ • [Photon](https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenMint})
-🌌 • [Axiom](https://axiom.trade/t/${tokenMint})
-
-**📊 Charts & Analysis**
-━━━━━━━━━━━━━━━━━━━━━━
-🌊 • [Trade on Raydium](https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenMint})
-🔍 • [View on Dexscreener](https://dexscreener.com/solana/${tokenMint})
-🦅 • [Track on Birdeye](https://birdeye.so/token/${tokenMint}?chain=solana)
-
-> ⚠️ *Always DYOR (Do Your Own Research)*`,
+${tokenData.website ? `🌐 **Website:** ${tokenData.website}` : ''}
+${tokenData.twitter ? `🐦 **Twitter:** ${tokenData.twitter}` : ''}
+${tokenData.telegram ? `📱 **Telegram:** ${tokenData.telegram}` : ''}`,
                 thumbnail: {
-                    url: 'https://pump.fun/logo.png'
+                    url: tokenData.image_uri && tokenData.image_uri !== '' ? 
+                        tokenData.image_uri : 
+                        'https://pump.fun/logo.png' // Fallback if image is empty or invalid
                 },
                 footer: {
-                    text: `🕒 Detected at ${getEasternTime()} EST`,
+                    text: `🌟 Created at ${new Date(tokenData.created_timestamp).toLocaleString('en-US', {
+                        timeZone: 'America/New_York',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                        hour12: true
+                    })} EST • 🕒 Detected at ${getEasternTime()} EST`,
                     icon_url: 'https://pump.fun/favicon.ico'
                 }
-            }]
+            }],
+            components: [
+                new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder()
+                        .setLabel('🌊 Pump.fun')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://pump.fun/${tokenMint}`),
+                    new ButtonBuilder()
+                        .setLabel('👽 GMGN')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://gmgn.ai/sol/token/${tokenMint}`),
+                    new ButtonBuilder()
+                        .setLabel('🐂 BullX')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenMint}`),
+                    new ButtonBuilder()
+                        .setLabel('⭐ Photon')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenMint}`),
+                    new ButtonBuilder()
+                        .setLabel('🌌 Axiom')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://axiom.trade/t/${tokenMint}`)
+                ),
+                new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder()
+                        .setLabel('🌊 Raydium')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenMint}`),
+                    new ButtonBuilder()
+                        .setLabel('🔍 Dexscreener')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://dexscreener.com/solana/${tokenMint}`),
+                    new ButtonBuilder()
+                        .setLabel('🦅 Birdeye')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://birdeye.so/token/${tokenMint}?chain=solana`)
+                )
+            ]
         };
 
+        // Send alert
         await channel.send(message);
         console.log('✅ Discord alert sent successfully');
+        
+        // Wait 5 seconds before next alert
+        await sleep(5000);
 
     } catch (error) {
         console.error('❌ Failed to send Discord message:', error);

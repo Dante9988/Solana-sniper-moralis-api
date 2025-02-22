@@ -40,18 +40,18 @@ async function processToken(signature: string) {
         }
 
         // Perform Rug Check
-        console.log("🔍 Performing Rug Check...");
-        const rugCheckPassed = await getRugCheckConfirmed(txData.tokenMint);
-        if (!rugCheckPassed) {
-            console.log("🚨 Rug check failed! Skipping...");
-            return;
-        }
+        // console.log("🔍 Performing Rug Check...");
+        // const rugCheckPassed = await getRugCheckConfirmed(txData.tokenMint);
+        // if (!rugCheckPassed) {
+        //     console.log("🚨 Rug check failed! Skipping...");
+        //     return;
+        // }
 
         // Add more detailed logging
         console.log("📨 Attempting to send Discord alert...");
         console.log("Channel ID:", process.env.PUMPFUN_DISCORD_CHANNEL_ID);
         console.log("Bot Token present:", !!process.env.DISCORD_BOT_TOKEN);
-        await sendPumpFunAlert(txData.tokenMint, rugCheckPassed);
+        await sendPumpFunAlert(txData.tokenMint);
         console.log("✅ Discord alert sent successfully");
 
         console.log(`\n✅ SAFE TOKEN FOUND:

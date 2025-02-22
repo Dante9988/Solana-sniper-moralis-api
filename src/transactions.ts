@@ -553,26 +553,17 @@ export async function getRugCheckConfirmed(tokenMint: string): Promise<boolean> 
     const startTotal = performance.now();
 
     try {
-        // Get authentication token first
-        const token = await authenticateRugcheck();
-        console.log("🔑 Authenticated with Rugcheck: ", token);
-        // Fetch rug check data with auth header
+        // Try Rugcheck first without auth
         const startRugCheck = performance.now();
         const rugResponse = await axios.get<RugResponseExtended>(
             "https://api.rugcheck.xyz/v1/tokens/" + tokenMint + "/report", 
-            { 
-                timeout: config.tx.get_timeout,
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                }
-            }
+            { timeout: config.tx.get_timeout }
         );
         metrics.rugCheckApi = performance.now() - startRugCheck;
 
-        if (!rugResponse.data) return false;
-
-        if (config.rug_check.verbose_log && config.rug_check.verbose_log === true) {
-            console.log(rugResponse.data);
+        if (!rugResponse.data) {
+            console.log("⚠️ No Rugcheck data received, falling back to SolSniffer");
+            return getSolSnifferConfirmed(tokenMint);
         }
 
         // Start validation timing
@@ -694,20 +685,15 @@ export async function getRugCheckConfirmed(tokenMint: string): Promise<boolean> 
         // Validate conditions
         for (const condition of conditions) {
             if (condition.check) {
-                metrics.validation = performance.now() - startValidation;
-                metrics.total = performance.now() - startTotal;
-
-                console.log(`\n📊 Rug Check Metrics (Failed):
-• Total Time: ${metrics.total.toFixed(2)}ms
+                console.log(`\n📊 Rug Check Metrics (${condition.check ? 'Failed' : 'Passed'}):
+• Total Time: ${performance.now() - startValidation}ms
 • API Call: ${metrics.rugCheckApi.toFixed(2)}ms
 • Validation: ${metrics.validation.toFixed(2)}ms
-• Failed on: ${condition.message}`);
+• DB Operation: ${metrics.dbOperation.toFixed(2)}ms`);
 
                 return false;
             }
         }
-
-        metrics.validation = performance.now() - startValidation;
 
         // DB Operation timing
         const startDb = performance.now();
@@ -723,23 +709,108 @@ export async function getRugCheckConfirmed(tokenMint: string): Promise<boolean> 
                 console.log("⛔ Unable to store new token for tracking duplicate tokens: " + err);
             }
         });
-        metrics.dbOperation = performance.now() - startDb;
-
-        metrics.total = performance.now() - startTotal;
+        const dbOperation = performance.now() - startDb;
         
+        metrics.validation = performance.now() - startValidation;
+        metrics.total = performance.now() - startTotal; // This includes API time since startTotal is before API call
+
         console.log(`\n📊 Rug Check Metrics (Passed):
 • Total Time: ${metrics.total.toFixed(2)}ms
 • API Call: ${metrics.rugCheckApi.toFixed(2)}ms
 • Validation: ${metrics.validation.toFixed(2)}ms
-• DB Operation: ${metrics.dbOperation.toFixed(2)}ms`);
+• DB Operation: ${dbOperation.toFixed(2)}ms`);
 
         return true;
 
-    } catch (error) {
+    } catch (error: any) {
         metrics.total = performance.now() - startTotal;
-        console.error(`❌ Rug Check Error (${metrics.total.toFixed(2)}ms):`, error);
-        return false;
+        console.log(`⚠️ Rugcheck failed (${metrics.total.toFixed(2)}ms), falling back to SolSniffer`);
+        return getSolSnifferConfirmed(tokenMint);
     }
+}
+
+// export async function getRugCheckConfirmed(tokenMint: string): Promise<boolean> {
+//   return getSolSnifferConfirmed(tokenMint);
+// }
+
+async function getSolSnifferConfirmed(tokenMint: string): Promise<boolean> {
+  const metrics = {
+      apiCall: 0,
+      validation: 0,
+      total: 0
+  };
+
+  const startTotal = performance.now();
+
+  try {
+      // Fetch token data from solsniffer
+      const startApi = performance.now();
+      const response = await axios.get(
+          `https://solsniffer.com/api/v2/token/${tokenMint}`,
+          {
+              headers: {
+                  'X-API-KEY': process.env.SOLSNIFFER_API_KEY || '',
+                  'accept': 'application/json'
+              }
+          }
+      );
+      metrics.apiCall = performance.now() - startApi;
+
+      const startValidation = performance.now();
+      
+      const auditRisk = response.data.tokenData.auditRisk;
+      if (!auditRisk) {
+          console.log("❌ No audit risk data available");
+          return false;
+      }
+
+      // Check required security features
+      const conditions = [
+          {
+              check: !auditRisk.mintDisabled,
+              message: "🚫 Mint is not disabled"
+          },
+          {
+              check: !auditRisk.freezeDisabled,
+              message: "🚫 Freeze authority is not disabled"
+          },
+          {
+              check: !auditRisk.lpBurned,
+              message: "🚫 LP tokens are not burned"
+          }
+      ];
+
+      // Validate conditions
+      for (const condition of conditions) {
+          if (condition.check) {
+              metrics.validation = performance.now() - startValidation;
+              metrics.total = performance.now() - startTotal;
+
+              console.log(`\n📊 SolSniffer Check Metrics (Failed):
+• Total Time: ${metrics.total.toFixed(2)}ms
+• API Call: ${metrics.apiCall.toFixed(2)}ms
+• Validation: ${metrics.validation.toFixed(2)}ms
+• Failed on: ${condition.message}`);
+
+              return false;
+          }
+      }
+
+      metrics.validation = performance.now() - startValidation;
+      metrics.total = performance.now() - startTotal;
+      
+      console.log(`\n📊 SolSniffer Check Metrics (Passed):
+• Total Time: ${metrics.total.toFixed(2)}ms
+• API Call: ${metrics.apiCall.toFixed(2)}ms
+• Validation: ${metrics.validation.toFixed(2)}ms`);
+
+      return true;
+
+  } catch (error) {
+      metrics.total = performance.now() - startTotal;
+      console.error(`❌ SolSniffer Check Error (${metrics.total.toFixed(2)}ms):`, error);
+      return false;
+  }
 }
 
 export async function fetchAndSaveSwapDetails(tx: string): Promise<boolean> {
@@ -968,42 +1039,40 @@ export async function createSellTransaction(solMint: string, tokenMint: string, 
 let rugcheckJWT: string | null = null;
 
 async function authenticateRugcheck(): Promise<string> {
-  try {
-      if (rugcheckJWT) return rugcheckJWT;
+    try {
+        if (rugcheckJWT) return rugcheckJWT;
 
-      // Create keypair from private key
-      const privateKey = bs58.decode(process.env.RUGCHECK_PRIVATE_KEY || '');
-      const keypair = Keypair.fromSecretKey(privateKey);
+        const keypair = Keypair.fromSecretKey(bs58.decode(process.env.RUGCHECK_PRIVATE_KEY || ''));
+        const timestamp = Date.now();
+        const message = "Sign-in to Rugcheck.xyz"; // Simplified message without timestamp
+        const encodedMessage = new TextEncoder().encode(message);
+        const signedData = nacl.sign.detached(encodedMessage, keypair.secretKey);
 
-      const message = "Sign-in to Rugcheck.xyz";
-      const encodedMessage = new TextEncoder().encode(message);
-      const signedData = nacl.sign.detached(encodedMessage, keypair.secretKey);
+        const authData = {
+            message: {
+                message,
+                publicKey: keypair.publicKey.toString(),
+                timestamp
+            },
+            signature: {
+                data: bs58.encode(signedData),
+                type: "ed25519"
+            },
+            wallet: keypair.publicKey.toString()
+        };
 
-      const authData = {
-          message: {
-              message: message,
-              publicKey: keypair.publicKey.toString(),
-              timestamp: Date.now()
-          },
-          signature: {
-              data: Array.from(signedData),
-              type: "ed25519"
-          },
-          wallet: keypair.publicKey.toString()
-      };
+        const response = await axios.post(
+            "https://api.rugcheck.xyz/auth/login/solana",
+            authData
+        );
 
-      const response = await axios.post(
-          "https://api.rugcheck.xyz/auth/login/solana",
-          authData
-      );
-
-      if (!response.data.token) {
-          throw new Error('No token received from Rugcheck');
-      }
-      rugcheckJWT = response.data.token;
-      return response.data.token;
-  } catch (error) {
-      console.error('Failed to authenticate with Rugcheck:', error);
-      throw error;
-  }
+        if (!response.data.token) {
+            throw new Error('No token received from Rugcheck');
+        }
+        rugcheckJWT = response.data.token;
+        return response.data.token;
+    } catch (error) {
+        console.error('Failed to authenticate with Rugcheck:', error);
+        throw error;
+    }
 }
