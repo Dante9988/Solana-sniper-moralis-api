@@ -10,7 +10,7 @@ import { Client, GatewayIntentBits, TextChannel, ActionRowBuilder, ButtonBuilder
 dotenv.config();
 const prisma = new PrismaClient();
 
-const RPC_ENDPOINT = process.env.RPC_ENDPOINT || "";
+const RPC_ENDPOINT = process.env.RPC_ENDPOINT_15K || "";
 const connection = new Connection(RPC_ENDPOINT, "confirmed");
 
 // Initialize Discord client
@@ -86,26 +86,27 @@ async function fetchWithRetry(url: string, maxRetries = 3): Promise<any> {
 // Check market caps of tracked tokens
 async function checkTokenMarketCaps() {
     try {
+        // Only fetch tokens that haven't been alerted yet
         const tokens = await prisma.pumpFunToken.findMany({
             where: { alerted: false }
         });
 
         for (const token of tokens) {
             try {
-                // Add 5 second delay between API calls
                 await sleep(10000);
-                
                 const tokenData = await fetchWithRetry(`https://frontend-api-v3.pump.fun/coins/${token.mint}`);
                 const marketCap = Number(tokenData.usd_market_cap);
 
-                if (marketCap >= 14000 && marketCap <= 20000) {
-                    console.log(`🎯 Token ${token.mint} reached target range: $${marketCap}`);
+                if (marketCap >= 15000) {
                     await sendPumpFunAlert(token.mint);
                     
+                    // Update the alerted status in the database
                     await prisma.pumpFunToken.update({
                         where: { mint: token.mint },
                         data: { alerted: true }
                     });
+                    
+                    console.log(`✅ Marked token ${token.mint} as alerted`);
                 }
             } catch (error) {
                 console.error(`❌ Error checking token ${token.mint}:`, error);
@@ -210,6 +211,16 @@ async function getBondingCurveData(tokenMint: string) {
 // Update the sendPumpFunAlert function to use on-chain data
 async function sendPumpFunAlert(tokenMint: string) {
     try {
+        // Check if token has already been alerted
+        const existingToken = await prisma.pumpFunToken.findUnique({
+            where: { mint: tokenMint }
+        });
+
+        if (existingToken?.alerted) {
+            console.log(`⏭️ Token ${tokenMint} already alerted, skipping...`);
+            return;
+        }
+
         const tokenData = await fetchWithRetry(`https://frontend-api-v3.pump.fun/coins/${tokenMint}`);
         const token = tokenData;
 
@@ -318,6 +329,14 @@ ${token.website ? `🌐 **Website:** ${token.website}\n` : ''}${token.twitter ? 
         }
         await channel.send(message);
         console.log(`✅ 15K Range Alert sent for token: ${tokenMint}`);
+
+        // After successful alert, update the alerted status
+        await prisma.pumpFunToken.update({
+            where: { mint: tokenMint },
+            data: { alerted: true }
+        });
+        
+        console.log(`✅ Alert sent and marked token ${tokenMint} as alerted`);
 
     } catch (error) {
         console.error('❌ Failed to send Discord message:', error);
