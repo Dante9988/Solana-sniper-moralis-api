@@ -127,12 +127,59 @@ function getEasternTime(): string {
 }
 
 function createProgressBar(percent: number): string {
-    const filled = '█';
-    const empty = '░';
-    const totalBars = 20;
-    const filledBars = Math.round(percent * totalBars);
-    const emptyBars = totalBars - filledBars;
-    return filled.repeat(filledBars) + empty.repeat(emptyBars);
+    // Convert percent (e.g., 0.44%) to a 0-1 range
+    const normalized = percent / 100;
+
+    // Calculate the number of filled blocks in a 20-block bar
+    const totalBlocks = 20;
+    const filled = Math.round(normalized * totalBlocks); // Use round for better distribution
+    const empty = totalBlocks - filled;
+
+    return '█'.repeat(filled) + '░'.repeat(empty) + ` ${percent.toFixed(2)}%`;
+}
+
+async function getBondingCurveData(tokenMint: string) {
+    try {
+        const [bondingCurvePDA] = PublicKey.findProgramAddressSync(
+            [
+                Buffer.from("bonding-curve"),
+                new PublicKey(tokenMint).toBuffer()
+            ],
+            new PublicKey(PUMP_FUN_PROGRAM)
+        );
+
+        const bondingCurveAccount = await connection.getAccountInfo(bondingCurvePDA);
+        
+        if (!bondingCurveAccount) {
+            throw new Error("Bonding curve account not found");
+        }
+
+        // Parse account data based on the IDL structure
+        const virtualTokenReserves = bondingCurveAccount.data.readBigUInt64LE(8);
+        const virtualSolReserves = bondingCurveAccount.data.readBigUInt64LE(16);
+        const realTokenReserves = bondingCurveAccount.data.readBigUInt64LE(24);
+        const realSolReserves = bondingCurveAccount.data.readBigUInt64LE(32);
+        const tokenTotalSupply = bondingCurveAccount.data.readBigUInt64LE(40);
+        const complete = bondingCurveAccount.data.readUInt8(48) === 1;
+
+        console.log('On-chain Bonding Curve Data:', {
+            virtualTokenReserves: Number(virtualTokenReserves),
+            tokenTotalSupply: Number(tokenTotalSupply),
+            percent: Number(virtualTokenReserves) / Number(tokenTotalSupply)
+        });
+
+        return {
+            virtualTokenReserves: Number(virtualTokenReserves),
+            virtualSolReserves: Number(virtualSolReserves),
+            realTokenReserves: Number(realTokenReserves),
+            realSolReserves: Number(realSolReserves),
+            tokenTotalSupply: Number(tokenTotalSupply),
+            complete
+        };
+    } catch (error) {
+        console.error("Error fetching bonding curve data:", error);
+        return null;
+    }
 }
 
 export async function sendPumpFunAlert(tokenMint: string) {
@@ -184,18 +231,18 @@ export async function sendPumpFunAlert(tokenMint: string) {
         const tokenMetadata = await axios.get(`https://frontend-api-v3.pump.fun/coins/${tokenMint}`);
         const tokenData = tokenMetadata.data;
 
-        // Calculate bonding curve percentage based on market cap
-        const marketCapThreshold = 85000; // $85k threshold
-        const currentMarketCap = Number(tokenData.usd_market_cap);
-        const maxBondingPercent = currentMarketCap >= marketCapThreshold ? 1 : 0.5; // 100% if above threshold, 50% if below
-
-        // Calculate actual bonding percentage from virtual reserves
-        const actualBondingPercent = Number(tokenData.virtual_sol_reserves) / 
-                                   Number(tokenData.virtual_token_reserves);
-        const bondingPercent = Math.min(actualBondingPercent, maxBondingPercent);
+        // Get on-chain bonding curve data
+        const bondingCurveData = await getBondingCurveData(tokenMint);
+        
+        let bondingPercent = 0;
+        if (bondingCurveData) {
+            // Use raw percentage from on-chain data
+            bondingPercent = bondingCurveData.virtualTokenReserves / bondingCurveData.tokenTotalSupply;
+        } else {
+            bondingPercent = Number(tokenData.virtual_token_reserves) / Number(tokenData.total_supply);
+        }
 
         const progressBar = createProgressBar(bondingPercent);
-        const devBuyAmount = Number(tokenData.virtual_sol_reserves) / 1e9; // Convert lamports to SOL
 
         const message = {
             content: '🎯 **NEW PUMP.FUN TOKEN DETECTED** 🎯',
@@ -217,10 +264,9 @@ ${tokenData.description ? `📝 **Description:** ${tokenData.description}` : '�
 📈 **Total Supply:** ${marketData.totalSupply}
 
 **⚡ Bonding Curve**
-${progressBar} ${(bondingPercent * 100).toFixed(2)}%
-**Dev Buy:** ${devBuyAmount.toFixed(2)} SOL
+${progressBar}
 
-🔒 **Bonding Complete:** ${marketData.complete ? 'Yes ✅' : 'No ⏳'}
+🔒 Bonding Complete: ${tokenData.complete ? 'Yes ✅' : 'No ❌'}
 
 ${tokenData.website ? `🌐 **Website:** ${tokenData.website}` : ''}
 ${tokenData.twitter ? `🐦 **Twitter:** ${tokenData.twitter}` : ''}

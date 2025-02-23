@@ -12,7 +12,8 @@
     "clean": "rm -rf dist",
     "server": "ts-node src/server.ts",
     "server:dev": "nodemon src/server.ts",
-    "pumpfun": "ts-node src/pumpfun-sniper.ts"
+    "pumpfun": "ts-node src/pumpfun-sniper.ts",
+    "pumpfun15k": "ts-node src/discord-pumpfun-15k.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
@@ -40,6 +41,7 @@
     "@metaplex-foundation/js": "^0.20.1",
     "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
     "@metaplex-foundation/umi": "^0.9.1",
+    "@prisma/client": "^6.4.1",
     "@project-serum/anchor": "^0.26.0",
     "@pythnetwork/client": "^2.22.1",
     "@pythnetwork/hermes-client": "^2.0.0",
