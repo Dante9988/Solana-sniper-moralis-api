@@ -66,15 +66,15 @@ async function storeNewToken(tokenMint: string) {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function fetchWithRetry(url: string, maxRetries = 3): Promise<any> {
+async function fetchWithRetry(url: string, maxRetries = 5): Promise<any> {
     for (let i = 0; i < maxRetries; i++) {
         try {
             const response = await axios.get(url);
             return response.data;
         } catch (error: any) {
             if (error.response?.status === 429) {
-                console.log(`Rate limited (attempt ${i + 1}/${maxRetries}), waiting 5 seconds...`);
-                await sleep(5000); // Wait 5 seconds
+                console.log(`Rate limited (attempt ${i + 1}/${maxRetries}), waiting 10 seconds...`);
+                await sleep(10000); // Wait 10 seconds
                 continue;
             }
             throw error;
@@ -83,36 +83,53 @@ async function fetchWithRetry(url: string, maxRetries = 3): Promise<any> {
     throw new Error(`Failed after ${maxRetries} retries`);
 }
 
+// Add rate limit handling utility
+async function processWithRateLimit<T>(items: T[], processFn: (item: T) => Promise<void>, delayMs = 2000) {
+    for (const item of items) {
+        try {
+            await processFn(item);
+            // Add delay between requests
+            await sleep(delayMs);
+        } catch (error: any) {
+            if (error.response?.status === 429) {
+                console.log('Rate limit hit, waiting 10 seconds...');
+                await sleep(10000); // Wait longer on rate limit
+                try {
+                    await processFn(item); // Retry once
+                } catch (retryError) {
+                    console.error(`Failed retry for item:`, retryError);
+                }
+            } else {
+                console.error(`Error processing item:`, error);
+            }
+        }
+    }
+}
+
 // Check market caps of tracked tokens
 async function checkTokenMarketCaps() {
     try {
-        // Only fetch tokens that haven't been alerted yet
+        // Get tokens in smaller batches
+        const batchSize = 5;
         const tokens = await prisma.pumpFunToken.findMany({
-            where: { alerted: false }
+            where: { alerted: false },
+            take: batchSize // Process only 5 tokens at a time
         });
 
-        for (const token of tokens) {
-            try {
-                await sleep(10000);
-                const tokenData = await fetchWithRetry(`https://frontend-api-v3.pump.fun/coins/${token.mint}`);
-                const marketCap = Number(tokenData.usd_market_cap);
+        await processWithRateLimit(tokens, async (token: { mint: string }) => {
+            const tokenData = await fetchWithRetry(`https://frontend-api-v3.pump.fun/coins/${token.mint}`);
+            const marketCap = Number(tokenData.usd_market_cap);
 
-                if (marketCap >= 15000) {
-                    await sendPumpFunAlert(token.mint);
-                    
-                    // Update the alerted status in the database
-                    await prisma.pumpFunToken.update({
-                        where: { mint: token.mint },
-                        data: { alerted: true }
-                    });
-                    
-                    console.log(`✅ Marked token ${token.mint} as alerted`);
-                }
-            } catch (error) {
-                console.error(`❌ Error checking token ${token.mint}:`, error);
-                continue; // Skip to next token on error
+            if (marketCap >= 15000) {
+                await sendPumpFunAlert(token.mint);
+                await prisma.pumpFunToken.update({
+                    where: { mint: token.mint },
+                    data: { alerted: true }
+                });
+                console.log(`✅ Marked token ${token.mint} as alerted`);
             }
-        }
+        });
+
     } catch (error) {
         console.error("❌ Error checking market caps:", error);
     }
