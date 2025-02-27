@@ -51,7 +51,10 @@ async function processToken(signature: string) {
         console.log("📨 Attempting to send Discord alert...");
         console.log("Channel ID:", process.env.PUMPFUN_DISCORD_CHANNEL_ID);
         console.log("Bot Token present:", !!process.env.DISCORD_BOT_TOKEN);
+
         await sendPumpFunAlert(txData.tokenMint);
+
+        
         console.log("✅ Discord alert sent successfully");
 
         console.log(`\n✅ SAFE TOKEN FOUND:

@@ -97,3 +97,68 @@ export interface HolderAnalysis {
     top10HoldersPercentage: number;
     isDistributionHealthy: boolean;
 }
+
+export interface MoralisTokenMetadata {
+  mint: string;
+  standard: string;
+  name: string;
+  symbol: string;
+  logo: string;
+  decimals: string;
+  metaplex: {
+    metadataUri: string;
+    masterEdition: boolean;
+    isMutable: boolean;
+    sellerFeeBasisPoints: number;
+    updateAuthority: string;
+    primarySaleHappened: number;
+  };
+  fullyDilutedValue: string;
+  totalSupply: string;
+  totalSupplyFormatted: string;
+  links: any | null;
+  description: string | null;
+}
+
+export interface MoralisPairToken {
+  tokenAddress: string;
+  tokenName: string;
+  tokenSymbol: string;
+  tokenLogo: string | null;
+  tokenDecimals: string;
+  pairTokenType: string;
+  liquidityUsd: number;
+}
+
+export interface MoralisPair {
+  exchangeAddress: string;
+  exchangeName: string;
+  exchangeLogo: string;
+  pairAddress: string;
+  pairLabel: string;
+  usdPrice: number;
+  usdPrice24hrPercentChange: number;
+  usdPrice24hrUsdChange: number;
+  volume24hrNative: number;
+  volume24hrUsd: number;
+  liquidityUsd: number;
+  baseToken: string;
+  quoteToken: string;
+  inactivePair: boolean;
+  pair: MoralisPairToken[];
+}
+
+export interface MoralisPairsResponse {
+  pairs: MoralisPair[];
+}
+
+export interface TokenMarketData {
+  metadata: MoralisTokenMetadata;
+  pairs: MoralisPairsResponse;
+  price: number;
+  totalSupply: number;
+  marketCap: number;
+  volume24h: number;
+  liquidity: number;
+  priceChangePercentage24h: number;
+}

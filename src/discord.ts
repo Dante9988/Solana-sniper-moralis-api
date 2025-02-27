@@ -7,6 +7,7 @@ import { CallStatsAnalyzer } from './callStats';
 import { PUMP_FUN_PROGRAM } from './constants';
 import { analyzeTokenWithGrok, TokenAnalysisData, updateDiscordWithGrokAnalysis } from './grok';
 import { getRugCheckConfirmed } from './transactions';
+import { getTokenMarketData, formatPrice, formatMarketCap, formatVolume, formatLiquidity } from './services/tokenDataService';
 
 dotenv.config();
 
@@ -59,26 +60,26 @@ export interface VolumeLiquidityData {
     liquidity?: string;
 }
 
-function formatPrice(price: string | number | undefined): string {
-    if (!price) return 'Unknown';
+// function formatPrice(price: string | number | undefined): string {
+//     if (!price) return 'Unknown';
     
-    const numPrice = Number(price);
+//     const numPrice = Number(price);
     
-    // Convert to full decimal format
-    if (numPrice < 1) {
-        // Convert to string to avoid scientific notation
-        const priceString = numPrice.toFixed(20);
-        // Remove trailing zeros after decimal
-        const trimmedPrice = priceString.replace(/\.?0+$/, '');
-        return `$${trimmedPrice}`;
-    }
+//     // Convert to full decimal format
+//     if (numPrice < 1) {
+//         // Convert to string to avoid scientific notation
+//         const priceString = numPrice.toFixed(20);
+//         // Remove trailing zeros after decimal
+//         const trimmedPrice = priceString.replace(/\.?0+$/, '');
+//         return `$${trimmedPrice}`;
+//     }
     
-    // For numbers >= 1, use regular formatting
-    return `$${numPrice.toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 8
-    })}`;
-}
+//     // For numbers >= 1, use regular formatting
+//     return `$${numPrice.toLocaleString(undefined, {
+//         minimumFractionDigits: 2,
+//         maximumFractionDigits: 8
+//     })}`;
+// }
 
 export async function getTokenPriceHistory(tokenMint: string): Promise<{
     items: Array<{
@@ -129,92 +130,59 @@ export async function getTokenPriceHistory(tokenMint: string): Promise<{
 
 async function fetchTokenData(tokenMint: string): Promise<TokenData> {
     const metrics = {
-        start: performance.now(),
-        parallel: 0,
-        total: 0
+      start: performance.now(),
+      total: 0
     };
-
+  
     try {
-        // Get all necessary data in parallel
-        const startParallel = performance.now();
-        const [
-            priceData, 
-            totalSupply
-        ] = await Promise.all([
-            getTokenPriceInUSDC(tokenMint),
-            getTokenTotalSupply(tokenMint)
-        ]);
-        metrics.parallel = performance.now() - startParallel;
-
-        const priceInUsd = priceData;
-
-        if (!priceInUsd || !totalSupply) {
-            metrics.total = performance.now() - metrics.start;
-            console.log(`⚠️ Missing price or supply data (${metrics.total.toFixed(2)}ms)`);
-            return {};
-        }
-
-        const marketCap = priceInUsd * totalSupply;
-
-        metrics.total = performance.now() - metrics.start;
-        console.log(`\n📊 Token Data Fetch:
-• Total Time: ${metrics.total.toFixed(2)}ms
-• Parallel Fetch: ${metrics.parallel.toFixed(2)}ms
-• Price: $${priceInUsd.toFixed(6)}
-• Total Supply: ${totalSupply}
-• Market Cap: $${marketCap.toLocaleString()}`);
-
-        // Only return data if we have valid values
-        if (marketCap > 0) {
-            return {
-                price: formatPrice(priceInUsd),
-                marketCap: `$${marketCap.toLocaleString()}`
-            };
-        }
-
+      const tokenData = await getTokenMarketData(tokenMint);
+      
+      metrics.total = performance.now() - metrics.start;
+      
+      if (!tokenData) {
+        console.log(`⚠️ Failed to fetch token data (${metrics.total.toFixed(2)}ms)`);
         return {};
-
-    } catch (error) {
-        metrics.total = performance.now() - metrics.start;
-        console.error(`❌ Error fetching token data (${metrics.total.toFixed(2)}ms):`, error);
-        return {};
-    }
-}
-
-async function getTokenVolumeAndLiquidity(tokenMint: string): Promise<VolumeLiquidityData> {
-    try {
-        const response = await axios.get(
-            `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`
-        );
-
-        const pair = response.data?.pairs?.[0];
+      }
+      
+      console.log(`\n📊 Token Data Fetch:
+  • Total Time: ${metrics.total.toFixed(2)}ms
+  • Price: ${formatPrice(tokenData.price)}
+  • Total Supply: ${tokenData.totalSupply}
+  • Market Cap: ${formatMarketCap(tokenData.marketCap)}`);
+  
+      // Only return data if we have valid values
+      if (tokenData.marketCap > 0) {
         return {
-            volume1h: pair?.volume?.h1 ? `$${Number(pair.volume.h1).toLocaleString()}` : 'Unknown',
-            volume24h: pair?.volume?.h24 ? `$${Number(pair.volume.h24).toLocaleString()}` : 'Unknown',
-            liquidity: pair?.liquidity?.usd ? `$${Number(pair.liquidity.usd).toLocaleString()}` : 'Unknown'
+          price: formatPrice(tokenData.price),
+          marketCap: formatMarketCap(tokenData.marketCap)
         };
+      }
+  
+      return {};
     } catch (error) {
-        console.error('Error fetching token data from DexScreener:', error);
-        return {};
+      metrics.total = performance.now() - metrics.start;
+      console.error(`❌ Error fetching token data (${metrics.total.toFixed(2)}ms):`, error);
+      return {};
     }
-}
+  }
 
-async function getTokenTotalSupply(tokenMint: string): Promise<number> {
+  async function getTokenVolumeAndLiquidity(tokenMint: string): Promise<VolumeLiquidityData> {
     try {
-        const mint = await getMint(
-            connection,
-            new PublicKey(tokenMint)
-        );
-        
-        // Calculate total supply considering decimals
-        const totalSupply = Number(mint.supply) / Math.pow(10, mint.decimals);
-        
-        return totalSupply;
+      const tokenData = await getTokenMarketData(tokenMint);
+      
+      if (!tokenData) {
+        return {};
+      }
+      
+      return {
+        volume24h: formatVolume(tokenData.volume24h),
+        liquidity: formatLiquidity(tokenData.liquidity),
+      };
     } catch (error) {
-        console.error('Error fetching token supply:', error);
-        return 0;
+      console.error('Error getting token volume and liquidity:', error);
+      return {};
     }
-}
+  }
 
 interface TrenchBundleData {
     ticker?: string;
@@ -250,99 +218,15 @@ async function fetchTrenchData(tokenMint: string): Promise<TrenchBundleData> {
     }
 }
 
-async function getSolPrice(): Promise<number> {
-    try {
-        const response = await axios.get(
-            'https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112'
-        );
-        
-        const pair = response.data?.pairs?.[0];
-        if (pair?.priceUsd) {
-            return Number(pair.priceUsd);
-        }
-        
-        return 0;
-    } catch (error) {
-        console.error('Error fetching SOL price from DexScreener:', error);
-        return 0;
-    }
-}
-
-async function getTokenLiquidity(tokenMint: string): Promise<string> {
-    try {
-        const response = await axios.get(
-            `https://api.dexscreener.com/latest/dex/tokens/${tokenMint}`
-        );
-
-        const pair = response.data?.pairs?.[0];
-        if (pair?.liquidity?.usd) {
-            return `$${Number(pair.liquidity.usd).toLocaleString()}`;
-        }
-        
-        return 'Unknown';
-    } catch (error) {
-        console.error('Error fetching token liquidity from DexScreener:', error);
-        return 'Unknown';
-    }
-}
-
-async function getTokenPriceFromJupiter(tokenMint: string): Promise<{priceInSol: number, liquidity?: string}> {
-    try {
-        const response = await axios.get(`https://api.jup.ag/price/v2`, {
-            params: {
-                ids: tokenMint,
-                vsToken: 'So11111111111111111111111111111111111111112' // SOL mint address
-            }
-        });
-        
-        const priceData = response.data?.data?.[tokenMint];
-        if (!priceData) {
-            throw new Error('No price data found for token');
-        }
-
-        return {
-            priceInSol: priceData.price || 0,
-            liquidity: 'From Jupiter' // You can format this if needed
-        };
-    } catch (error) {
-        console.error('Error getting token price from Jupiter:', error);
-        return { priceInSol: 0 };
-    }
-}
-
-async function getTokenPriceInUSDC(tokenMint: string, retries = 3): Promise<number> {
-    try {
-        const response = await fetch(`https://api.jup.ag/price/v2?ids=${tokenMint}`);
-        const data = await response.json() as any;
-        const price = data?.data?.[tokenMint]?.price;
-
-        if (!price && retries > 0) {
-            console.log(`Retrying price fetch for ${tokenMint}, attempts left: ${retries}`);
-            await new Promise(resolve => setTimeout(resolve, 500));
-            return getTokenPriceInUSDC(tokenMint, retries - 1);
-        }
-
-        return parseFloat(price || '0');
-    } catch (error) {
-        if (retries > 0) {
-            console.log(`Error fetching price, retrying... attempts left: ${retries}`);
-            await new Promise(resolve => setTimeout(resolve, 500));
-            return getTokenPriceInUSDC(tokenMint, retries - 1);
-        }
-        console.error('Failed to fetch price after all retries:', error);
-        return 0;
-    }
-}
-
 async function calculateMarketCap(tokenMint: string): Promise<number> {
-
-    const [price, totalSupply] = await Promise.all([
-        getTokenPriceInUSDC(tokenMint),
-        getTokenTotalSupply(tokenMint)
-    ]);
-
-    return price * totalSupply;
-}
+    try {
+      const tokenData = await getTokenMarketData(tokenMint);
+      return tokenData?.marketCap || 0;
+    } catch (error) {
+      console.error('Error calculating market cap:', error);
+      return 0;
+    }
+  }
 
 function getEasternTime(): string {
     const options: Intl.DateTimeFormatOptions = {
@@ -382,6 +266,140 @@ async function checkBondingCurveStatus(tokenMint: string): Promise<boolean> {
     }
 }
 
+// export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean) {
+//     const metrics = {
+//         start: performance.now(),
+//         total: 0
+//     };
+
+//     if (!channel) {
+//         console.log('❌ Cannot send message - channel not found');
+//         return;
+//     }
+
+//     try {
+
+//         // Initial data fetch for quick alert
+//         const [trenchResult] = await Promise.allSettled([
+//             //fetchTokenData(tokenMint),
+//             fetchTrenchData(tokenMint),
+//         ]);
+//         const marketCap = await calculateMarketCap(tokenMint);
+//         const initialMarketData = {
+//             marketCap: marketCap.toString()
+//         };
+//         const trenchData = trenchResult.status === "fulfilled" ? trenchResult.value : {};
+
+//         const detectedTime = getEasternTime();
+//         const quickMessage = {
+//             embeds: [{
+//                 color: 0x2ecc71,
+//                 title: `🚀 New Token Launch Detected: ${trenchData.ticker?.toUpperCase() || 'UNKNOWN'}`,
+//                 description: `
+// \`\`\`
+// Token: ${tokenMint}
+// \`\`\`
+
+// **💹 Initial Market Data**
+// ━━━━━━━━━━━━━━━━━━━━━━
+// 💰 **Market Cap:** ${initialMarketData.marketCap || 'Unknown'}
+
+// **🎯 Quick Stats**
+// ━━━━━━━━━━━━━━━━━━━━━━
+// 📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
+// 📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
+// 💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
+
+// 🔄 *Fetching additional data...*`,
+//                 footer: {
+//                     text: `🕒 Detected at ${detectedTime} EST`,
+//                     icon_url: 'https://pump.fun/favicon.ico'
+//                 }
+//             }],
+//             components: [
+//                 new ActionRowBuilder<ButtonBuilder>().addComponents(
+//                     new ButtonBuilder()
+//                         .setLabel('🌊 Pump')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://pump.fun/${tokenMint}`),
+//                     new ButtonBuilder()
+//                         .setLabel('👽 GMGN')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://gmgn.ai/sol/token/${tokenMint}`),
+//                     new ButtonBuilder()
+//                         .setLabel('🐂 BullX')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenMint}`),
+//                     new ButtonBuilder()
+//                         .setLabel('⭐ Photon')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenMint}`),
+//                     new ButtonBuilder()
+//                         .setLabel('🌌 Axiom')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://axiom.trade/t/${tokenMint}`)
+//                 ),
+//                 new ActionRowBuilder<ButtonBuilder>().addComponents(
+//                     new ButtonBuilder()
+//                         .setLabel('🔄 Raydium')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenMint}`),
+//                     new ButtonBuilder()
+//                         .setLabel('🦅 Birdeye')
+//                         .setStyle(ButtonStyle.Link)
+//                         .setURL(`https://birdeye.so/token/${tokenMint}?chain=solana`)
+//                 )
+//             ]
+//         };
+
+//         const quickAlert = await channel.send(quickMessage);
+
+//         // Fetch additional data for update
+//         const volumeLiquidityResult = await getTokenVolumeAndLiquidity(tokenMint);
+        
+//         const updateTime = getEasternTime();
+//         const updatedMessage = {
+//             embeds: [{
+//                 color: 0x2ecc71,
+//                 title: `🚀 New Token Launch Detected: ${trenchData.ticker?.toUpperCase() || 'UNKNOWN'}`,
+//                 description: `
+// \`\`\`
+// Token: ${tokenMint}
+// \`\`\`
+
+// **💹 Market Analysis**
+// ━━━━━━━━━━━━━━━━━━━━━━
+// 💰 **Market Cap:** ${initialMarketData.marketCap || 'Unknown'}
+// 💧 **Liquidity:** ${volumeLiquidityResult.liquidity || 'Unknown'}
+// 📊 **1H Volume:** ${volumeLiquidityResult.volume1h || 'Unknown'}
+// 📊 **24H Volume:** ${volumeLiquidityResult.volume24h || 'Unknown'}
+
+// **🎯 Quick Stats**
+// ━━━━━━━━━━━━━━━━━━━━━━
+// 📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
+// 📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
+// 💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
+// 🛡️ **Security:** ${rugCheckPassed ? '✅ PASSED' : '⚠️ CAUTION'}
+
+// > 💡 *DYOR - Trade at your own risk*`,
+//                 footer: {
+//                     text: `🕒 ${detectedTime} EST • Updated at ${updateTime} EST`,
+//                     icon_url: 'https://pump.fun/favicon.ico'
+//                 }
+//             }],
+//             components: quickMessage.components
+//         };
+
+//         await quickAlert.edit(updatedMessage);
+
+//         metrics.total = performance.now() - metrics.start;
+//         console.log(`✨ Alert sent in ${metrics.total.toFixed(2)}ms for ${tokenMint}`);
+
+//     } catch (error) {
+//         console.error(`❌ Alert error (${performance.now() - metrics.start}ms):`, error);
+//     }
+// }
+
 export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean) {
     const metrics = {
         start: performance.now(),
@@ -393,44 +411,93 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
         return;
     }
 
+    // Check if this is a Pump.fun token
+    const isPumpToken = tokenMint.toLowerCase().endsWith('pump');
+    console.log(`Token ${tokenMint} is ${isPumpToken ? 'a Pump.fun token' : 'not a Pump.fun token'}`);
+    
+    // Skip non-Pump.fun tokens
+    if (!isPumpToken) {
+        console.log(`⏭️ Skipping alert for non-Pump.fun token: ${tokenMint}`);
+        return;
+    }
+
     try {
-
-        // Initial data fetch for quick alert
-        const [trenchResult] = await Promise.allSettled([
-            //fetchTokenData(tokenMint),
-            fetchTrenchData(tokenMint),
+        // Fetch all necessary data in parallel, but handle failures independently
+        const [tokenDataResult, trenchResult] = await Promise.allSettled([
+            getTokenMarketData(tokenMint),
+            fetchTrenchData(tokenMint)
         ]);
-        const marketCap = await calculateMarketCap(tokenMint);
-        const initialMarketData = {
-            marketCap: marketCap.toString()
+        
+        // Safely extract data from results
+        const tokenData = tokenDataResult.status === 'fulfilled' ? tokenDataResult.value : null;
+        const trenchData = trenchResult.status === 'fulfilled' ? trenchResult.value : {
+            holdingBundles: 0,
+            totalBundles: 0,
+            holdingPercentage: 0,
+            totalSolSpent: null,
+            ticker: null
         };
-        const trenchData = trenchResult.status === "fulfilled" ? trenchResult.value : {};
-
+        
+        // Log errors but continue with available data
+        if (tokenDataResult.status === 'rejected') {
+            console.error('Error fetching token data from Moralis:', tokenDataResult.reason);
+        }
+        
+        if (trenchResult.status === 'rejected') {
+            console.error('Error fetching Trench data:', trenchResult.reason);
+        }
+        
+        // Debug log for token data
+        console.log('Token data from Moralis:', JSON.stringify({
+            price: tokenData?.price,
+            marketCap: tokenData?.marketCap,
+            liquidity: tokenData?.liquidity,
+            volume24h: tokenData?.volume24h,
+            metadata: {
+                name: tokenData?.metadata?.name,
+                symbol: tokenData?.metadata?.symbol,
+                totalSupply: tokenData?.metadata?.totalSupply,
+                totalSupplyFormatted: tokenData?.metadata?.totalSupplyFormatted
+            }
+        }, null, 2));
+        
+        // Get token name and ticker from Moralis data if available
+        const tokenName = tokenData?.metadata?.name || trenchData.ticker?.toUpperCase() || 'UNKNOWN';
+        const tokenSymbol = tokenData?.metadata?.symbol || trenchData.ticker?.toUpperCase() || 'UNKNOWN';
+        const tokenLogo = tokenData?.metadata?.logo || null;
+        
         const detectedTime = getEasternTime();
-        const quickMessage = {
+        
+        // Create complete message with all available data
+        const message = {
             embeds: [{
                 color: 0x2ecc71,
-                title: `🚀 New Token Launch Detected: ${trenchData.ticker?.toUpperCase() || 'UNKNOWN'}`,
+                title: `🚀 New Token Launch Detected: ${tokenSymbol}`,
                 description: `
 \`\`\`
 Token: ${tokenMint}
 \`\`\`
 
-**💹 Initial Market Data**
+**💹 Market Analysis**
 ━━━━━━━━━━━━━━━━━━━━━━
-💰 **Market Cap:** ${initialMarketData.marketCap || 'Unknown'}
+💰 **Market Cap:** ${tokenData && tokenData.marketCap > 0 ? formatMarketCap(tokenData.marketCap) : 'Unknown'}
+💧 **Liquidity:** ${tokenData && tokenData.liquidity > 0 ? formatLiquidity(tokenData.liquidity) : 'Unknown'}
+📊 **24H Volume:** ${tokenData && tokenData.volume24h > 0 ? formatVolume(tokenData.volume24h) : 'Unknown'}
 
 **🎯 Quick Stats**
 ━━━━━━━━━━━━━━━━━━━━━━
 📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
 📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
 💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
+🛡️ **Security:** ${rugCheckPassed ? '✅ PASSED' : '⚠️ CAUTION'}
 
-🔄 *Fetching additional data...*`,
+> 💡 *DYOR - Trade at your own risk*`,
                 footer: {
                     text: `🕒 Detected at ${detectedTime} EST`,
                     icon_url: 'https://pump.fun/favicon.ico'
-                }
+                },
+                // Add thumbnail if token logo exists
+                ...(tokenLogo ? { thumbnail: { url: tokenLogo } } : {})
             }],
             components: [
                 new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -461,52 +528,18 @@ Token: ${tokenMint}
                         .setStyle(ButtonStyle.Link)
                         .setURL(`https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenMint}`),
                     new ButtonBuilder()
-                        .setLabel('🦅 Birdeye')
+                        .setLabel('🦅 Birdeye') 
                         .setStyle(ButtonStyle.Link)
-                        .setURL(`https://birdeye.so/token/${tokenMint}?chain=solana`)
+                        .setURL(`https://birdeye.so/token/${tokenMint}?chain=solana`),
+                    new ButtonBuilder()
+                        .setLabel('📊 DexScreener')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(`https://dexscreener.com/solana/${tokenMint}`)
                 )
             ]
         };
 
-        const quickAlert = await channel.send(quickMessage);
-
-        // Fetch additional data for update
-        const volumeLiquidityResult = await getTokenVolumeAndLiquidity(tokenMint);
-        
-        const updateTime = getEasternTime();
-        const updatedMessage = {
-            embeds: [{
-                color: 0x2ecc71,
-                title: `🚀 New Token Launch Detected: ${trenchData.ticker?.toUpperCase() || 'UNKNOWN'}`,
-                description: `
-\`\`\`
-Token: ${tokenMint}
-\`\`\`
-
-**💹 Market Analysis**
-━━━━━━━━━━━━━━━━━━━━━━
-💰 **Market Cap:** ${initialMarketData.marketCap || 'Unknown'}
-💧 **Liquidity:** ${volumeLiquidityResult.liquidity || 'Unknown'}
-📊 **1H Volume:** ${volumeLiquidityResult.volume1h || 'Unknown'}
-📊 **24H Volume:** ${volumeLiquidityResult.volume24h || 'Unknown'}
-
-**🎯 Quick Stats**
-━━━━━━━━━━━━━━━━━━━━━━
-📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
-📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
-💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
-🛡️ **Security:** ${rugCheckPassed ? '✅ PASSED' : '⚠️ CAUTION'}
-
-> 💡 *DYOR - Trade at your own risk*`,
-                footer: {
-                    text: `🕒 ${detectedTime} EST • Updated at ${updateTime} EST`,
-                    icon_url: 'https://pump.fun/favicon.ico'
-                }
-            }],
-            components: quickMessage.components
-        };
-
-        await quickAlert.edit(updatedMessage);
+        await channel.send(message);
 
         metrics.total = performance.now() - metrics.start;
         console.log(`✨ Alert sent in ${metrics.total.toFixed(2)}ms for ${tokenMint}`);
