@@ -152,13 +152,76 @@ export interface MoralisPairsResponse {
   pairs: MoralisPair[];
 }
 
+export interface MoralisTokenPrice {
+  tokenAddress: string;
+  pairAddress: string;
+  exchangeName: string;
+  exchangeAddress: string;
+  nativePrice: {
+    value: string;
+    symbol: string;
+    name: string;
+    decimals: number;
+  };
+  usdPrice: number;
+  usdPrice24h: number;
+  usdPrice24hrUsdChange: number;
+  usdPrice24hrPercentChange: number;
+  logo: string | null;
+  name: string;
+  symbol: string;
+}
+
 export interface TokenMarketData {
   metadata: MoralisTokenMetadata;
-  pairs: MoralisPairsResponse;
   price: number;
   totalSupply: number;
   marketCap: number;
   volume24h: number;
   liquidity: number;
   priceChangePercentage24h: number;
+}
+
+export interface MoralisSwapsResponse {
+  cursor?: string;
+  page?: number;
+  pageSize?: number;
+  result: {
+    transactionHash: string;
+    transactionType: string;
+    transactionIndex: number;
+    subCategory: string;
+    blockTimestamp: string;
+    blockNumber: number;
+    walletAddress: string;
+    pairAddress: string;
+    pairLabel: string;
+    exchangeAddress: string;
+    exchangeName: string;
+    exchangeLogo: string;
+    baseToken: string;
+    quoteToken: string;
+    bought: {
+      address: string;
+      name: string;
+      symbol: string;
+      logo: string | null;
+      amount: string;
+      usdPrice: number;
+      usdAmount: number;
+      tokenType: string;
+    };
+    sold: {
+      address: string;
+      name: string;
+      symbol: string;
+      logo: string | null;
+      amount: string;
+      usdPrice: number;
+      usdAmount: number;
+      tokenType: string;
+    };
+    baseQuotePrice: string;
+    totalValueUsd: number;
+  }[];
 }

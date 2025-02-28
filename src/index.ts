@@ -4,7 +4,7 @@ import { config } from "./config"; // Configuration parameters for our bot
 import { fetchTransactionDetails, createSwapTransaction, getRugCheckConfirmed, fetchAndSaveSwapDetails, fetchTokenMintFromTx } from "./transactions";
 import { validateEnv } from "./utils/env-validator";
 import player from "play-sound";
-import { sendTokenAlert } from './discord';
+import { sendTokenAlert } from './discord/discord';
 import { performance } from 'perf_hooks';
 import express from 'express';
 import { Connection } from "@solana/web3.js";
@@ -115,7 +115,28 @@ async function processTransaction(signature: string): Promise<void> {
   // Ensure required data is available
   if (!data.solMint || !data.tokenMint) return;
 
-  // Track rug check metrics
+  // Check if this is a Pump.fun token
+  const isPumpToken = data.tokenMint.toLowerCase().endsWith('pump');
+  console.log(`Token ${data.tokenMint} is ${isPumpToken ? 'a Pump.fun token' : 'not a Pump.fun token'}`);
+  
+  // Skip rug check for non-Pump.fun tokens
+  if (!isPumpToken) {
+    console.log(`⏭️ Skipping rug check for non-Pump.fun token: ${data.tokenMint}`);
+    
+    // Ouput logs
+    console.log("Token found");
+    console.log("👽 GMGN: https://gmgn.ai/sol/token/" + data.tokenMint);
+    console.log("😈 BullX: https://neo.bullx.io/terminal?chainId=1399811149&address=" + data.tokenMint);
+    console.log("🌌 Axiom: https://axiom.trade/t/" + data.tokenMint);
+    
+    // Send Discord notification for non-Pump tokens (will be filtered in sendTokenAlert)
+    await sendTokenAlert(data.tokenMint, false);
+    
+    console.log("🟢 Resuming looking for new tokens..\n");
+    return;
+  }
+
+  // Track rug check metrics (only for Pump.fun tokens)
   metrics.rugCheck.total++;
   const rugCheckStart = performance.now();
   const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);

@@ -2,7 +2,7 @@ import { Client, TextChannel, Message, GatewayIntentBits, ActionRowBuilder, Butt
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { Connection, PublicKey } from '@solana/web3.js';
-import { PUMP_FUN_PROGRAM } from './constants';
+import { PUMP_FUN_PROGRAM } from '../constants';
 
 dotenv.config();
 

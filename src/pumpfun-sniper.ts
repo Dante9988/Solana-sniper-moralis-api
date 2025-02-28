@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import { Metaplex } from "@metaplex-foundation/js";
 import { PUMP_FUN_PROGRAM } from "./constants";  // Ensure this contains "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 import { fetchTokenMintFromTx, getRugCheckConfirmed } from "./transactions";
-import { sendPumpFunAlert } from './discord-pumpfun';
+import { sendPumpFunAlert } from './discord/discord-pumpfun';
 
 dotenv.config();
 

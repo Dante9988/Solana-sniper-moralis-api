@@ -2,9 +2,9 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import WebSocket from "ws";
 import axios from "axios";
 import dotenv from "dotenv";
-import { PUMP_FUN_PROGRAM } from "./constants";
+import { PUMP_FUN_PROGRAM } from "../constants";
 import { PrismaClient } from '@prisma/client';
-import { fetchTokenMintFromTx } from "./transactions";
+import { fetchTokenMintFromTx } from "../transactions";
 import { Client, GatewayIntentBits, TextChannel, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 dotenv.config();
