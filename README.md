@@ -1,85 +1,187 @@
-This repository contains all the code "as is", following the "Solana Sniper Trading Bot in TypeScript"
+# 🚀 Solana Advanced Trading Bot 🤖
 
-Part 1: Snipe New Tokens from Raydium LP
+A sophisticated trading bot for the Solana blockchain that monitors multiple DEXs and platforms, featuring advanced token analysis, multi-platform support, and intelligent decision-making capabilities. 🎯
 
-Part 2: Track and sell tokens (SL/TP)
+## ⭐ Key Features
 
-## Project Description
+### 🔍 Multi-Platform Monitoring
+- **Raydium LP Detection** 📡
+  - Real-time monitoring of new liquidity pool creation
+- **Pump.fun Integration** 🎮 
+  - New token creation detection ⚡
+  - Market cap filtering (max 20k) 💰
+  - Bonding curve analysis 📈
+- **Cross-platform Analysis** 🌐
+  - Simultaneous monitoring across multiple DEXs
 
-The Solana Token Sniper is a Node.js project built with TypeScript, designed to automate the buying and selling of tokens on the Solana blockchain. This script is configured to detect the creation of new liquidity pools and execute token purchases automatically.
+### 📊 Advanced Token Analysis
+- **Multi-Source Data Aggregation** 🔄
+  - Moralis API integration for enhanced token data 🔋
+  - Pump.fun native data analysis 📊
+  - Trench analytics integration 📉
+  - DexScreener market data 📈
 
-With customizable parameters, you can tailor the strategy to suit your needs. The primary goal of this project is to educate users about the essential components required to develop a simple token sniper, offering insights into its functionality and implementation!
+### 🛡️ Intelligent Security Features
+- **Multi-Layer Rug Protection** 🔒
+  - Primary: Rugcheck.xyz integration
+  - Secondary: SolSniffer fallback
+  - Tertiary: Custom analytics
+- **AI-Powered Analysis** 🧠
+  - Grok integration for token analysis 🤖
+  - Dead token detection ⚰️
+  - Market trend analysis 📊
+  - Smart risk assessment ⚖️
 
-### Features
+### 💬 Discord Integration
+- **Dual Bot System** 🤖
+  - Raydium token alerts 🔔
+  - Pump.fun specific alerts 📢
+- **Rich Data Display** 📱
+  - Real-time market metrics 📊
+  - Token analytics 📈
+  - Risk assessments ⚠️
+  - Trading links integration 🔗
 
-- Token Sniper for Raydium for the Solana blockchain
-- Rug check using a third party service rugcheck.xyz
-- Possibility to skip pump.fun tokens
-- Auto-buy with parameters for amount, slippage and priority
-- Possibility to set own RPC nodes
-- Track and store tokens in local database
-- Auto-sell feature using Stop Loss and Take Profit
-- Utils: Solana Wallet (keypair) creator
+### ⚡ Performance Features
+- **Fallback Systems** 🔄
+  - Multiple RPC node support 🌐
+  - API redundancy 🔁
+  - Automatic failover mechanisms 🔄
+- **Optimization** ⚡
+  - Concurrent transaction processing 🚀
+  - Rate limiting protection 🛑
+  - Memory optimization 💾
 
-### Prerequisites, Installation and Usage Instructions
+## 📋 Prerequisites
 
-1. Ensure [Node.js](https://nodejs.org/en) is installed on your computer.
-2. Clone the repository to your local machine.
-3. Navigate to the project folder and run the following command to install all dependencies: "npm i"
-4. To start the sniper, run: "npm run dev"
-5. To start the tracker, run: "npm run tracker"
-6. Optional: To start the sniper and tracker after being compiled, run: "npm run start" and "npm run start:tracker"
+- Node.js v18 or higher 📦
+- Yarn package manager 🧶
+- Solana wallet with SOL 💰
+- Required API keys 🔑
+  - Moralis API key
+  - Helius RPC endpoint
+  - Discord bot tokens
+  - Rugcheck.xyz API key (optional)
 
-### Update Log
+## 🛠️ Installation
 
-- Added Dexscreener Tokens API as price source for tracker with option in config.
-- Added token wallet balance, an amount mismatch check before trying to sell TP or SL to prevent quoting fees.
-- Added .env validator to check if all .env variables are properly set
-- Add rugcheck option: Exclude LP from topholders
-- Change Metadata RCP request to local database lookup
-- Expanded Rug check
-- Added new token tracker for rug check duplicates functionality and meta data
-- Added Simulation Mode to skip the actual swap
-- Added logsUnsubscribe before subscribing to RPC logsSubscribe method
-- Improved fetchTransactionDetails() error handling
-- Updated fetchTransactionDetails() to use retry based on count instead of time
-- Process transaction asynchronously and add max concurrent transactions
-- Revert back to native punycode as libraries are identical.
-- Added patch-package dev dependency to apply patches/tr46+0.0.3.patch
-- Added punycode.js package to resolve [issue]
-- Added createSellTransaction() in transactions.ts to sell SL and TP tokens.
-- Added Retry logic for Swap Quote requests
-- Added Verbose loging option
-- Added tracker functionality in "src\tracker\index.ts".
-- Updated fetchAndSaveSwapDetails() in transactions.ts to use sqlite3.
-- Updated config.ts: Addded sell parameters
-- Added packages: luxon, sqlite, sqlite3
-- Added fetchAndSaveSwapDetails() in transactions.ts to track confirmed swaps.
-- Updated test.ts
-- Added JUP_HTTPS_PRICE_URI to .env.backup
-- Web3.js updated from 1.95.8 to 1.98.0
-- Initial Commit: Solana Sniper Bot
+1. Clone the repository:
+```bash
+git clone [repository-url]
+cd Solana-sniper-moralis-api
+```
 
-### Third Party documentation
+2. Install dependencies:
+```bash
+yarn install
+```
 
-- [Helius RPC nodes](https://docs.helius.dev)
-- [Jupiter V6 Swap API](https://station.jup.ag/docs/apis/swap-api)
-- [Rugcheck API](https://api.rugcheck.xyz/swagger/index.html)
-- [Solana](https://solana.com/docs)
-- [Solscan](https://solscan.io)
+3. Configure environment variables:
+```bash
+cp .env.example .env
+# Edit .env with your API keys and configuration ⚙️
+```
 
-### Disclaimer
+## 🎮 Usage
 
-The course videos accompanying this project are provided free of charge and are intended solely for educational purposes. This software does not guarantee profitability or financial success and is not designed to generate profitable trades.
+### 🚀 Starting Different Components
 
-You are solely responsible for your own financial decisions. Before making any trades or investments, it is strongly recommended that you consult with a qualified financial professional.
+```bash
+# Start Raydium Sniper 🎯
+yarn dev
 
-By using this software, you acknowledge that the creators and contributors of this project shall not be held liable for any financial losses, damages, or other consequences resulting from its use. Use the software at your own risk.
+# Start Pump.fun Sniper 🎮
+yarn pumpfun
 
-The software (code in this repository) must not be used to engage in any form of market manipulation, fraud, illegal activities, or unethical behavior. The creators of this project do not endorse or support malicious use cases, such as front-running, exploiting contracts, or harming other users. Users are expected to adhere to ethical trading practices and comply with applicable laws and regulations.
+# Start Token Tracker 📊
+yarn tracker
 
-The software (code in this repository) is intended solely to facilitate learning and enhance the educational experience provided by the accompanying videos. Any other use is strictly prohibited.
+# Start 15k Market Cap Monitor 💰
+yarn pumpfun15k
 
-All trading involves risk and may not be suitable for all individuals. You should carefully consider your investment objectives, level of experience, and risk appetite before engaging in any trading activities. Past performance is not indicative of future results, and there is no guarantee that any trading strategy, algorithm or tool discussed will result in profits or avoid losses.
+# Start Development Server 🖥️
+yarn server:dev
+```
 
-I am not a licensed financial advisor or a registered broker-dealer. The content shared is based solely on personal experience and knowledge and should not be relied upon as financial advice or a guarantee of success. Always conduct your own research and consult with a professional financial advisor before making any investment decisions.
+### ⚙️ Configuration
+
+Edit `config.ts` to customize:
+- Transaction parameters 💱
+- Risk management settings 🛡️
+- Token filtering criteria 🔍
+- Discord notification preferences 🔔
+- RPC endpoints and API configurations 🌐
+
+## 🔧 Advanced Configuration
+
+### 🎯 Token Filtering
+```typescript
+// Example configuration in config.ts
+export const tokenFilters = {
+  maxMarketCap: 20000, 💰
+  minLiquidity: 1000, 💧
+  excludeTokens: [...], ❌
+  // ... other filters
+};
+```
+
+### ⚖️ Risk Management
+```typescript
+export const riskConfig = {
+  rugCheckEnabled: true, 🛡️
+  fallbackServices: true, 🔄
+  maxSlippage: 1, 📊
+  // ... other settings
+};
+```
+
+## 🔌 API Integration
+
+The bot integrates with multiple APIs:
+- Moralis API for token data 📊
+- Helius RPC for blockchain interaction ⛓️
+- Jupiter V6 for swap operations 💱
+- Rugcheck.xyz for security verification 🛡️
+- DexScreener for market data 📈
+- Pump.fun SDK for platform-specific operations 🎮
+
+## 🔒 Security Features
+
+- Multi-layer rug protection 🛡️
+- Transaction simulation before execution ⚡
+- Rate limiting and request throttling 🚦
+- Secure key management 🔑
+- Error handling and recovery 🔄
+- Automatic blacklisting of suspicious tokens ⛔
+
+## 📊 Performance Monitoring
+
+- Real-time transaction metrics ⚡
+- API response time tracking ⏱️
+- Memory usage monitoring 💾
+- Error rate tracking 📉
+- Success rate analytics 📈
+
+## 🤝 Contributing
+
+Contributions are welcome! Please read our contributing guidelines before submitting pull requests. 🌟
+
+## 📜 License
+
+This project is licensed under the MIT License - see the LICENSE file for details. ⚖️
+
+## ⚠️ Disclaimer
+
+This software is for educational purposes only. Trading cryptocurrencies carries significant risks. Always perform your own research (DYOR) before trading. The creators and contributors are not responsible for any financial losses. 💭
+
+## 🔗 Resources
+
+- [Helius Docs](https://docs.helius.dev) 📚
+- [Jupiter V6 API](https://station.jup.ag/docs/apis/swap-api) 🪐
+- [Pump.fun Documentation](https://docs.pump.fun) 🎮
+- [Moralis API Reference](https://docs.moralis.com/) 🔌
+- [Solana Documentation](https://docs.solana.com) ☀️
+
+## 💫 Support
+
+If you find this project helpful, please give it a star ⭐
