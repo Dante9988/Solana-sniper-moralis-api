@@ -3,12 +3,33 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model PumpFunToken {
   mint      String   @id
   createdAt DateTime @default(now())
   alerted   Boolean  @default(false)
+}
+
+model TokenAlert {
+  id                String   @id @default(uuid())
+  tokenAddress      String
+  tokenSymbol       String?
+  tokenName         String?
+  initialMarketCap  Float
+  initialPrice      Float
+  bundlePercentage  Float?
+  alertTimestamp    DateTime @default(now())
+  checked           Boolean  @default(false)
+  pnlAlerted        Boolean  @default(false)
+  pnlPercentage     Float?
+  currentMarketCap  Float?
+  currentPrice      Float?
+  checkTimestamp    DateTime?
+
+  @@index([tokenAddress])
+  @@index([checked])
+  @@index([alertTimestamp])
 }

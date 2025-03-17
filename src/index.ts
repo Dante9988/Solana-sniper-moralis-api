@@ -9,6 +9,8 @@ import { performance } from 'perf_hooks';
 import express from 'express';
 import { Connection } from "@solana/web3.js";
 import { MintsDataReponse } from "./types";
+import { checkTokenPnL, startPeriodicChecks } from './services/tokenTrackingService';
+import { client } from './discord/discord';
 
 const audioPlayer = player({});
 
@@ -344,3 +346,8 @@ async function websocketHandler(): Promise<void> {
 websocketHandler().catch((err) => {
   console.error(err.message);
 });
+
+// Set up periodic PnL checking
+startPeriodicChecks(client);
+
+console.log('📊 PnL tracking system initialized');
