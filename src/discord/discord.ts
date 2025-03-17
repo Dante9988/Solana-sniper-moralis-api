@@ -9,13 +9,14 @@ import { analyzeTokenWithGrok, TokenAnalysisData, updateDiscordWithGrokAnalysis 
 import { getRugCheckConfirmed } from '../transactions';
 import { getTokenMarketData, formatPrice, formatMarketCap, formatVolume, formatLiquidity } from '../services/tokenDataService';
 import { fetchSniperData } from '../services/sniperDataService';
+import { storeTokenAlert } from '../services/tokenTrackingService';
 
 dotenv.config();
 
 // Create connection instance
 const connection = new Connection(process.env.HELIUS_HTTPS_URI || 'https://api.mainnet-beta.solana.com');
 
-const client = new Client({
+export const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
@@ -480,13 +481,25 @@ ${sniperSection}
             ]
         };
 
+        // After fetching token data and before sending Discord message
+        if (isPumpToken && tokenData) {
+            await storeTokenAlert({
+                tokenAddress: tokenMint,
+                tokenSymbol: tokenData?.metadata?.symbol || undefined,
+                tokenName: tokenData?.metadata?.name || undefined,
+                initialMarketCap: marketCap,
+                initialPrice: price,
+                bundlePercentage: trenchData.holdingPercentage || undefined
+            });
+        }
+
         await channel.send(message);
 
         metrics.total = performance.now() - metrics.start;
         console.log(`✨ Alert sent in ${metrics.total.toFixed(2)}ms for ${tokenMint}`);
 
     } catch (error) {
-        console.error(`❌ Alert error (${performance.now() - metrics.start}ms):`, error);
+        console.error('Error in sendTokenAlert:', error);
     }
 }
 
