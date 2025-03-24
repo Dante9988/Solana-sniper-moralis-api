@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, InteractionEditReplyOptions } from 'discord.js';
-import { sniperooService } from '../../services/sniperooService';
+import { sniperooService, isWalletData } from '../../services/sniperooService';
 
 export const data = new SlashCommandBuilder()
     .setName('wallet')
@@ -7,7 +7,12 @@ export const data = new SlashCommandBuilder()
     .addSubcommand(subcommand =>
         subcommand
             .setName('create')
-            .setDescription('Create a new wallet'))
+            .setDescription('Create a new wallet')
+            .addStringOption(option =>
+                option
+                    .setName('name')
+                    .setDescription('Name for your new wallet')
+                    .setRequired(true)))
     .addSubcommand(subcommand =>
         subcommand
             .setName('import')
@@ -25,13 +30,28 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === 'create') {
-            const wallet = await sniperooService.createWallet(interaction.user.id);
-            if (wallet) {
+            const name = interaction.options.getString('name', true);
+            const result = await sniperooService.createWallet(interaction.user.id, name);
+            
+            if (isWalletData(result)) {
                 await interaction.editReply({
-                    content: `✅ Wallet created successfully!\n\nPublic Key: \`${wallet.publicKey}\`\n\n⚠️ **IMPORTANT**: Save your private key securely! It will not be shown again.`
+                    content: `✅ Wallet "${name}" created successfully!\n\n` +
+                        `⚠️ **CRITICAL SECURITY WARNING**\n` +
+                        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                        `🔑 **Public Key:** \`${result.walletAddress}\`\n` +
+                        `🔐 **Private Key:** ||${result.walletPk}||\n\n` +
+                        `⚠️ **PLEASE READ CAREFULLY:**\n` +
+                        `• Never share your private key with anyone\n` +
+                        `• Store these details securely offline\n` +
+                        `• This is the ONLY time you'll see the private key\n` +
+                        `• Anyone with your private key can access your funds\n` +
+                        `• For maximum security, store these details in a secure password manager\n\n` +
+                        `💡 **Tip:** Take a screenshot or copy these details NOW!`
                 });
             } else {
-                await interaction.editReply('Failed to create wallet. Please try again.');
+                await interaction.editReply({
+                    content: `❌ ${result.error}`
+                });
             }
         } else if (subcommand === 'import') {
             const privateKey = interaction.options.getString('private_key');
@@ -40,17 +60,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 return;
             }
 
-            const wallet = await sniperooService.importWallet(interaction.user.id, privateKey);
-            if (wallet) {
+            const result = await sniperooService.importWallet(interaction.user.id, privateKey);
+            if (isWalletData(result)) {
                 await interaction.editReply({
-                    content: `✅ Wallet imported successfully!\n\nPublic Key: \`${wallet.publicKey}\``
+                    content: `✅ Wallet imported successfully!\n\nPublic Key: \`${result.walletAddress}\``
                 });
             } else {
-                await interaction.editReply('Failed to import wallet. Please check your private key and try again.');
+                await interaction.editReply({
+                    content: `❌ ${result.error}\nPlease try again or contact support if the issue persists.`
+                });
             }
         }
     } catch (error) {
         console.error('Wallet command error:', error);
-        await interaction.editReply('An error occurred while processing your request.');
+        const errorMessage = error instanceof Error ? error.message : 'An unexpected error occurred';
+        await interaction.editReply({
+            content: `❌ Error: ${errorMessage}\nPlease try again or contact support if the issue persists.`
+        });
     }
 } 

@@ -3,12 +3,21 @@ import { validateEnv } from "../utils/env-validator";
 import { Keypair } from "@solana/web3.js";
 import { Database } from "sqlite3";
 import { config } from "../config";
-import { PrismaClient, WalletTransaction } from "@prisma/client";
+import { PrismaClient, Prisma, Wallet as PrismaWallet, UserConfig as PrismaUserConfig, WalletTransaction } from "@prisma/client";
 
-interface WalletData {
+export interface WalletData {
     userId: string;
-    publicKey: string;
-    createdAt: Date;
+    walletAddress: string;
+    walletPk: string;
+    createdAt?: Date;
+}
+
+export interface WalletError {
+    error: string;
+}
+
+export function isWalletData(data: WalletData | WalletError): data is WalletData {
+    return 'walletAddress' in data;
 }
 
 export interface UserConfig {
@@ -21,88 +30,72 @@ export interface UserConfig {
 }
 
 export class SniperooService {
-    private db: Database;
     private env: any;
     private prisma: PrismaClient;
 
     constructor() {
-        this.db = new Database("src/tracker/wallets.db");
         this.env = validateEnv();
         this.prisma = new PrismaClient();
-        this.initDatabase();
     }
 
-    private initDatabase() {
-        // Create wallets table without private key storage
-        this.db.run(`
-            CREATE TABLE IF NOT EXISTS wallets (
-                userId TEXT PRIMARY KEY,
-                publicKey TEXT UNIQUE,
-                createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
-        // Create user configurations table
-        this.db.run(`
-            CREATE TABLE IF NOT EXISTS user_configs (
-                userId TEXT PRIMARY KEY,
-                autoBuy BOOLEAN DEFAULT ${config.sniperoo.auto_sell},
-                buyAmount REAL DEFAULT ${config.sniperoo.default_buy_amount},
-                takeProfit REAL DEFAULT ${config.sniperoo.default_take_profit},
-                stopLoss REAL DEFAULT ${config.sniperoo.default_stop_loss},
-                autoSell BOOLEAN DEFAULT ${config.sniperoo.auto_sell},
-                FOREIGN KEY (userId) REFERENCES wallets(userId)
-            )
-        `);
-    }
-
-    async createWallet(userId: string): Promise<WalletData | null> {
+    async createWallet(userId: string, name: string): Promise<WalletData | WalletError> {
         try {
             const response = await axios.post(
                 "https://api.sniperoo.app/user/wallets",
-                {},
+                {
+                    name
+                },
                 {
                     headers: {
-                        Authorization: `Bearer ${this.env.SNIPEROO_API_KEY}`,
+                        Authorization: `Bearer ${process.env.SNIPEROO_API_KEY}`,
                         "Content-Type": "application/json",
                     },
                 }
             );
 
-            if (response.data && response.data.publicKey) {
+            console.log('Response status:', response.status);
+            console.log('Response data:', JSON.stringify(response.data, null, 2));
+
+            // Check for successful status code (201 Created)
+            if (response.status === 201 || response.status === 200) {
+                // Ensure we have the required data
+                if (!response.data || !response.data.walletAddress || !response.data.walletPk) {
+                    console.error('Missing required data in response:', response.data);
+                    return { error: "Invalid response data from server" };
+                }
+
                 const walletData: WalletData = {
                     userId,
-                    publicKey: response.data.publicKey,
+                    walletAddress: response.data.walletAddress,
+                    walletPk: response.data.walletPk,
                     createdAt: new Date()
                 };
 
-                await new Promise((resolve, reject) => {
-                    this.db.run(
-                        "INSERT INTO wallets (userId, publicKey) VALUES (?, ?)",
-                        [walletData.userId, walletData.publicKey],
-                        (err) => err ? reject(err) : resolve(null)
-                    );
-                });
-
-                // Initialize user config with defaults
-                await new Promise((resolve, reject) => {
-                    this.db.run(
-                        "INSERT INTO user_configs (userId) VALUES (?)",
-                        [userId],
-                        (err) => err ? reject(err) : resolve(null)
-                    );
+                // Create wallet and default config in a transaction
+                await this.prisma.$transaction(async (prisma) => {
+                    await prisma.wallet.create({
+                        data: {
+                            userId: walletData.userId,
+                            walletAddress: walletData.walletAddress,
+                            walletPk: walletData.walletPk,
+                            createdAt: walletData.createdAt
+                        }
+                    });
                 });
 
                 return walletData;
             }
-            return null;
+            return { error: "Failed to create wallet" };
         } catch (error) {
             console.error("Error creating wallet:", error);
-            return null;
+            if (axios.isAxiosError(error) && error.response?.data) {
+                return { error: error.response.data.message || "Failed to create wallet" };
+            }
+            return { error: "An unexpected error occurred" };
         }
     }
 
-    async importWallet(userId: string, privateKey: string): Promise<WalletData | null> {
+    async importWallet(userId: string, privateKey: string): Promise<WalletData | WalletError> {
         try {
             const response = await axios.post(
                 "https://api.sniperoo.app/user/wallets/import",
@@ -112,82 +105,92 @@ export class SniperooService {
                 },
                 {
                     headers: {
-                        Authorization: `Bearer ${this.env.SNIPEROO_API_KEY}`,
+                        Authorization: `Bearer ${process.env.SNIPEROO_API_KEY}`,
                         "Content-Type": "application/json",
                     },
                 }
             );
+            console.log('Response status:', response.status);
+            console.log('Response data:', JSON.stringify(response.data, null, 2));
 
-            if (response.data && response.data.publicKey) {
+            if (response.status === 201 || response.status === 200) {
+                if (!response.data || !response.data.walletAddress || !response.data.walletPk) {
+                    console.error('Missing required data in response:', response.data);
+                    return { error: "Invalid response data from server" };
+                }
+
                 const walletData: WalletData = {
                     userId,
-                    publicKey: response.data.publicKey,
+                    walletAddress: response.data.walletAddress,
+                    walletPk: response.data.walletPk,
                     createdAt: new Date()
                 };
 
-                await new Promise((resolve, reject) => {
-                    this.db.run(
-                        "INSERT INTO wallets (userId, publicKey) VALUES (?, ?)",
-                        [walletData.userId, walletData.publicKey],
-                        (err) => err ? reject(err) : resolve(null)
-                    );
-                });
-
-                // Initialize user config with defaults
-                await new Promise((resolve, reject) => {
-                    this.db.run(
-                        "INSERT INTO user_configs (userId) VALUES (?)",
-                        [userId],
-                        (err) => err ? reject(err) : resolve(null)
-                    );
+                // Use upsert to handle both creation and updating
+                await this.prisma.wallet.upsert({
+                    where: { userId },
+                    update: {
+                        walletAddress: walletData.walletAddress,
+                        walletPk: walletData.walletPk
+                    },
+                    create: {
+                        userId: walletData.userId,
+                        walletAddress: walletData.walletAddress,
+                        walletPk: walletData.walletPk,
+                        createdAt: walletData.createdAt
+                    }
                 });
 
                 return walletData;
             }
-            return null;
+            return { error: "Failed to import wallet" };
         } catch (error) {
             console.error("Error importing wallet:", error);
-            return null;
+            if (axios.isAxiosError(error)) {
+                if (error.response?.status === 400) {
+                    return { error: error.response.data.message || "Invalid private key format" };
+                } else if (error.response?.status === 500) {
+                    return { error: error.response.data.message || "Server error occurred while importing wallet" };
+                } else if (error.response?.data?.message) {
+                    return { error: error.response.data.message };
+                }
+            }
+            return { error: "An unexpected error occurred while importing wallet" };
         }
     }
 
-    async getWallet(userId: string): Promise<WalletData | null> {
-        return new Promise((resolve, reject) => {
-            this.db.get(
-                "SELECT * FROM wallets WHERE userId = ?",
-                [userId],
-                (err, row) => err ? reject(err) : resolve(row as WalletData || null)
-            );
+    async getWallet(userId: string) {
+        return this.prisma.wallet.findUnique({
+            where: { userId }
         });
     }
 
-    async getUserConfig(userId: string): Promise<UserConfig | null> {
-        return new Promise((resolve, reject) => {
-            this.db.get(
-                "SELECT * FROM user_configs WHERE userId = ?",
-                [userId],
-                (err, row) => err ? reject(err) : resolve(row as UserConfig || null)
-            );
+    async getUserConfig(userId: string) {
+        return this.prisma.userConfig.findUnique({
+            where: { userId }
         });
     }
 
     async updateUserConfig(userId: string, config: Partial<UserConfig>): Promise<boolean> {
         try {
-            const updates = Object.entries(config)
-                .map(([key, value]) => `${key} = ?`)
-                .join(', ');
-            
-            const values = Object.values(config);
-            values.push(userId);
-
-            await new Promise((resolve, reject) => {
-                this.db.run(
-                    `UPDATE user_configs SET ${updates} WHERE userId = ?`,
-                    values,
-                    (err) => err ? reject(err) : resolve(null)
-                );
+            await this.prisma.userConfig.upsert({
+                where: { userId },
+                update: {
+                    autoBuy: config.autoBuy,
+                    autoSell: config.autoSell,
+                    buyAmount: config.buyAmount,
+                    takeProfit: config.takeProfit,
+                    stopLoss: config.stopLoss
+                },
+                create: {
+                    userId,
+                    autoBuy: config.autoBuy ?? false,
+                    autoSell: config.autoSell ?? false,
+                    buyAmount: config.buyAmount ?? 0,
+                    takeProfit: config.takeProfit ?? 0,
+                    stopLoss: config.stopLoss ?? 0
+                }
             });
-
             return true;
         } catch (error) {
             console.error("Error updating user config:", error);
@@ -200,13 +203,18 @@ export class SniperooService {
             const wallet = await this.getWallet(userId);
             const userConfig = await this.getUserConfig(userId);
             
-            if (!wallet || !userConfig) {
-                console.error("No wallet or config found for user");
+            if (!wallet) {
+                console.error("No wallet found for user");
+                return false;
+            }
+
+            if (!userConfig) {
+                console.error("No user config found");
                 return false;
             }
 
             const requestBody = {
-                walletAddresses: [wallet.publicKey],
+                walletAddresses: [wallet.walletAddress],
                 tokenAddress: tokenAddress,
                 inputAmount: userConfig.buyAmount,
                 autoSell: {
@@ -224,38 +232,46 @@ export class SniperooService {
                 requestBody,
                 {
                     headers: {
-                        Authorization: `Bearer ${this.env.SNIPEROO_API_KEY}`,
+                        Authorization: `Bearer ${process.env.SNIPEROO_API_KEY}`,
                         "Content-Type": "application/json",
                     },
                 }
             );
 
-            // Record the transaction
-            await this.recordTransaction(
-                userId,
-                'BUY',
-                tokenAddress,
-                response.data.tokenAmount,
-                response.data.solAmount,
-                response.data.price,
-                response.data.txHash,
-                'COMPLETED'
-            );
+            // Record the transaction only if we have a valid wallet and response data
+            if (wallet.id && response.data) {
+                await this.recordTransaction(
+                    wallet.id,
+                    'BUY',
+                    tokenAddress,
+                    response.data.tokenAmount || 0,
+                    response.data.solAmount || 0,
+                    response.data.price || 0,
+                    response.data.txHash || '',
+                    'COMPLETED'
+                );
+            }
 
             return true;
         } catch (error) {
-            // Record failed transaction
-            await this.recordTransaction(
-                userId,
-                'BUY',
-                tokenAddress,
-                0,
-                0,
-                0,
-                '',
-                'FAILED',
-                error instanceof Error ? error.message : 'Unknown error'
-            );
+            // Get wallet for error recording
+            const wallet = await this.getWallet(userId);
+            
+            // Record failed transaction if we have a valid wallet
+            if (wallet?.id) {
+                await this.recordTransaction(
+                    wallet.id,
+                    'BUY',
+                    tokenAddress,
+                    0,
+                    0,
+                    0,
+                    '',
+                    'FAILED',
+                    error instanceof Error ? error.message : 'Unknown error'
+                );
+            }
+
             if (axios.isAxiosError(error)) {
                 console.error(`Sniperoo API error (${error.response?.status || "unknown"}):`, error.response?.data || error.message);
             } else {
@@ -276,44 +292,52 @@ export class SniperooService {
             const response = await axios.post(
                 "https://api.sniperoo.app/trading/sell-percentage-from-position",
                 {
-                    walletAddress: wallet.publicKey,
+                    walletAddress: wallet.walletAddress,
                     tokenAddress: tokenAddress,
                     percentage: percentage
                 },
                 {
                     headers: {
-                        Authorization: `Bearer ${this.env.SNIPEROO_API_KEY}`,
+                        Authorization: `Bearer ${process.env.SNIPEROO_API_KEY}`,
                         "Content-Type": "application/json",
                     },
                 }
             );
 
-            // Record the transaction
-            await this.recordTransaction(
-                userId,
-                'SELL',
-                tokenAddress,
-                response.data.tokenAmount,
-                response.data.solAmount,
-                response.data.price,
-                response.data.txHash,
-                'COMPLETED'
-            );
+            // Record the transaction only if we have a valid wallet
+            if (wallet.id) {
+                await this.recordTransaction(
+                    wallet.id, // Use wallet.id instead of userId
+                    'SELL',
+                    tokenAddress,
+                    response.data.tokenAmount,
+                    response.data.solAmount,
+                    response.data.price,
+                    response.data.txHash,
+                    'COMPLETED'
+                );
+            }
 
             return true;
         } catch (error) {
-            // Record failed transaction
-            await this.recordTransaction(
-                userId,
-                'SELL',
-                tokenAddress,
-                0,
-                0,
-                0,
-                '',
-                'FAILED',
-                error instanceof Error ? error.message : 'Unknown error'
-            );
+            // Get wallet for error recording
+            const wallet = await this.getWallet(userId);
+            
+            // Record failed transaction if we have a valid wallet
+            if (wallet?.id) {
+                await this.recordTransaction(
+                    wallet.id, // Use wallet.id instead of userId
+                    'SELL',
+                    tokenAddress,
+                    0,
+                    0,
+                    0,
+                    '',
+                    'FAILED',
+                    error instanceof Error ? error.message : 'Unknown error'
+                );
+            }
+
             if (axios.isAxiosError(error)) {
                 console.error(`Sniperoo API error (${error.response?.status || "unknown"}):`, error.response?.data || error.message);
             } else {
@@ -324,12 +348,11 @@ export class SniperooService {
     }
 
     async getUsersWithAutoBuy(): Promise<{ userId: string }[]> {
-        return new Promise((resolve, reject) => {
-            this.db.all(
-                "SELECT userId FROM user_configs WHERE autoBuy = 1",
-                (err, rows) => err ? reject(err) : resolve(rows as { userId: string }[])
-            );
+        const configs = await this.prisma.userConfig.findMany({
+            where: { autoBuy: true },
+            select: { userId: true }
         });
+        return configs;
     }
 
     async recordTransaction(

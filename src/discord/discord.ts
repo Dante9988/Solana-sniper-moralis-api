@@ -10,7 +10,7 @@ import { getRugCheckConfirmed } from '../transactions';
 import { getTokenMarketData, formatPrice, formatMarketCap, formatVolume, formatLiquidity } from '../services/tokenDataService';
 import { fetchSniperData } from '../services/sniperDataService';
 import { storeTokenAlert } from '../services/tokenTrackingService';
-import { sniperooService, UserConfig } from '../services/sniperooService';
+import { sniperooService, UserConfig, isWalletData } from '../services/sniperooService';
 
 dotenv.config();
 
@@ -40,7 +40,11 @@ const commands = [
         .addSubcommand(subcommand =>
             subcommand
                 .setName('create')
-                .setDescription('Create a new wallet'))
+                .setDescription('Create a new wallet')
+                .addStringOption(option =>
+                    option.setName('name')
+                        .setDescription('Name for your new wallet')
+                        .setRequired(true)))
         .addSubcommand(subcommand =>
             subcommand
                 .setName('import')
@@ -144,29 +148,57 @@ client.on('interactionCreate', async interaction => {
 
             case 'wallet':
                 if (interaction.options.getSubcommand() === 'create') {
-                    const wallet = await sniperooService.createWallet(interaction.user.id);
-                    if (wallet) {
+                    const name = interaction.options.getString('name', true);
+                    
+                    // // If command is used in a public channel, redirect to DM
+                    // const isDM = interaction.channel?.type === 1; // ChannelType.DM is 1
+                    
+                    // if (!isDM) {
+                    //     await interaction.reply({
+                    //         content: `⚠️ **SECURITY ALERT**\n\n` +
+                    //             `For your security, please create wallets through DM with the bot.\n` +
+                    //             `1. Right-click on the bot and select "Message"\n` +
+                    //             `2. Send: \`/wallet create ${name}\`\n\n` +
+                    //             `This ensures your wallet details remain completely private.`,
+                    //         ephemeral: true
+                    //     });
+                    //     return;
+                    // }
+
+                    const result = await sniperooService.createWallet(interaction.user.id, name);
+                    console.log(`Result: ${JSON.stringify(result)}`);
+                    if (isWalletData(result)) {
                         await interaction.reply({
-                            content: `✅ Wallet created successfully!\n\nPublic Key: \`${wallet.publicKey}\`\n\n⚠️ **IMPORTANT**: Save your private key securely! It will not be shown again.`,
-                            ephemeral: true
+                            content: `✅ Wallet "${name}" created successfully!\n\n` +
+                                `⚠️ **CRITICAL SECURITY WARNING**\n` +
+                                `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                                `🔑 **Public Key:** \`${result.walletAddress}\`\n` +
+                                `🔐 **Private Key:** ||${result.walletPk}||\n\n` +
+                                `⚠️ **PLEASE READ CAREFULLY:**\n` +
+                                `• Never share your private key with anyone\n` +
+                                `• Store these details securely offline\n` +
+                                `• This is the ONLY time you'll see the private key\n` +
+                                `• Anyone with your private key can access your funds\n` +
+                                `• For maximum security, store these details in a secure password manager\n\n` +
+                                `💡 **Tip:** Take a screenshot or copy these details NOW!`
                         });
                     } else {
                         await interaction.reply({
-                            content: 'Failed to create wallet. Please try again.',
+                            content: `❌ ${result.error}\nPlease try again or contact support if the issue persists.`,
                             ephemeral: true
                         });
                     }
                 } else if (interaction.options.getSubcommand() === 'import') {
                     const privateKey = interaction.options.getString('private_key', true);
-                    const wallet = await sniperooService.importWallet(interaction.user.id, privateKey);
-                    if (wallet) {
+                    const result = await sniperooService.importWallet(interaction.user.id, privateKey);
+                    if (isWalletData(result)) {
                         await interaction.reply({
-                            content: `✅ Wallet imported successfully!\n\nPublic Key: \`${wallet.publicKey}\``,
+                            content: `✅ Wallet imported successfully!\n\nPublic Key: \`${result.walletAddress}\``,
                             ephemeral: true
                         });
                     } else {
                         await interaction.reply({
-                            content: 'Failed to import wallet. Please check your private key and try again.',
+                            content: `❌ ${result.error}\nPlease try again or contact support if the issue persists.`,
                             ephemeral: true
                         });
                     }
@@ -179,6 +211,45 @@ client.on('interactionCreate', async interaction => {
                 if (success) {
                     const config = await sniperooService.getUserConfig(interaction.user.id);
                     if (config) {
+                        // Create buttons for quick actions
+                        const buttons = [
+                            new ButtonBuilder()
+                                .setLabel('🌊 Pump')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://pump.fun/${tokenAddress}`),
+                            new ButtonBuilder()
+                                .setLabel('👽 GMGN')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://gmgn.ai/sol/token/${tokenAddress}`),
+                            new ButtonBuilder()
+                                .setLabel('🐂 BullX')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`),
+                            new ButtonBuilder()
+                                .setLabel('⭐ Photon')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenAddress}`),
+                            new ButtonBuilder()
+                                .setLabel('🌌 Axiom')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://axiom.trade/t/${tokenAddress}`)
+                        ];
+
+                        const secondRowButtons = [
+                            new ButtonBuilder()
+                                .setLabel('🔄 Raydium')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenAddress}`),
+                            new ButtonBuilder()
+                                .setLabel('🦅 Birdeye') 
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://birdeye.so/token/${tokenAddress}?chain=solana`),
+                            new ButtonBuilder()
+                                .setLabel('📊 DexScreener')
+                                .setStyle(ButtonStyle.Link)
+                                .setURL(`https://dexscreener.com/solana/${tokenAddress}`)
+                        ];
+
                         await interaction.reply({
                             content: `✅ Buy order placed successfully!\n\n` +
                                 `Token: \`${tokenAddress}\`\n` +
@@ -186,7 +257,10 @@ client.on('interactionCreate', async interaction => {
                                 `Auto-sell: ${config.autoSell ? 'Enabled' : 'Disabled'}\n` +
                                 `Take Profit: ${config.takeProfit}%\n` +
                                 `Stop Loss: ${config.stopLoss}%`,
-                            ephemeral: true
+                            components: [
+                                new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons),
+                                new ActionRowBuilder<ButtonBuilder>().addComponents(...secondRowButtons)
+                            ]
                         });
                     }
                 } else {
@@ -758,17 +832,11 @@ client.on('messageCreate', async (message) => {
 client.on('messageCreate', async (message: Message) => {
     if (message.author.bot) return;
 
-    if (message.content.startsWith('!ai')) {
-        const tokenMint = message.content.split(' ')[1];
-        if (!tokenMint) {
-            await message.reply('Please provide a token address. Usage: !ai <token_address>');
-            return;
-        }
-        await handleAICommand(message, tokenMint);
-    }
+    // Check if the message is in a DM channel
+    const isDM = message.channel.type === 1; // ChannelType.DM is 1
 
     // Handle DMs
-    if (message.channel.isDMBased()) {
+    if (isDM) {
         try {
             // Check if the message is a command
             if (message.content.startsWith('/')) {
@@ -779,13 +847,31 @@ client.on('messageCreate', async (message: Message) => {
                 switch (command) {
                     case 'wallet':
                         if (args[0] === 'create') {
-                            const wallet = await sniperooService.createWallet(message.author.id);
-                            if (wallet) {
+                            const name = args[1];
+                            if (!name) {
+                                await message.reply('Wallet name is required. Usage: /wallet create <name>');
+                                return;
+                            }
+                            const result = await sniperooService.createWallet(message.author.id, name);
+                            if (isWalletData(result)) {
                                 await message.reply({
-                                    content: `✅ Wallet created successfully!\n\nPublic Key: \`${wallet.publicKey}\`\n\n⚠️ **IMPORTANT**: Save your private key securely! It will not be shown again.`
+                                    content: `✅ Wallet "${name}" created successfully!\n\n` +
+                                        `⚠️ **CRITICAL SECURITY WARNING**\n` +
+                                        `━━━━━━━━━━━━━━━━━━━━━━\n` +
+                                        `🔑 **Public Key:** \`${result.walletAddress}\`\n` +
+                                        `🔐 **Private Key:** ||${result.walletPk}||\n\n` +
+                                        `⚠️ **PLEASE READ CAREFULLY:**\n` +
+                                        `• Never share your private key with anyone\n` +
+                                        `• Store these details securely offline\n` +
+                                        `• This is the ONLY time you'll see the private key\n` +
+                                        `• Anyone with your private key can access your funds\n` +
+                                        `• For maximum security, store these details in a secure password manager\n\n` +
+                                        `💡 **Tip:** Take a screenshot or copy these details NOW!`
                                 });
                             } else {
-                                await message.reply('Failed to create wallet. Please try again.');
+                                await message.reply({
+                                    content: `❌ ${result.error}\nPlease try again or contact support if the issue persists.`
+                                });
                             }
                         } else if (args[0] === 'import') {
                             const privateKey = args[1];
@@ -794,13 +880,15 @@ client.on('messageCreate', async (message: Message) => {
                                 return;
                             }
 
-                            const wallet = await sniperooService.importWallet(message.author.id, privateKey);
-                            if (wallet) {
+                            const result = await sniperooService.importWallet(message.author.id, privateKey);
+                            if (isWalletData(result)) {
                                 await message.reply({
-                                    content: `✅ Wallet imported successfully!\n\nPublic Key: \`${wallet.publicKey}\``
+                                    content: `✅ Wallet imported successfully!\n\nPublic Key: \`${result.walletAddress}\``
                                 });
                             } else {
-                                await message.reply('Failed to import wallet. Please check your private key and try again.');
+                                await message.reply({
+                                    content: `❌ ${result.error}\nPlease try again or contact support if the issue persists.`
+                                });
                             }
                         }
                         break;
@@ -816,13 +904,56 @@ client.on('messageCreate', async (message: Message) => {
                         if (success) {
                             const config = await sniperooService.getUserConfig(message.author.id);
                             if (config) {
+                                // Create buttons for quick actions
+                                const buttons = [
+                                    new ButtonBuilder()
+                                        .setLabel('🌊 Pump')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://pump.fun/${tokenAddress}`),
+                                    new ButtonBuilder()
+                                        .setLabel('👽 GMGN')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://gmgn.ai/sol/token/${tokenAddress}`),
+                                    new ButtonBuilder()
+                                        .setLabel('🐂 BullX')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://neo.bullx.io/terminal?chainId=1399811149&address=${tokenAddress}`),
+                                    new ButtonBuilder()
+                                        .setLabel('⭐ Photon')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://photon-sol.tinyastro.io/en/r/@Strobe/${tokenAddress}`),
+                                    new ButtonBuilder()
+                                        .setLabel('🌌 Axiom')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://axiom.trade/t/${tokenAddress}`)
+                                ];
+
+                                const secondRowButtons = [
+                                    new ButtonBuilder()
+                                        .setLabel('🔄 Raydium')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://raydium.io/swap/?inputCurrency=sol&outputCurrency=${tokenAddress}`),
+                                    new ButtonBuilder()
+                                        .setLabel('🦅 Birdeye') 
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://birdeye.so/token/${tokenAddress}?chain=solana`),
+                                    new ButtonBuilder()
+                                        .setLabel('📊 DexScreener')
+                                        .setStyle(ButtonStyle.Link)
+                                        .setURL(`https://dexscreener.com/solana/${tokenAddress}`)
+                                ];
+
                                 await message.reply({
                                     content: `✅ Buy order placed successfully!\n\n` +
                                         `Token: \`${tokenAddress}\`\n` +
                                         `Amount: ${config.buyAmount} SOL\n` +
                                         `Auto-sell: ${config.autoSell ? 'Enabled' : 'Disabled'}\n` +
                                         `Take Profit: ${config.takeProfit}%\n` +
-                                        `Stop Loss: ${config.stopLoss}%`
+                                        `Stop Loss: ${config.stopLoss}%`,
+                                    components: [
+                                        new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons),
+                                        new ActionRowBuilder<ButtonBuilder>().addComponents(...secondRowButtons)
+                                    ]
                                 });
                             }
                         } else {
@@ -1304,3 +1435,4 @@ function formatMarketCapValue(marketCap: number): string {
 client.login(process.env.DISCORD_BOT_TOKEN)
     .then(() => console.log('🔓 Bot logged in successfully'))
     .catch(error => console.error('❌ Failed to log in:', error)); 
+
