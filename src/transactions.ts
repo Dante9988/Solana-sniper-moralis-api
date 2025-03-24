@@ -67,7 +67,7 @@ export async function fetchTransactionDetails(signature: string, connection: Con
           let solMint = "";
           let tokenMint = "";
           for (const balance of postTokenBalances) {
-              if (balance.mint === config.liquidity_pool.wsol_pc_mint) {
+              if (balance.mint === config.wsol_pc_mint) {
                   solMint = balance.mint; // SOL mint
               } else {
                   tokenMint = balance.mint; // New token mint
@@ -849,7 +849,7 @@ export async function fetchAndSaveSwapDetails(tx: string): Promise<boolean> {
     };
 
     // Get latest Sol Price
-    const solMint = config.liquidity_pool.wsol_pc_mint;
+    const solMint = config.wsol_pc_mint;
     const priceResponse = await axios.get<any>(priceUrl, {
       params: {
         ids: solMint,
