@@ -685,11 +685,13 @@ export async function getRugCheckConfirmed(tokenMint: string): Promise<boolean> 
         // Validate conditions
         for (const condition of conditions) {
             if (condition.check) {
-                console.log(`\n📊 Rug Check Metrics (${condition.check ? 'Failed' : 'Passed'}):
+                console.log(`\n📊 Rug Check Metrics (Failed):
 • Total Time: ${performance.now() - startValidation}ms
 • API Call: ${metrics.rugCheckApi.toFixed(2)}ms
 • Validation: ${metrics.validation.toFixed(2)}ms
-• DB Operation: ${metrics.dbOperation.toFixed(2)}ms`);
+• DB Operation: ${metrics.dbOperation.toFixed(2)}ms
+• Failed Condition: ${condition.message}
+• Token: ${tokenMint}`);
 
                 return false;
             }
