@@ -7,6 +7,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Wallet {
+  id            String         @id @default(uuid())
+  userId        String         @unique
+  walletAddress String         @unique
+  walletPk      String         @unique
+  createdAt     DateTime       @default(now())
+  config        UserConfig?
+  transactions  WalletTransaction[]
+  balances      WalletBalance[]
+}
+
+model UserConfig {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  autoBuy     Boolean  @default(false)
+  buyAmount   Float    @default(0.1)
+  takeProfit  Float    @default(50)
+  stopLoss    Float    @default(25)
+  autoSell    Boolean  @default(false)
+  wallet      Wallet   @relation(fields: [userId], references: [userId])
+}
+
 model PumpFunToken {
   mint      String   @id
   createdAt DateTime @default(now())
@@ -32,4 +54,36 @@ model TokenAlert {
   @@index([tokenAddress])
   @@index([checked])
   @@index([alertTimestamp])
+}
+
+model WalletTransaction {
+  id          String   @id @default(uuid())
+  walletId    String
+  type        String   // "BUY" or "SELL"
+  tokenMint   String
+  tokenAmount Float
+  solAmount   Float
+  price       Float
+  txHash      String
+  timestamp   DateTime @default(now())
+  status      String   // "PENDING", "COMPLETED", "FAILED"
+  error       String?
+  wallet      Wallet   @relation(fields: [walletId], references: [id])
+
+  @@index([walletId])
+  @@index([tokenMint])
+  @@index([timestamp])
+}
+
+model WalletBalance {
+  id          String   @id @default(uuid())
+  walletId    String
+  tokenMint   String
+  amount      Float
+  lastUpdated DateTime @default(now())
+  wallet      Wallet   @relation(fields: [walletId], references: [id])
+
+  @@unique([walletId, tokenMint])
+  @@index([walletId])
+  @@index([tokenMint])
 }

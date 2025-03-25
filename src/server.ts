@@ -35,20 +35,25 @@ const connection = new Connection(process.env.HELIUS_HTTPS_URI || "");
 
 // WebSocket helper functions
 function sendSubscribeRequest(ws: WebSocket): void {
-  const request: WebSocketRequest = {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "logsSubscribe",
-    params: [
-      {
-        mentions: [config.liquidity_pool.radiyum_program_id],
-      },
-      {
-        commitment: "processed",
-      },
-    ],
-  };
-  ws.send(JSON.stringify(request));
+  // Create a subscription for each enabled pool
+  config.liquidity_pool
+    .filter(pool => pool.enabled)
+    .forEach(pool => {
+      const subscriptionMessage = {
+        jsonrpc: "2.0",
+        id: pool.id,
+        method: "logsSubscribe",
+        params: [
+          {
+            mentions: [pool.program],
+          },
+          {
+            commitment: "processed",
+          },
+        ],
+      };
+      ws.send(JSON.stringify(subscriptionMessage));
+    });
 }
 
 // Transaction processing function
@@ -127,6 +132,7 @@ async function websocketHandler(): Promise<void> {
       const jsonString = data.toString();
       const parsedData = JSON.parse(jsonString);
 
+      // Handle subscription response
       if (parsedData.result !== undefined && !parsedData.error) {
         console.log("✅ Subscription confirmed");
         return;
@@ -142,8 +148,14 @@ async function websocketHandler(): Promise<void> {
 
       if (!Array.isArray(logs) || !signature) return;
 
+      // Check for pool creation instructions from any enabled pool
+      const liquidityPoolInstructions = config.liquidity_pool
+        .filter(pool => pool.enabled)
+        .map(pool => pool.instruction);
+      
       const containsCreate = logs.some((log: string) => 
-        typeof log === "string" && log.includes("Program log: initialize2: InitializeInstruction2")
+        typeof log === "string" && 
+        liquidityPoolInstructions.some(instruction => instruction && log.includes(instruction))
       );
       
       if (!containsCreate || typeof signature !== "string") return;
