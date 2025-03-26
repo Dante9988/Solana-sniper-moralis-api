@@ -654,7 +654,7 @@ export function startPeriodicChecks(discordClient: Client) {
   setInterval(async () => {
     console.log('🔄 Running PnL checks...');
     await checkTokenPnL(discordClient);
-  }, 60 * 1000);
+  }, 15 * 60 * 1000);
 
   // Schedule daily summary for 12 AM EST
   setInterval(async () => {
@@ -668,7 +668,7 @@ export function startPeriodicChecks(discordClient: Client) {
       console.log('🕛 Generating daily profit summary at midnight EST...');
       await sendDailySummaryAlert(discordClient);
     }
-  }, 15 * 60 * 1000); // Check every 5 minutes
+  }, 5 * 60 * 1000); // Check every 5 minutes
 
   console.log(`
   🔄 Started periodic checks:

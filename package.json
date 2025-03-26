@@ -50,6 +50,7 @@
     "@raydium-io/raydium-sdk-v2": "^0.1.115-alpha",
     "@solana/spl-token": "^0.4.8",
     "@solana/web3.js": "^1.95.5",
+    "@tailwindcss/vite": "^4.0.16",
     "@types/play-sound": "^1.1.2",
     "axios": "^1.7.9",
     "bn.js": "^5.2.1",
@@ -79,6 +80,7 @@
     "sqlite3": "^5.1.7",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
+    "tailwindcss": "^4.0.16",
     "ws": "^8.18.1"
   }
 }
