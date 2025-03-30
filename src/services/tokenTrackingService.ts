@@ -976,25 +976,10 @@ async function sendDailySummaryAlert(discordClient: Client) {
       return;
     }
 
-    // Create the main summary embed with image
-    const summaryEmbed = new EmbedBuilder()
+    // Send the main summary image first
+    const mainEmbed = new EmbedBuilder()
       .setColor(profits.netProfitUSD >= 0 ? '#4CAF50' : '#F44336')
       .setImage('attachment://daily-summary.png')
-      .setDescription(`
-||**🔍 Detailed Trade Breakdown**
-━━━━━━━━━━━━━━━━━━━━━━
-${await formatTradeDetails()}||
-
-> 💡 *Click the spoiler tag above to expand trade details*`)
-      .setFooter({ 
-        text: `Daily Summary • ${new Date().toLocaleString('en-US', { 
-          timeZone: 'America/New_York',
-          month: 'long',
-          day: 'numeric',
-          year: 'numeric'
-        })} EST`,
-        iconURL: 'https://pump.fun/favicon.ico'
-      })
       .setTimestamp();
 
     await channel.send({
@@ -1002,8 +987,30 @@ ${await formatTradeDetails()}||
         attachment: summaryImage,
         name: 'daily-summary.png'
       }],
-      embeds: [summaryEmbed]
+      embeds: [mainEmbed]
     });
+
+    // Get trade details and split into chunks
+    const tradeDetails = await formatTradeDetails();
+    const chunks = splitTradeDetails(tradeDetails);
+
+    // Send each chunk as a separate embed
+    for (const [index, chunk] of chunks.entries()) {
+      const detailEmbed = new EmbedBuilder()
+        .setColor('#9B59B6')
+        .setDescription(chunk)
+        .setFooter({ 
+          text: `Trade Details ${index + 1}/${chunks.length} • ${new Date().toLocaleString('en-US', { 
+            timeZone: 'America/New_York',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric'
+          })} EST`,
+          iconURL: 'https://pump.fun/favicon.ico'
+        });
+
+      await channel.send({ embeds: [detailEmbed] });
+    }
 
     console.log(`
     ✅ Daily Summary Alert Sent to Summary Channel:
@@ -1012,11 +1019,42 @@ ${await formatTradeDetails()}||
     • Total Trades: ${profits.totalTrades}
     • Win Rate: ${profits.winRate.toFixed(1)}%
     • Average PnL: $${profits.averagePnL.toLocaleString()}
+    • Number of detail embeds: ${chunks.length}
     `);
 
   } catch (error) {
     console.error('Error sending daily summary alert:', error);
   }
+}
+
+// Helper function to split trade details into chunks that fit Discord's limit
+function splitTradeDetails(details: string): string[] {
+  const trades = details.split('\n\n📊');
+  const chunks: string[] = [];
+  let currentChunk = '';
+
+  // Add header to first chunk
+  currentChunk = '**🔍 Detailed Trade Breakdown**\n━━━━━━━━━━━━━━━━━━━━━━\n';
+  
+  // Process each trade
+  for (const trade of trades) {
+    const tradeText = trade.startsWith('**Token') ? trade : '📊' + trade;
+    
+    // If adding this trade would exceed Discord's limit, start a new chunk
+    if ((currentChunk + tradeText).length > 3800) { // Using 3800 to leave room for formatting
+      chunks.push(currentChunk);
+      currentChunk = '**🔍 Trade Details (Continued)**\n━━━━━━━━━━━━━━━━━━━━━━\n';
+    }
+    
+    currentChunk += tradeText + '\n\n';
+  }
+  
+  // Add the last chunk if it has content
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
 }
 
 // Helper function to format trade details
