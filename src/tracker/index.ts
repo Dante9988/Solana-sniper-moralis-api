@@ -18,7 +18,7 @@ async function main() {
   const priceUrl = process.env.JUP_HTTPS_PRICE_URI || "";
   const dexPriceUrl = process.env.DEX_HTTPS_LATEST_TOKENS || "";
   const priceSource = config.sell.price_source || "jup";
-  const solMint = config.liquidity_pool.wsol_pc_mint;
+  const solMint = config.wsol_pc_mint;
 
   // Connect to database and create if not exists
   const db = await open({
@@ -140,7 +140,7 @@ async function main() {
             // Sell via Take Profit
             if (unrealizedPnLPercentage >= config.sell.take_profit_percent) {
               try {
-                const result: createSellTransactionResponse = await createSellTransaction(config.liquidity_pool.wsol_pc_mint, token, amountIn);
+                const result: createSellTransactionResponse = await createSellTransaction(config.wsol_pc_mint, token, amountIn);
                 const txErrorMsg = result.msg;
                 const txSuccess = result.success;
                 const tXtransaction = result.tx;
@@ -158,7 +158,7 @@ async function main() {
             // Sell via Stop Loss
             if (unrealizedPnLPercentage <= -config.sell.stop_loss_percent) {
               try {
-                const result: createSellTransactionResponse = await createSellTransaction(config.liquidity_pool.wsol_pc_mint, token, amountIn);
+                const result: createSellTransactionResponse = await createSellTransaction(config.wsol_pc_mint, token, amountIn);
                 const txErrorMsg = result.msg;
                 const txSuccess = result.success;
                 const tXtransaction = result.tx;

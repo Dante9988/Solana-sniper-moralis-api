@@ -649,55 +649,70 @@ async function sendPnLAlert(discordClient: Client, data: any) {
   }
 }
 
+// Add this new function to manually trigger daily summary
+export async function triggerDailySummary(discordClient: Client) {
+  console.log('🔄 Manually triggering daily profit summary...');
+  try {
+    await sendDailySummaryAlert(discordClient);
+    console.log('✅ Daily summary sent successfully');
+  } catch (error) {
+    console.error('❌ Failed to send daily summary:', error);
+  }
+}
+
 export function startPeriodicChecks(discordClient: Client) {
   // Run PnL checks every minute
   setInterval(async () => {
     console.log('🔄 Running PnL checks...');
     await checkTokenPnL(discordClient);
-  }, 60 * 1000);
+  }, 15 * 60 * 1000);
 
   // Schedule daily summary for 12 AM EST
   setInterval(async () => {
     const now = new Date();
-    const estOffset = -4; // EST offset from UTC (adjust for daylight savings if needed)
-    const estHour = (now.getUTCHours() + estOffset + 24) % 24;
-    const estMinute = now.getUTCMinutes();
+    const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const estHour = estTime.getHours();
+    const estMinute = estTime.getMinutes();
 
     // Check if it's midnight EST (00:00)
     if (estHour === 0 && estMinute === 0) {
       console.log('🕛 Generating daily profit summary at midnight EST...');
       await sendDailySummaryAlert(discordClient);
     }
-  }, 15 * 60 * 1000); // Check every 5 minutes
+  }, 5 * 60 * 1000); // Check every 5 minutes
 
   console.log(`
   🔄 Started periodic checks:
-  • PnL checks: Every minute
+  • PnL checks: Every 15 minutes
   • Daily summary: Every day at 12:00 AM EST
+  • Current EST time: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}
   `);
 }
 
 async function calculateDailyProfits(): Promise<DailyProfitSummary> {
   try {
-    // Get EST timezone dates for today
+    // Get current EST time
     const now = new Date();
-    const estOffset = -4; // EST offset from UTC (should be adjusted for DST)
+    const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     
-    // Calculate start of day in EST
-    const startOfDayEST = new Date();
-    startOfDayEST.setUTCHours(4, 0, 0, 0); // 00:00 EST = 04:00 UTC
+    // Calculate start of current day in EST (00:00:00.000)
+    const startOfDayEST = new Date(estTime);
+    startOfDayEST.setHours(0, 0, 0, 0);
     
-    // Calculate end of day in EST
-    const endOfDayEST = new Date();
-    endOfDayEST.setUTCHours(27, 59, 59, 999); // 23:59:59.999 EST = 03:59:59.999 UTC next day
+    // Calculate end of current day in EST (23:59:59.999)
+    const endOfDayEST = new Date(estTime);
+    endOfDayEST.setHours(23, 59, 59, 999);
 
     console.log(`
-    🕒 Calculating profits for EST day:
-    • Start: ${startOfDayEST.toISOString()}
-    • End: ${endOfDayEST.toISOString()}
+    🕒 Calculating profits for current EST day:
+    • Current UTC time: ${now.toISOString()}
+    • Current EST time: ${estTime.toISOString()}
+    • Start of day EST: ${startOfDayEST.toISOString()}
+    • End of day EST: ${endOfDayEST.toISOString()}
+    • Your local time: ${now.toLocaleString()}
     `);
 
-    // Get all tokens that have been checked and were alerted today in EST
+    // Get all tokens that were alerted today in EST
     const tokens = await prisma.tokenAlert.findMany({
       where: {
         checked: true,
@@ -707,10 +722,13 @@ async function calculateDailyProfits(): Promise<DailyProfitSummary> {
           gte: startOfDayEST,
           lte: endOfDayEST
         }
+      },
+      orderBy: {
+        alertTimestamp: 'asc'
       }
     });
 
-    console.log(`Found ${tokens.length} tokens for today's calculation`);
+    console.log(`Found ${tokens.length} tokens alerted today for calculation`);
 
     let totalProfitUSD = 0;
     let totalLossUSD = 0;
@@ -728,6 +746,9 @@ async function calculateDailyProfits(): Promise<DailyProfitSummary> {
       console.log(`
       Token ${token.tokenAddress}:
       • Alert Time (EST): ${new Date(token.alertTimestamp).toLocaleString('en-US', { timeZone: 'America/New_York' })}
+      • Check Time (EST): ${token.checkTimestamp ? new Date(token.checkTimestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }) : 'N/A'}
+      • Initial MC: $${token.initialMarketCap.toLocaleString()}
+      • Current MC: $${token.currentMarketCap?.toLocaleString() || 'N/A'}
       • PnL: ${token.pnlPercentage.toFixed(2)}%
       • Profit/Loss: $${profitUSD.toFixed(2)}
       `);
@@ -747,12 +768,14 @@ async function calculateDailyProfits(): Promise<DailyProfitSummary> {
     const winRate = totalTrades > 0 ? (profitableTrades / totalTrades) * 100 : 0;
 
     console.log(`
-    📊 Daily Summary (EST):
+    📊 Today's Summary (EST):
+    • Time Window: ${startOfDayEST.toLocaleString('en-US', { timeZone: 'America/New_York' })} to ${endOfDayEST.toLocaleString('en-US', { timeZone: 'America/New_York' })}
     • Total Trades: ${totalTrades}
     • Profitable: ${profitableTrades}
     • Losses: ${lossTrades}
     • Net Profit: $${netProfitUSD.toFixed(2)}
     • Win Rate: ${winRate.toFixed(1)}%
+    • SOL Price Used: $${solPrice}
     `);
 
     return {
