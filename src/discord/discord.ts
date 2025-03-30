@@ -622,6 +622,50 @@ async function fetchLatestPrice(tokenMint: string, retryCount = 3): Promise<numb
   return 0;
 }
 
+// Add this constant at the top of the file
+const MINIMUM_MARKET_CAP = 15000; // $15k minimum threshold
+
+// Modify the doubleCheckMarketCap function to be more thorough
+async function doubleCheckMarketCap(tokenMint: string, retryCount = 3): Promise<number> {
+    try {
+        console.log(`🔄 Double-checking market cap for ${tokenMint}...`);
+        let highestMarketCap = 0;
+
+        // Make multiple attempts to get the most accurate market cap
+        for (let i = 0; i < retryCount; i++) {
+            if (i > 0) {
+                console.log(`Attempt ${i + 1}/${retryCount} to verify market cap...`);
+                await sleep(2000); // Wait 2 seconds between attempts
+            }
+
+            const [tokenData, latestPrice] = await Promise.all([
+                getTokenMarketData(tokenMint),
+                fetchLatestPrice(tokenMint)
+            ]);
+
+            const PUMPFUN_TOTAL_SUPPLY = 1_000_000_000;
+            const marketCapFromPrice = latestPrice * PUMPFUN_TOTAL_SUPPLY;
+            const marketCapFromData = tokenData?.marketCap || 0;
+
+            console.log(`
+            Market Cap Check (Attempt ${i + 1}):
+            • From Price: $${marketCapFromPrice.toLocaleString()}
+            • From Data: $${marketCapFromData.toLocaleString()}
+            `);
+
+            // Use the higher value between the two calculations
+            const currentMarketCap = Math.max(marketCapFromPrice, marketCapFromData);
+            highestMarketCap = Math.max(highestMarketCap, currentMarketCap);
+        }
+
+        console.log(`✅ Final verified market cap for ${tokenMint}: $${highestMarketCap.toLocaleString()}`);
+        return highestMarketCap;
+    } catch (error) {
+        console.error(`❌ Error double-checking market cap for ${tokenMint}:`, error);
+        return 0;
+    }
+}
+
 export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean) {
     const metrics = {
         start: performance.now(),
@@ -644,6 +688,16 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
     }
 
     try {
+        // Always double-check market cap first
+        console.log(`🔍 Verifying market cap before proceeding...`);
+        const verifiedMarketCap = await doubleCheckMarketCap(tokenMint);
+
+        // If market cap is below minimum threshold, skip the alert
+        if (verifiedMarketCap < MINIMUM_MARKET_CAP) {
+            console.log(`⚠️ Market cap ($${verifiedMarketCap.toLocaleString()}) is below minimum threshold ($${MINIMUM_MARKET_CAP.toLocaleString()}). Skipping alert.`);
+            return;
+        }
+
         // Fetch all necessary data in parallel, but handle failures independently
         const [tokenDataResult, trenchResult, sniperDataResult] = await Promise.allSettled([
             getTokenMarketData(tokenMint),
@@ -666,13 +720,12 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
         console.log(`Fetching latest price for ${tokenMint} before sending alert...`);
         const price = await fetchLatestPrice(tokenMint);
         
-        // Calculate market cap with the latest price
-        const PUMPFUN_TOTAL_SUPPLY = 1_000_000_000; // 1 billion tokens
-        const marketCap = price * PUMPFUN_TOTAL_SUPPLY;
+        // Use the verified market cap
+        const marketCap = verifiedMarketCap;
         
-        console.log(`Latest data for ${tokenMint}:
+        console.log(`Latest verified data for ${tokenMint}:
         - Price: ${price}
-        - Market Cap: ${marketCap}`);
+        - Market Cap: $${marketCap.toLocaleString()}`);
         
         // Get token name and ticker from Moralis data if available
         const tokenName = tokenData?.metadata?.name || trenchData.ticker?.toUpperCase() || 'UNKNOWN';
@@ -786,13 +839,13 @@ ${sniperSection}
             ]
         };
 
-        // After fetching token data and before sending Discord message
+        // Store token data with verified market cap
         if (isPumpToken && tokenData) {
             await storeTokenAlert({
                 tokenAddress: tokenMint,
                 tokenSymbol: tokenData?.metadata?.symbol || undefined,
                 tokenName: tokenData?.metadata?.name || undefined,
-                initialMarketCap: marketCap,
+                initialMarketCap: marketCap, // Use verified market cap
                 initialPrice: price,
                 bundlePercentage: trenchData.holdingPercentage || undefined
             });

@@ -671,26 +671,26 @@ export function startPeriodicChecks(discordClient: Client) {
     }
   }, 15 * 60 * 1000);
 
-  // Check for daily summary at 23:35 PM EST
+  // Check for daily summary at 23:59:59 PM EST
   setInterval(async () => {
     try {
       const now = new Date();
       const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
       
-      // Check if it's 23:35 PM EST
-      if (estTime.getHours() === 23 && estTime.getMinutes() === 35) {
+      // Check if it's 23:59:59 PM EST
+      if (estTime.getHours() === 23 && estTime.getMinutes() === 59 && estTime.getSeconds() === 59) {
         console.log('🕒 Time to post daily PNL summary!');
         await sendDailySummaryAlert(discordClient);
       }
     } catch (error) {
       console.error('Error in daily summary check:', error);
     }
-  }, 60 * 1000); // Check every minute
+  }, 1000); // Check every second for more precise timing
 
   console.log(`
   🔄 Started periodic checks:
   • PnL checks: Every 15 minutes
-  • Daily summary: Every day at 23:35 PM EST
+  • Daily summary: Every day at 23:59:59 PM EST
   • Current EST time: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}
   `);
 }
@@ -802,211 +802,158 @@ async function calculateDailyProfits(): Promise<DailyProfitSummary> {
 
 async function createDailySummaryImage(data: DailyProfitSummary): Promise<Buffer> {
   try {
-    const canvas = createCanvas(1500, 900);
+    const canvas = createCanvas(1200, 675);
     const ctx = canvas.getContext('2d');
 
-    // Create rich background with multiple gradients (matching PnL style)
-    const baseGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    baseGradient.addColorStop(0, '#1a0b2e');
-    baseGradient.addColorStop(0.5, '#2d1b4e');
-    baseGradient.addColorStop(1, '#3d2b6e');
-    ctx.fillStyle = baseGradient;
+    // Create dark purple background
+    ctx.fillStyle = '#1a0b2e';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Add diagonal light beam effect
-    const beamGradient = ctx.createLinearGradient(
-      canvas.width, 0,
-      0, canvas.height
-    );
-    beamGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    beamGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
-    beamGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = beamGradient;
+    // Add subtle gradient overlay
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    gradient.addColorStop(0, 'rgba(45, 27, 78, 0.5)');
+    gradient.addColorStop(1, 'rgba(61, 43, 110, 0.5)');
+    ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Add subtle dot matrix pattern
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
-    for (let i = 0; i < canvas.width; i += 20) {
-      for (let j = 0; j < canvas.height; j += 20) {
-        ctx.beginPath();
-        ctx.arc(i, j, 0.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // Add top-right corner glow
-    const cornerGlow = ctx.createRadialGradient(
-      canvas.width, 0,
-      0,
-      canvas.width - 100, 100,
-      400
-    );
-    cornerGlow.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    cornerGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = cornerGlow;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Title with enhanced styling
-    ctx.shadowColor = 'rgba(255, 255, 255, 0.4)';
-    ctx.shadowBlur = 20;
-    ctx.font = 'bold 80px Arial';
+    // Title
+    ctx.font = 'bold 48px Arial';
     ctx.fillStyle = '#FFFFFF';
     ctx.textAlign = 'left';
-    ctx.fillText('Daily Trading Summary', 60, 100);
+    ctx.fillText('Daily Trading Summary', 40, 60);
 
-    // Date with metallic effect
-    const dateGradient = ctx.createLinearGradient(60, 130, 60, 160);
-    dateGradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-    dateGradient.addColorStop(1, 'rgba(255, 255, 255, 0.7)');
-    ctx.fillStyle = dateGradient;
-    ctx.font = '36px Arial';
+    // Date
+    ctx.font = '24px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
     ctx.fillText(new Date().toLocaleDateString('en-US', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
       day: 'numeric'
-    }), 60, 160);
+    }), 40, 100);
 
-    // Net Profit/Loss with dramatic styling
-    const profitColor = data.netProfitUSD >= 0 ? '#4CAF50' : '#F44336';
-    ctx.shadowColor = data.netProfitUSD >= 0 ? 'rgba(76, 175, 80, 0.5)' : 'rgba(244, 67, 54, 0.5)';
-    ctx.shadowBlur = 30;
-    ctx.font = 'bold 120px Arial';
-    ctx.fillStyle = profitColor;
+    // Net Profit/Loss
+    ctx.font = 'bold 72px Arial';
+    ctx.fillStyle = data.netProfitUSD >= 0 ? '#4CAF50' : '#F44336';
     ctx.fillText(
       `${data.netProfitUSD >= 0 ? '+' : ''}$${data.netProfitUSD.toLocaleString(undefined, {maximumFractionDigits: 2})}`,
-      60,
-      300
+      40, 180
     );
 
-    // Win Rate Section
-    // Create glass-like container
-    const winRateX = 60;
-    const winRateY = 380;
-    const winRateWidth = 400;
-    const winRateHeight = 100;
-
-    // Glass effect background
-    const glassGradient = ctx.createLinearGradient(winRateX, winRateY, winRateX, winRateY + winRateHeight);
-    glassGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    glassGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = glassGradient;
-    ctx.beginPath();
-    ctx.roundRect(winRateX, winRateY, winRateWidth, winRateHeight, 10);
-    ctx.fill();
-
-    // Win Rate Progress Bar
-    const barWidth = 360;
+    // Win Rate Bar
+    const winRateY = 220;
+    ctx.font = '24px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillText('Win Rate', 40, winRateY);
+    
+    // Progress bar background
+    const barWidth = 300;
     const barHeight = 30;
-    const barX = winRateX + 20;
-    const barY = winRateY + 50;
-
-    // Bar background
     ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.beginPath();
-    ctx.roundRect(barX, barY, barWidth, barHeight, 15);
-    ctx.fill();
-
-    // Bar progress
-    const progressWidth = (barWidth * data.winRate) / 100;
-    const progressGradient = ctx.createLinearGradient(barX, 0, barX + progressWidth, 0);
-    progressGradient.addColorStop(0, '#4CAF50');
-    progressGradient.addColorStop(1, '#81C784');
-    ctx.fillStyle = progressGradient;
-    ctx.beginPath();
-    ctx.roundRect(barX, barY, progressWidth, barHeight, 15);
-    ctx.fill();
-
-    // Win Rate Label
-    ctx.font = 'bold 24px Arial';
+    ctx.fillRect(40, winRateY + 10, barWidth, barHeight);
+    
+    // Progress bar fill
+    const fillWidth = (barWidth * data.winRate) / 100;
+    const barGradient = ctx.createLinearGradient(40, 0, 40 + fillWidth, 0);
+    barGradient.addColorStop(0, '#4CAF50');
+    barGradient.addColorStop(1, '#81C784');
+    ctx.fillStyle = barGradient;
+    ctx.fillRect(40, winRateY + 10, fillWidth, barHeight);
+    
+    // Win Rate percentage
     ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'left';
-    ctx.fillText('Win Rate', barX, barY - 10);
-    ctx.font = 'bold 28px Arial';
-    ctx.fillText(`${data.winRate.toFixed(1)}%`, barX + barWidth + 20, barY + 22);
+    ctx.textAlign = 'right';
+    ctx.fillText(`${data.winRate.toFixed(1)}%`, 40 + barWidth + 50, winRateY + 30);
 
-    // Statistics Grid with glass card effect
-    const stats = [
-      { label: 'Total Trades', value: data.totalTrades.toString() },
-      { label: 'Profitable', value: `${data.profitableTrades} trades` },
-      { label: 'Losses', value: `${data.lossTrades} trades` },
-      { label: 'Total Profit', value: `$${data.totalProfitUSD.toLocaleString(undefined, {maximumFractionDigits: 2})}` },
-      { label: 'Total Loss', value: `$${data.totalLossUSD.toLocaleString(undefined, {maximumFractionDigits: 2})}` },
-      { label: 'Average PnL', value: `$${data.averagePnL.toLocaleString(undefined, {maximumFractionDigits: 2})}` }
+    // Stats boxes
+    const boxY = 300;
+    const boxHeight = 100;
+    const boxSpacing = 20;
+    const boxes = [
+      {
+        title: 'Total Trades',
+        value: data.totalTrades.toString(),
+        color: 'rgba(255, 255, 255, 0.1)'
+      },
+      {
+        title: 'Profitable',
+        value: `${data.profitableTrades} trades`,
+        color: 'rgba(76, 175, 80, 0.1)'
+      },
+      {
+        title: 'Losses',
+        value: `${data.lossTrades} trades`,
+        color: 'rgba(244, 67, 54, 0.1)'
+      }
     ];
 
-    const gridStartY = 520;
-    const cardWidth = 440;
-    const cardHeight = 100;
-    const cardsPerRow = 3;
-    const cardSpacing = 30;
-
-    stats.forEach((stat, index) => {
-      const row = Math.floor(index / cardsPerRow);
-      const col = index % cardsPerRow;
-      const x = 60 + (col * (cardWidth + cardSpacing));
-      const y = gridStartY + (row * (cardHeight + cardSpacing));
-
-      // Glass card background
-      const cardGradient = ctx.createLinearGradient(x, y, x, y + cardHeight);
-      cardGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-      cardGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-      ctx.fillStyle = cardGradient;
-      ctx.beginPath();
-      ctx.roundRect(x, y, cardWidth, cardHeight, 15);
-      ctx.fill();
-
-      // Card border glow
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-
-      // Label
+    const boxWidth = (canvas.width - 80 - (boxSpacing * 2)) / 3;
+    boxes.forEach((box, i) => {
+      const x = 40 + (i * (boxWidth + boxSpacing));
+      
+      // Box background
+      ctx.fillStyle = box.color;
+      ctx.fillRect(x, boxY, boxWidth, boxHeight);
+      
+      // Box content
+      ctx.textAlign = 'left';
       ctx.font = '24px Arial';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.textAlign = 'left';
-      ctx.fillText(stat.label, x + 20, y + 35);
-
-      // Value with shadow
-      ctx.shadowColor = 'rgba(255, 255, 255, 0.2)';
-      ctx.shadowBlur = 10;
+      ctx.fillText(box.title, x + 20, boxY + 35);
+      
       ctx.font = 'bold 32px Arial';
       ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(stat.value, x + 20, y + 75);
-      ctx.shadowBlur = 0;
+      ctx.fillText(box.value, x + 20, boxY + 75);
     });
 
-    // Bottom banner with metallic effect
-    const bannerHeight = 80;
-    const bannerGradient = ctx.createLinearGradient(0, canvas.height - bannerHeight, 0, canvas.height);
-    bannerGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    bannerGradient.addColorStop(1, 'rgba(255, 255, 255, 0.15)');
-    ctx.fillStyle = bannerGradient;
-    ctx.fillRect(0, canvas.height - bannerHeight, canvas.width, bannerHeight);
+    // Bottom stats
+    const bottomY = 450;
+    const bottomStats = [
+      {
+        title: 'Total Profit',
+        value: `$${data.totalProfitUSD.toLocaleString(undefined, {maximumFractionDigits: 2})}`
+      },
+      {
+        title: 'Total Loss',
+        value: `$${data.totalLossUSD.toLocaleString(undefined, {maximumFractionDigits: 2})}`
+      },
+      {
+        title: 'Average PnL',
+        value: `$${data.averagePnL.toLocaleString(undefined, {maximumFractionDigits: 2})}`
+      }
+    ];
 
-    // Add metallic chip card effect (matching PnL style)
-    const chipX = canvas.width - 180;
-    const chipY = canvas.height - 180;
-    const chipSize = 70;
-    
-    const chipGradient = ctx.createLinearGradient(chipX, chipY, chipX + chipSize, chipY + chipSize);
-    chipGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    chipGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = chipGradient;
-    ctx.fillRect(chipX, chipY, chipSize, chipSize);
-    
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(chipX, chipY, chipSize, chipSize);
-    ctx.strokeRect(chipX + 10, chipY + 10, chipSize - 20, chipSize - 20);
+    bottomStats.forEach((stat, i) => {
+      const x = 40 + (i * (boxWidth + boxSpacing));
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.fillRect(x, bottomY, boxWidth, boxHeight);
+      
+      ctx.textAlign = 'left';
+      ctx.font = '24px Arial';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.fillText(stat.title, x + 20, bottomY + 35);
+      
+      ctx.font = 'bold 32px Arial';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillText(stat.value, x + 20, bottomY + 75);
+    });
 
     // STROBE branding
-    ctx.shadowColor = 'rgba(255, 255, 255, 0.3)';
-    ctx.shadowBlur = 15;
-    ctx.font = 'bold 48px Arial';
-    ctx.textAlign = 'right';
+    ctx.font = 'bold 36px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('STROBE', canvas.width - 60, canvas.height - 25);
+    ctx.textAlign = 'right';
+    ctx.fillText('STROBE', canvas.width - 40, canvas.height - 40);
+
+    // Current time
+    ctx.font = '24px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Today at ${new Date().toLocaleString('en-US', { 
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true
+    })}`, 40, canvas.height - 40);
 
     return canvas.toBuffer('image/png');
   } catch (error) {
@@ -1019,7 +966,7 @@ async function sendDailySummaryAlert(discordClient: Client) {
   try {
     const profits = await calculateDailyProfits();
     const summaryImage = await createDailySummaryImage(profits);
-
+    
     const channel = discordClient.channels.cache.get(
       process.env.DISCORD_PNL_SUMMARY_CHANNEL_ID!
     ) as TextChannel;
@@ -1029,9 +976,25 @@ async function sendDailySummaryAlert(discordClient: Client) {
       return;
     }
 
-    const embed = new EmbedBuilder()
+    // Create the main summary embed with image
+    const summaryEmbed = new EmbedBuilder()
       .setColor(profits.netProfitUSD >= 0 ? '#4CAF50' : '#F44336')
       .setImage('attachment://daily-summary.png')
+      .setDescription(`
+||**🔍 Detailed Trade Breakdown**
+━━━━━━━━━━━━━━━━━━━━━━
+${await formatTradeDetails()}||
+
+> 💡 *Click the spoiler tag above to expand trade details*`)
+      .setFooter({ 
+        text: `Daily Summary • ${new Date().toLocaleString('en-US', { 
+          timeZone: 'America/New_York',
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        })} EST`,
+        iconURL: 'https://pump.fun/favicon.ico'
+      })
       .setTimestamp();
 
     await channel.send({
@@ -1039,7 +1002,7 @@ async function sendDailySummaryAlert(discordClient: Client) {
         attachment: summaryImage,
         name: 'daily-summary.png'
       }],
-      embeds: [embed]
+      embeds: [summaryEmbed]
     });
 
     console.log(`
@@ -1053,6 +1016,121 @@ async function sendDailySummaryAlert(discordClient: Client) {
 
   } catch (error) {
     console.error('Error sending daily summary alert:', error);
+  }
+}
+
+// Helper function to format trade details
+async function formatTradeDetails(): Promise<string> {
+  try {
+    // Get current EST time
+    const now = new Date();
+    const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    
+    // Calculate start/end of day in EST
+    const startOfDayEST = new Date(estTime);
+    startOfDayEST.setHours(0, 0, 0, 0);
+    const endOfDayEST = new Date(estTime);
+    endOfDayEST.setHours(23, 59, 59, 999);
+
+    // Get all tokens that were alerted today in EST
+    const tokens = await prisma.tokenAlert.findMany({
+      where: {
+        checked: true,
+        currentMarketCap: { not: null },
+        pnlPercentage: { not: null },
+        alertTimestamp: {
+          gte: startOfDayEST,
+          lte: endOfDayEST
+        }
+      },
+      orderBy: {
+        alertTimestamp: 'asc'
+      }
+    });
+
+    const solPrice = await getSolPrice();
+    const initialInvestment = 1.000;
+    let details = '';
+
+    // Sort tokens by PnL percentage (highest to lowest)
+    const tokenDetails = await Promise.all(tokens.map(async token => {
+      if (!token.pnlPercentage) return null;
+      const returnedSol = initialInvestment + (initialInvestment * (token.pnlPercentage / 100));
+      const profitUSD = (returnedSol - initialInvestment) * solPrice;
+
+      return {
+        token,
+        profitUSD,
+        pnlPercentage: token.pnlPercentage
+      };
+    }));
+
+    // Filter out null values and sort by PnL
+    const sortedTokens = tokenDetails
+      .filter(t => t !== null)
+      .sort((a, b) => b!.pnlPercentage - a!.pnlPercentage);
+
+    // Format each token's details
+    for (const tokenDetail of sortedTokens) {
+      if (!tokenDetail) continue;
+      const { token, profitUSD } = tokenDetail;
+      
+      const alertTime = new Date(token.alertTimestamp).toLocaleString('en-US', { 
+        timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+      
+      const checkTime = token.checkTimestamp ? new Date(token.checkTimestamp).toLocaleString('en-US', { 
+        timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      }) : 'N/A';
+
+      details += `
+📊 **Token ${token.tokenAddress.slice(0, 6)}...${token.tokenAddress.slice(-4)}**
+━━━━━━━━━━━━━━━━━━━━━━
+⏰ Alert Time: ${alertTime} EST
+🔄 Check Time: ${checkTime} EST
+💰 Initial MC: $${token.initialMarketCap.toLocaleString()}
+📈 Final MC: $${token.currentMarketCap?.toLocaleString() || 'N/A'}
+📊 PnL: ${token.pnlPercentage?.toFixed(2) || '0.00'}%
+💵 Profit/Loss: ${profitUSD >= 0 ? '+' : ''}$${profitUSD.toFixed(2)}
+🔗 [Trade Now](https://pump.fun/${token.tokenAddress})
+
+`;
+    }
+
+    if (!details) {
+      return '```No trades found for today.```';
+    }
+
+    return `\`\`\`
+Time Window: ${startOfDayEST.toLocaleString('en-US', { 
+  timeZone: 'America/New_York',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: true
+})} EST to ${endOfDayEST.toLocaleString('en-US', { 
+  timeZone: 'America/New_York',
+  month: 'long',
+  day: 'numeric',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: true
+})} EST
+\`\`\`
+${details}`;
+
+  } catch (error) {
+    console.error('Error formatting trade details:', error);
+    return '```Error retrieving trade details.```';
   }
 }
 
