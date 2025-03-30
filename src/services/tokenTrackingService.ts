@@ -661,30 +661,36 @@ export async function triggerDailySummary(discordClient: Client) {
 }
 
 export function startPeriodicChecks(discordClient: Client) {
-  // Run PnL checks every minute
+  // Run PnL checks every 15 minutes
   setInterval(async () => {
-    console.log('🔄 Running PnL checks...');
-    await checkTokenPnL(discordClient);
+    try {
+      console.log('🔄 Running PnL checks...');
+      await checkTokenPnL(discordClient);
+    } catch (error) {
+      console.error('Error in periodic PnL check:', error);
+    }
   }, 15 * 60 * 1000);
 
-  // Schedule daily summary for 12 AM EST
+  // Check for daily summary at 23:35 PM EST
   setInterval(async () => {
-    const now = new Date();
-    const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const estHour = estTime.getHours();
-    const estMinute = estTime.getMinutes();
-
-    // Check if it's midnight EST (00:00)
-    if (estHour === 0 && estMinute === 0) {
-      console.log('🕛 Generating daily profit summary at midnight EST...');
-      await sendDailySummaryAlert(discordClient);
+    try {
+      const now = new Date();
+      const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      
+      // Check if it's 23:35 PM EST
+      if (estTime.getHours() === 23 && estTime.getMinutes() === 35) {
+        console.log('🕒 Time to post daily PNL summary!');
+        await sendDailySummaryAlert(discordClient);
+      }
+    } catch (error) {
+      console.error('Error in daily summary check:', error);
     }
-  }, 5 * 60 * 1000); // Check every 5 minutes
+  }, 60 * 1000); // Check every minute
 
   console.log(`
   🔄 Started periodic checks:
   • PnL checks: Every 15 minutes
-  • Daily summary: Every day at 12:00 AM EST
+  • Daily summary: Every day at 23:35 PM EST
   • Current EST time: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}
   `);
 }
