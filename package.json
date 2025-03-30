@@ -13,7 +13,8 @@
     "server": "ts-node src/server.ts",
     "server:dev": "nodemon src/server.ts",
     "pumpfun": "ts-node src/pumpfun-sniper.ts",
-    "pumpfun15k": "ts-node src/discord-pumpfun-15k.ts"
+    "pumpfun15k": "ts-node src/discord-pumpfun-15k.ts",
+    "daily": "ts-node src/test-daily-summary.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
