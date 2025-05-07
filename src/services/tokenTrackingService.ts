@@ -4,6 +4,9 @@ import { Client, TextChannel, EmbedBuilder, ActionRowBuilder, ButtonBuilder, But
 import axios from 'axios';
 import path from 'path';
 import { createCanvas, loadImage } from 'canvas';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const prisma = new PrismaClient();
 const PUMPFUN_TOTAL_SUPPLY = 1_000_000_000; // 1 billion tokens
@@ -325,6 +328,9 @@ export async function checkTokenPnL(discordClient: Client) {
       `);
     }
 
+    // Import Telegram bot functions
+    const { telegramBot } = await import('../telegram/telegramBot');
+    
     for (const token of tokens) {
       try {
         // Get highest price from Birdeye history
@@ -360,14 +366,66 @@ export async function checkTokenPnL(discordClient: Client) {
           }
         });
 
-        // If PnL is >= 50%, send Discord alert
+        // If PnL is >= 50%, send alerts
         if (pnlPercentage >= 50) {
-          await sendPnLAlert(discordClient, {
+          console.log(`PnL is ${pnlPercentage.toFixed(2)}% - sending alerts to Discord and Telegram`);
+          
+          // Calculate profit in SOL (same for both Discord and Telegram)
+          const initialSolInvestment = 1.000;
+          const returnedSol = initialSolInvestment + (initialSolInvestment * (pnlPercentage / 100));
+          const solPrice = await getSolPrice();
+          const profitUsd = (returnedSol - initialSolInvestment) * solPrice;
+          
+          // Create PnL data object
+          const pnlData = {
             ...token,
             currentMarketCap: priceData.highestMarketCap,
             highestPriceTimestamp: priceData.timestamp ? new Date(priceData.timestamp * 1000).toISOString() : null,
             pnlPercentage
+          };
+          
+          // Generate the PnL image once for both platforms
+          const customImage = await createPnLImage({
+            pnlPercentage: pnlPercentage,
+            tokenSymbol: token.tokenSymbol || 'TOKEN',
+            initialMarketCap: token.initialMarketCap,
+            currentMarketCap: priceData.highestMarketCap,
+            initialSol: initialSolInvestment,
+            returnedSol
           });
+          
+          // Send Discord alert
+          await sendPnLAlert(discordClient, pnlData, customImage);
+          
+          // Send Telegram alert using the same PnL image
+          try {
+            console.log(`Sending PnL alert to Telegram for ${token.tokenAddress}`);
+            
+            // Check if telegramBot is available
+            if (telegramBot) {
+              // Get channel config from Telegram
+              const { getChannelConfig } = await import('../telegram/commands/toggleChannel');
+              const channelConfig = getChannelConfig();
+              
+              if (channelConfig.channelId && channelConfig.enabled) {
+                // Send PnL image to Telegram using the dedicated method
+                await telegramBot.sendPnLAlertWithImage(
+                  channelConfig.channelId,
+                  token.tokenAddress,
+                  token.tokenSymbol || 'TOKEN',
+                  pnlPercentage,
+                  customImage
+                );
+                console.log(`Successfully sent PnL alert to Telegram channel for ${token.tokenAddress}`);
+              } else {
+                console.log(`Telegram channel not enabled or configured, skipping PnL alert`);
+              }
+            } else {
+              console.log(`Telegram bot not available`);
+            }
+          } catch (telegramError) {
+            console.error(`Error sending PnL alert to Telegram:`, telegramError);
+          }
 
           // Mark as PnL alerted
           await prisma.tokenAlert.update({
@@ -375,40 +433,36 @@ export async function checkTokenPnL(discordClient: Client) {
             data: { pnlAlerted: true }
           });
         }
-
       } catch (error) {
         console.error(`Error processing PnL for ${token.tokenAddress}:`, error);
       }
     }
-
   } catch (error) {
     console.error('Error in checkTokenPnL:', error);
   }
 }
 
+/**
+ * Get the current price of SOL in USD
+ */
 async function getSolPrice(): Promise<number> {
   try {
-    console.log('Attempting to fetch SOL price...');
     const response = await axios.get(
-      'https://solana-gateway.moralis.io/token/mainnet/So11111111111111111111111111111111111111112/price',
-      {
-        headers: {
-          'accept': 'application/json',
-          'X-API-Key': process.env.MORALIS_API_KEY || ''
-        },
-        timeout: 10000
-      }
+      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
+      { timeout: 5000 }
     );
-
-    if (response.data && response.data.usdPrice) {
-      console.log(`SOL price fetched successfully: $${response.data.usdPrice}`);
-      return response.data.usdPrice;
+    
+    if (response.data && response.data.solana && response.data.solana.usd) {
+      console.log(`Current SOL price: $${response.data.solana.usd}`);
+      return response.data.solana.usd;
     }
-
-    throw new Error('Invalid SOL price data received');
+    
+    // Fallback to a reasonable default if API fails
+    console.warn('Could not get SOL price from CoinGecko, using fallback price');
+    return 170; // Default fallback price
   } catch (error) {
     console.error('Error fetching SOL price:', error);
-    return 240; // Fallback price if API fails
+    return 170; // Default fallback price
   }
 }
 
@@ -433,141 +487,243 @@ async function createPnLImage(data: {
     const canvas = createCanvas(1200, 675);
     const ctx = canvas.getContext('2d');
 
-    // Create rich background with multiple gradients
-    // Base gradient
-    const baseGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    // Create gradient background - dark purple to black to match top tokens image
+    const baseGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
     baseGradient.addColorStop(0, '#1a0b2e');
-    baseGradient.addColorStop(0.5, '#2d1b4e');
-    baseGradient.addColorStop(1, '#3d2b6e');
+    baseGradient.addColorStop(1, '#000000');
     ctx.fillStyle = baseGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Add diagonal light beam effect
-    const beamGradient = ctx.createLinearGradient(
-      canvas.width, 0,
-      0, canvas.height
-    );
-    beamGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    beamGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
-    beamGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = beamGradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Add subtle dot matrix pattern
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
-    for (let i = 0; i < canvas.width; i += 15) {
-      for (let j = 0; j < canvas.height; j += 15) {
+    // Add diamond pattern overlay for consistency with top tokens image
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+    const gridSize = 20;
+    for (let i = 0; i < canvas.width; i += gridSize) {
+      for (let j = 0; j < canvas.height; j += gridSize) {
+        // Create a diamond pattern
         ctx.beginPath();
-        ctx.arc(i, j, 0.5, 0, Math.PI * 2);
+        ctx.moveTo(i, j - gridSize/2);
+        ctx.lineTo(i + gridSize/2, j);
+        ctx.lineTo(i, j + gridSize/2);
+        ctx.lineTo(i - gridSize/2, j);
+        ctx.closePath();
         ctx.fill();
       }
     }
-
-    // Add top-right corner glow
-    const cornerGlow = ctx.createRadialGradient(
-      canvas.width, 0,
-      0,
-      canvas.width - 100, 100,
-      400
+    
+    // Add subtle glow effect
+    const glowGradient = ctx.createRadialGradient(
+      canvas.width * 0.3, canvas.height * 0.3, 0,
+      canvas.width * 0.3, canvas.height * 0.3, 500
     );
-    cornerGlow.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    cornerGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = cornerGlow;
+    glowGradient.addColorStop(0, 'rgba(255, 100, 255, 0.1)');
+    glowGradient.addColorStop(1, 'rgba(255, 100, 255, 0)');
+    ctx.fillStyle = glowGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw token symbol with shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+    // Add a semi-transparent panel for better text contrast
+    const panelMargin = 60;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(panelMargin, panelMargin, canvas.width - panelMargin * 2, canvas.height - panelMargin * 2);
+    
+    // Add subtle border to panel
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(panelMargin, panelMargin, canvas.width - panelMargin * 2, canvas.height - panelMargin * 2);
+
+    // Draw PNL ALERT header
+    ctx.shadowColor = 'rgba(255, 100, 255, 0.7)';
     ctx.shadowBlur = 15;
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 100px Arial';
+    ctx.font = 'bold 50px Arial';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('$' + data.tokenSymbol, 60, 50);
+    ctx.fillText('PNL ALERT', 100, 80);
+    ctx.shadowBlur = 0;
+
+    // Draw token symbol with bigger font and clear spacing
+    ctx.shadowColor = 'rgba(255, 100, 255, 0.7)';
+    ctx.shadowBlur = 20;
+    ctx.font = 'bold 90px Arial';
+    ctx.fillText('$' + data.tokenSymbol, 100, 140);
     ctx.shadowBlur = 0;
 
     // Calculate profit in USD
     const profitAmount = (data.returnedSol - data.initialSol) * await getSolPrice();
 
-    // Draw profit section with enhanced styling
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.font = '36px Arial';
-    ctx.fillText('CURRENT PROFIT', 60, 180);
+    // Draw profit section with dynamic color based on percentage
+    let profitColor = '#4CAF50'; // Green for default
+    if (data.pnlPercentage >= 300) {
+      profitColor = '#FFD700'; // Gold for huge gains
+    } else if (data.pnlPercentage >= 150) {
+      profitColor = '#8BC34A'; // Light green for very good gains
+    }
 
-    // Draw profit amount with shadow
-    ctx.shadowColor = 'rgba(76, 175, 80, 0.3)';
-    ctx.shadowBlur = 15;
-    ctx.font = 'bold 110px Arial';
-    ctx.fillStyle = '#4CAF50';
-    ctx.fillText(`$${profitAmount.toLocaleString(undefined, {maximumFractionDigits: 0})}`, 60, 220);
-
-    // Draw percentage with glow effect
-    ctx.shadowColor = 'rgba(76, 175, 80, 0.4)';
-    ctx.font = 'bold 60px Arial';
-    ctx.fillText(`+${data.pnlPercentage.toFixed(2)}%`, 60, 340);
+    // Create a profit box with rounded corners - similar to cards in top tokens image
+    const profitBoxX = 100;
+    const profitBoxY = 260;
+    const profitBoxWidth = 450;
+    const profitBoxHeight = 140;
+    
+    // Draw profit box with gradient
+    const profitBoxGradient = ctx.createLinearGradient(
+      profitBoxX, profitBoxY, 
+      profitBoxX + profitBoxWidth, profitBoxY
+    );
+    profitBoxGradient.addColorStop(0, '#00a854'); // Green start
+    profitBoxGradient.addColorStop(1, '#52c41a'); // Lighter green end
+    
+    // Rounded rectangle for profit box
+    ctx.beginPath();
+    const radius = 15;
+    ctx.moveTo(profitBoxX + radius, profitBoxY);
+    ctx.lineTo(profitBoxX + profitBoxWidth - radius, profitBoxY);
+    ctx.quadraticCurveTo(profitBoxX + profitBoxWidth, profitBoxY, profitBoxX + profitBoxWidth, profitBoxY + radius);
+    ctx.lineTo(profitBoxX + profitBoxWidth, profitBoxY + profitBoxHeight - radius);
+    ctx.quadraticCurveTo(profitBoxX + profitBoxWidth, profitBoxY + profitBoxHeight, profitBoxX + profitBoxWidth - radius, profitBoxY + profitBoxHeight);
+    ctx.lineTo(profitBoxX + radius, profitBoxY + profitBoxHeight);
+    ctx.quadraticCurveTo(profitBoxX, profitBoxY + profitBoxHeight, profitBoxX, profitBoxY + profitBoxHeight - radius);
+    ctx.lineTo(profitBoxX, profitBoxY + radius);
+    ctx.quadraticCurveTo(profitBoxX, profitBoxY, profitBoxX + radius, profitBoxY);
+    ctx.closePath();
+    
+    ctx.fillStyle = profitBoxGradient;
+    ctx.fill();
+    
+    // Draw percentage with shadow
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    ctx.shadowBlur = 10;
+    ctx.font = 'bold 80px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.fillText(`+${data.pnlPercentage.toFixed(2)}%`, profitBoxX + profitBoxWidth/2, profitBoxY + 85);
     ctx.shadowBlur = 0;
 
-    // Add decorative line
-    const lineGradient = ctx.createLinearGradient(60, 0, canvas.width - 60, 0);
-    lineGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    lineGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
-    lineGradient.addColorStop(1, 'rgba(255, 255, 255, 0.1)');
-    ctx.strokeStyle = lineGradient;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(60, 420);
-    ctx.lineTo(canvas.width - 60, 420);
-    ctx.stroke();
+    // Draw USD profit
+    ctx.font = 'bold 36px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'left';
+    ctx.fillText(`$${profitAmount.toLocaleString(undefined, {maximumFractionDigits: 0})} profit`, 100, 440);
 
-    // Draw investment details with enhanced layout
+    // Draw market cap comparison
+    ctx.font = '28px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fillText(`Initial MC: $${data.initialMarketCap.toLocaleString()}`, 100, 500);
+    ctx.fillText(`Current MC: $${data.currentMarketCap.toLocaleString()}`, 100, 540);
+
+    // Draw investment details in card-like boxes
     const columns = [
-      { title: 'TOTAL BOUGHT', value: `${data.initialSol.toFixed(1)} SOL` },
-      { title: 'TOTAL HOLD', value: '0 SOL' },
-      { title: 'TOTAL SOLD', value: `${data.returnedSol.toFixed(1)} SOL` }
+      { title: 'INITIAL INVESTMENT', value: `${data.initialSol.toFixed(1)} SOL` },
+      { title: 'CURRENT VALUE', value: `${data.returnedSol.toFixed(1)} SOL` }
     ];
 
     columns.forEach((col, index) => {
-      const x = 60 + (index * (canvas.width - 120) / 3);
+      const boxWidth = 350;
+      const boxHeight = 100;
+      const boxMargin = 30;
+      const x = 600 + (index * (boxWidth + boxMargin));
+      const y = 280;
+      
+      // Draw box with gradient background
+      const boxGradient = ctx.createLinearGradient(x, y, x, y + boxHeight);
+      boxGradient.addColorStop(0, 'rgba(30, 30, 30, 0.7)');
+      boxGradient.addColorStop(1, 'rgba(20, 20, 20, 0.7)');
+      ctx.fillStyle = boxGradient;
+      
+      // Rounded rectangle
+      ctx.beginPath();
+      const boxRadius = 10;
+      ctx.moveTo(x + boxRadius, y);
+      ctx.lineTo(x + boxWidth - boxRadius, y);
+      ctx.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + boxRadius);
+      ctx.lineTo(x + boxWidth, y + boxHeight - boxRadius);
+      ctx.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - boxRadius, y + boxHeight);
+      ctx.lineTo(x + boxRadius, y + boxHeight);
+      ctx.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - boxRadius);
+      ctx.lineTo(x, y + boxRadius);
+      ctx.quadraticCurveTo(x, y, x + boxRadius, y);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Add subtle border
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
       
       // Draw column title
-      ctx.font = '32px Arial';
+      ctx.font = '20px Arial';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.textAlign = 'left';
-      ctx.fillText(col.title, x, 460);
+      ctx.textAlign = 'center';
+      ctx.fillText(col.title, x + boxWidth/2, y + 30);
 
       // Draw value with shadow
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
-      ctx.shadowBlur = 10;
-      ctx.font = 'bold 44px Arial';
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+      ctx.shadowBlur = 5;
+      ctx.font = 'bold 32px Arial';
       ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(col.value, x, 510);
+      ctx.fillText(col.value, x + boxWidth/2, y + 70);
       ctx.shadowBlur = 0;
     });
 
-    // Add metallic chip card effect
-    const chipX = canvas.width - 180;
-    const chipY = canvas.height - 180;
-    const chipSize = 70;
+    // Add trading advice based on performance in a card-like box
+    let tradingAdvice = "Consider taking profits";
+    if (data.pnlPercentage >= 200) {
+      tradingAdvice = "Time to take profits!";
+    } else if (data.pnlPercentage <= 75) {
+      tradingAdvice = "Continue holding for now";
+    }
     
-    // Chip background
-    const chipGradient = ctx.createLinearGradient(chipX, chipY, chipX + chipSize, chipY + chipSize);
-    chipGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    chipGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = chipGradient;
-    ctx.fillRect(chipX, chipY, chipSize, chipSize);
+    // Draw advice box
+    const adviceBoxX = 600;
+    const adviceBoxY = 420;
+    const adviceBoxWidth = 480;
+    const adviceBoxHeight = 80;
     
-    // Chip border
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(chipX, chipY, chipSize, chipSize);
-    ctx.strokeRect(chipX + 10, chipY + 10, chipSize - 20, chipSize - 20);
-
-    // Draw platform branding with enhanced style
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
+    // Box gradient
+    const adviceGradient = ctx.createLinearGradient(adviceBoxX, adviceBoxY, adviceBoxX, adviceBoxY + adviceBoxHeight);
+    adviceGradient.addColorStop(0, 'rgba(55, 55, 55, 0.5)');
+    adviceGradient.addColorStop(1, 'rgba(40, 40, 40, 0.5)');
+    ctx.fillStyle = adviceGradient;
+    
+    // Rounded rectangle
+    ctx.beginPath();
+    const adviceRadius = 10;
+    ctx.moveTo(adviceBoxX + adviceRadius, adviceBoxY);
+    ctx.lineTo(adviceBoxX + adviceBoxWidth - adviceRadius, adviceBoxY);
+    ctx.quadraticCurveTo(adviceBoxX + adviceBoxWidth, adviceBoxY, adviceBoxX + adviceBoxWidth, adviceBoxY + adviceRadius);
+    ctx.lineTo(adviceBoxX + adviceBoxWidth, adviceBoxY + adviceBoxHeight - adviceRadius);
+    ctx.quadraticCurveTo(adviceBoxX + adviceBoxWidth, adviceBoxY + adviceBoxHeight, adviceBoxX + adviceBoxWidth - adviceRadius, adviceBoxY + adviceBoxHeight);
+    ctx.lineTo(adviceBoxX + adviceRadius, adviceBoxY + adviceBoxHeight);
+    ctx.quadraticCurveTo(adviceBoxX, adviceBoxY + adviceBoxHeight, adviceBoxX, adviceBoxY + adviceBoxHeight - adviceRadius);
+    ctx.lineTo(adviceBoxX, adviceBoxY + adviceRadius);
+    ctx.quadraticCurveTo(adviceBoxX, adviceBoxY, adviceBoxX + adviceRadius, adviceBoxY);
+    ctx.closePath();
+    ctx.fill();
+    
+    // Add border
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // Draw advice text
+    ctx.font = 'bold 30px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.fillText(tradingAdvice, adviceBoxX + adviceBoxWidth/2, adviceBoxY + 50);
+    
+    // Draw STROBE branding in the bottom-right corner with proper spacing
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
     ctx.shadowBlur = 10;
-    ctx.font = 'bold 48px Arial';
+    ctx.font = 'bold 44px Arial';
     ctx.textAlign = 'right';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('STROBE', canvas.width - 60, canvas.height - 60);
+    ctx.fillText('STROBE', canvas.width - 70, canvas.height - 40);
+    ctx.shadowBlur = 0;
+    
+    // Add "Powered by Moralis" text with proper spacing
+    ctx.font = '20px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.textAlign = 'left';
+    ctx.fillText('Powered by Moralis', 70, canvas.height - 40);
 
     return canvas.toBuffer('image/png');
   } catch (error) {
@@ -576,7 +732,7 @@ async function createPnLImage(data: {
   }
 }
 
-async function sendPnLAlert(discordClient: Client, data: any) {
+async function sendPnLAlert(discordClient: Client, data: any, customImage: Buffer) {
   try {
     const channel = discordClient.channels.cache.get(
       process.env.PNL_DISCORD_CHANNEL_ID!
@@ -600,29 +756,20 @@ async function sendPnLAlert(discordClient: Client, data: any) {
         tokenAddress: data.tokenAddress
     });
 
-    const customImage = await createPnLImage({
-      pnlPercentage: data.pnlPercentage,
-      tokenSymbol: data.tokenSymbol || 'TOKEN',
-      initialMarketCap: data.initialMarketCap,
-      currentMarketCap: data.currentMarketCap,
-      initialSol: initialSolInvestment,
-      returnedSol
-    });
-
     const embed = new EmbedBuilder()
       .setColor('#9B59B6')
       .setImage('attachment://pnl-background.png')
       .setDescription(`🔗 Contract: ${data.tokenAddress}`)
       .setFooter({ 
-        text: `Referral Code: ${data.tokenAddress.slice(0, 6)}` 
+        text: `Powered by Moralis` 
       });
 
     const row = new ActionRowBuilder<ButtonBuilder>()
       .addComponents(
         new ButtonBuilder()
-          .setLabel('Trade Now')
+          .setLabel('View on Birdeye')
           .setStyle(ButtonStyle.Link)
-          .setURL(`https://pump.fun/${data.tokenAddress}`)
+          .setURL(`https://birdeye.so/token/${data.tokenAddress}?chain=solana`)
       );
 
     await channel.send({ 
@@ -651,10 +798,23 @@ async function sendPnLAlert(discordClient: Client, data: any) {
 
 // Add this new function to manually trigger daily summary
 export async function triggerDailySummary(discordClient: Client) {
-  console.log('🔄 Manually triggering daily profit summary...');
+  console.log('🔄 Manually triggering daily profit summary and top calls report...');
   try {
+    // Send daily summary
     await sendDailySummaryAlert(discordClient);
     console.log('✅ Daily summary sent successfully');
+    
+    // Also send top calls report together with summary
+    try {
+      const { generateCustomTimeRangeReport } = await import('./dailyTopTokensService');
+      const { telegramBot } = await import('../telegram/telegramBot');
+      
+      console.log('🏆 Now sending top calls report...');
+      await generateCustomTimeRangeReport(discordClient, telegramBot);
+      console.log('✅ Top calls report sent successfully');
+    } catch (topCallsError) {
+      console.error('❌ Failed to send top calls report:', topCallsError);
+    }
   } catch (error) {
     console.error('❌ Failed to send daily summary:', error);
   }
@@ -671,26 +831,36 @@ export function startPeriodicChecks(discordClient: Client) {
     }
   }, 15 * 60 * 1000);
 
-  // Check for daily summary at 23:59:59 PM EST
+  // Check for daily summary and top calls at 12:00:00 AM EST
   setInterval(async () => {
     try {
       const now = new Date();
       const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
       
-      // Check if it's 23:59:59 PM EST
-      if (estTime.getHours() === 23 && estTime.getMinutes() === 59 && estTime.getSeconds() === 59) {
-        console.log('🕒 Time to post daily PNL summary!');
+      // Check if it's 12:00:00 AM EST (midnight)
+      if (estTime.getHours() === 0 && estTime.getMinutes() === 0 && estTime.getSeconds() === 0) {
+        console.log('🕒 Time to post daily summary and top calls report!');
+        
+        // Import the necessary functions
+        const { generateCustomTimeRangeReport } = await import('./dailyTopTokensService');
+        const { telegramBot } = await import('../telegram/telegramBot');
+        
+        // Run both reports together
+        console.log('📊 Running daily profit summary...');
         await sendDailySummaryAlert(discordClient);
+        
+        console.log('🏆 Running top calls report...');
+        await generateCustomTimeRangeReport(discordClient, telegramBot);
       }
     } catch (error) {
-      console.error('Error in daily summary check:', error);
+      console.error('Error in daily summary and top calls check:', error);
     }
   }, 1000); // Check every second for more precise timing
 
   console.log(`
   🔄 Started periodic checks:
   • PnL checks: Every 15 minutes
-  • Daily summary: Every day at 23:59:59 PM EST
+  • Daily summary + Top calls: Every day at 12:00:00 AM EST
   • Current EST time: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}
   `);
 }
@@ -1175,5 +1345,58 @@ ${details}`;
 // Function to test the daily summary
 export async function testDailySummary(discordClient: Client) {
   await sendDailySummaryAlert(discordClient);
+}
+
+// Add a new function to get top performing tokens
+export async function getTopPerformingTokens(limit = 10): Promise<any[]> {
+  try {
+    console.log(`📊 Fetching top ${limit} performing tokens...`);
+    
+    // Get tokens that have been checked and have PnL data
+    const tokens = await prisma.tokenAlert.findMany({
+      where: {
+        checked: true
+      },
+      orderBy: {
+        pnlPercentage: 'desc'
+      },
+      take: limit * 2 // Fetch more than needed to filter out invalid ones
+    });
+    
+    // Filter out tokens with missing data and calculate additional metrics
+    const topTokens = tokens
+      .filter(token => 
+        token.currentMarketCap !== null && 
+        token.initialMarketCap !== null &&
+        token.currentMarketCap > 0 &&
+        token.initialMarketCap > 0
+      )
+      .map(token => {
+        const initialMC = Number(token.initialMarketCap);
+        const currentMC = Number(token.currentMarketCap);
+        
+        // Calculate growth percentage
+        const growthPercentage = token.pnlPercentage || 
+          ((currentMC - initialMC) / initialMC) * 100;
+        
+        return {
+          tokenAddress: token.tokenAddress,
+          tokenName: token.tokenName || 'Unknown',
+          tokenSymbol: token.tokenSymbol || 'Unknown',
+          initialMarketCap: initialMC,
+          currentMarketCap: currentMC,
+          growthPercentage: growthPercentage,
+          alertTimestamp: token.alertTimestamp,
+          checkTimestamp: token.checkTimestamp
+        };
+      })
+      .sort((a, b) => b.growthPercentage - a.growthPercentage)
+      .slice(0, limit);
+    
+    return topTokens;
+  } catch (error) {
+    console.error('Error fetching top performing tokens:', error);
+    return [];
+  }
 } 
 

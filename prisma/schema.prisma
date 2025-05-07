@@ -8,25 +8,25 @@ datasource db {
 }
 
 model Wallet {
-  id            String         @id @default(uuid())
-  userId        String         @unique
-  walletAddress String         @unique
-  walletPk      String         @unique
-  createdAt     DateTime       @default(now())
+  id            String              @id @default(uuid())
+  userId        String              @unique
+  walletAddress String              @unique
+  walletPk      String              @unique
+  createdAt     DateTime            @default(now())
   config        UserConfig?
-  transactions  WalletTransaction[]
   balances      WalletBalance[]
+  transactions  WalletTransaction[]
 }
 
 model UserConfig {
-  id          String   @id @default(uuid())
-  userId      String   @unique
-  autoBuy     Boolean  @default(false)
-  buyAmount   Float    @default(0.1)
-  takeProfit  Float    @default(50)
-  stopLoss    Float    @default(25)
-  autoSell    Boolean  @default(false)
-  wallet      Wallet   @relation(fields: [userId], references: [userId])
+  id         String  @id @default(uuid())
+  userId     String  @unique
+  autoBuy    Boolean @default(false)
+  buyAmount  Float   @default(0.1)
+  takeProfit Float   @default(50)
+  stopLoss   Float   @default(25)
+  autoSell   Boolean @default(false)
+  wallet     Wallet  @relation(fields: [userId], references: [userId])
 }
 
 model PumpFunToken {
@@ -36,20 +36,20 @@ model PumpFunToken {
 }
 
 model TokenAlert {
-  id                String   @id @default(uuid())
-  tokenAddress      String
-  tokenSymbol       String?
-  tokenName         String?
-  initialMarketCap  Float
-  initialPrice      Float
-  bundlePercentage  Float?
-  alertTimestamp    DateTime @default(now())
-  checked           Boolean  @default(false)
-  pnlAlerted        Boolean  @default(false)
-  pnlPercentage     Float?
-  currentMarketCap  Float?
-  currentPrice      Float?
-  checkTimestamp    DateTime?
+  id               String    @id @default(uuid())
+  tokenAddress     String
+  tokenSymbol      String?
+  tokenName        String?
+  initialMarketCap Float
+  initialPrice     Float
+  bundlePercentage Float?
+  alertTimestamp   DateTime  @default(now())
+  checked          Boolean   @default(false)
+  pnlAlerted       Boolean   @default(false)
+  pnlPercentage    Float?
+  currentMarketCap Float?
+  currentPrice     Float?
+  checkTimestamp   DateTime?
 
   @@index([tokenAddress])
   @@index([checked])
@@ -59,14 +59,14 @@ model TokenAlert {
 model WalletTransaction {
   id          String   @id @default(uuid())
   walletId    String
-  type        String   // "BUY" or "SELL"
+  type        String
   tokenMint   String
   tokenAmount Float
   solAmount   Float
   price       Float
   txHash      String
   timestamp   DateTime @default(now())
-  status      String   // "PENDING", "COMPLETED", "FAILED"
+  status      String
   error       String?
   wallet      Wallet   @relation(fields: [walletId], references: [id])
 
@@ -86,4 +86,12 @@ model WalletBalance {
   @@unique([walletId, tokenMint])
   @@index([walletId])
   @@index([tokenMint])
+}
+
+model UserPreference {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  pumpSwapEnabled Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }

@@ -141,4 +141,14 @@ export const config = {
     default_stop_loss: 15,   // Default stop loss percentage
     auto_sell: true,        // Enable auto-sell by default
   },
+  telegram: {
+    enabled: true,
+    token: process.env.TELEGRAM_BOT_TOKEN || "",
+    admin_ids: (process.env.TELEGRAM_ADMIN_IDS || "").split(","),
+  },
+  pumpswap: {
+    enabled: true,
+    send_migration_alerts: true,
+    program_id: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+  },
 };

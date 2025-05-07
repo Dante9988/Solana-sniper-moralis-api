@@ -14,7 +14,8 @@
     "server:dev": "nodemon src/server.ts",
     "pumpfun": "ts-node src/pumpfun-sniper.ts",
     "pumpfun15k": "ts-node src/discord-pumpfun-15k.ts",
-    "daily": "ts-node src/test-daily-summary.ts"
+    "daily": "ts-node src/test-daily-summary.ts",
+    "topcalls": "ts-node src/topCalls.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
@@ -82,6 +83,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "tailwindcss": "^4.0.16",
+    "telegraf": "^4.16.3",
     "ws": "^8.18.1"
   }
 }
