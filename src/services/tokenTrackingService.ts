@@ -487,16 +487,16 @@ async function createPnLImage(data: {
     const canvas = createCanvas(1200, 675);
     const ctx = canvas.getContext('2d');
 
-    // Create gradient background - dark purple to black to match top tokens image
+    // Create dark purple-black background gradient - fullscreen
     const baseGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
     baseGradient.addColorStop(0, '#1a0b2e');
-    baseGradient.addColorStop(1, '#000000');
+    baseGradient.addColorStop(1, '#0d0517');
     ctx.fillStyle = baseGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Add diamond pattern overlay for consistency with top tokens image
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-    const gridSize = 20;
+    // Draw diamond pattern overlay for subtle texture
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+    const gridSize = 30;
     for (let i = 0; i < canvas.width; i += gridSize) {
       for (let j = 0; j < canvas.height; j += gridSize) {
         // Create a diamond pattern
@@ -509,225 +509,93 @@ async function createPnLImage(data: {
         ctx.fill();
       }
     }
-    
+
     // Add subtle glow effect
     const glowGradient = ctx.createRadialGradient(
-      canvas.width * 0.3, canvas.height * 0.3, 0,
-      canvas.width * 0.3, canvas.height * 0.3, 500
+      canvas.width * 0.3, canvas.height * 0.4, 0,
+      canvas.width * 0.3, canvas.height * 0.4, 600
     );
-    glowGradient.addColorStop(0, 'rgba(255, 100, 255, 0.1)');
-    glowGradient.addColorStop(1, 'rgba(255, 100, 255, 0)');
+    glowGradient.addColorStop(0, 'rgba(145, 70, 255, 0.15)');
+    glowGradient.addColorStop(1, 'rgba(25, 10, 45, 0)');
     ctx.fillStyle = glowGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Add a semi-transparent panel for better text contrast
-    const panelMargin = 60;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.fillRect(panelMargin, panelMargin, canvas.width - panelMargin * 2, canvas.height - panelMargin * 2);
-    
-    // Add subtle border to panel
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(panelMargin, panelMargin, canvas.width - panelMargin * 2, canvas.height - panelMargin * 2);
+    // Left margin for all text elements
+    const leftMargin = 120;
 
-    // Draw PNL ALERT header
-    ctx.shadowColor = 'rgba(255, 100, 255, 0.7)';
-    ctx.shadowBlur = 15;
+    // Draw token symbol - left aligned instead of centered
+    ctx.font = 'bold 70px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 50px Arial';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('PNL ALERT', 100, 80);
-    ctx.shadowBlur = 0;
-
-    // Draw token symbol with bigger font and clear spacing
-    ctx.shadowColor = 'rgba(255, 100, 255, 0.7)';
-    ctx.shadowBlur = 20;
-    ctx.font = 'bold 90px Arial';
-    ctx.fillText('$' + data.tokenSymbol, 100, 140);
-    ctx.shadowBlur = 0;
-
-    // Calculate profit in USD
+    ctx.fillText('$' + data.tokenSymbol, leftMargin, 120);
+    
+    // Draw "CURRENT PROFIT" label - left aligned
+    ctx.font = '24px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('CURRENT PROFIT', leftMargin, 220);
+    
+    // Calculate profit value and format it
     const profitAmount = (data.returnedSol - data.initialSol) * await getSolPrice();
-
-    // Draw profit section with dynamic color based on percentage
-    let profitColor = '#4CAF50'; // Green for default
-    if (data.pnlPercentage >= 300) {
-      profitColor = '#FFD700'; // Gold for huge gains
-    } else if (data.pnlPercentage >= 150) {
-      profitColor = '#8BC34A'; // Light green for very good gains
-    }
-
-    // Create a profit box with rounded corners - similar to cards in top tokens image
-    const profitBoxX = 100;
-    const profitBoxY = 260;
-    const profitBoxWidth = 450;
-    const profitBoxHeight = 140;
+    const formattedProfit = profitAmount >= 0 
+      ? `$${Math.abs(Math.round(profitAmount))}` 
+      : `$-${Math.abs(Math.round(profitAmount))}`;
     
-    // Draw profit box with gradient
-    const profitBoxGradient = ctx.createLinearGradient(
-      profitBoxX, profitBoxY, 
-      profitBoxX + profitBoxWidth, profitBoxY
-    );
-    profitBoxGradient.addColorStop(0, '#00a854'); // Green start
-    profitBoxGradient.addColorStop(1, '#52c41a'); // Lighter green end
+    // Draw profit amount - larger and left aligned
+    // Use green for positive, red for negative
+    ctx.font = 'bold 100px Arial'; // Bigger font size
+    ctx.fillStyle = profitAmount >= 0 ? '#4CAF50' : '#F44336';
+    ctx.fillText(formattedProfit, leftMargin, 250);
     
-    // Rounded rectangle for profit box
-    ctx.beginPath();
-    const radius = 15;
-    ctx.moveTo(profitBoxX + radius, profitBoxY);
-    ctx.lineTo(profitBoxX + profitBoxWidth - radius, profitBoxY);
-    ctx.quadraticCurveTo(profitBoxX + profitBoxWidth, profitBoxY, profitBoxX + profitBoxWidth, profitBoxY + radius);
-    ctx.lineTo(profitBoxX + profitBoxWidth, profitBoxY + profitBoxHeight - radius);
-    ctx.quadraticCurveTo(profitBoxX + profitBoxWidth, profitBoxY + profitBoxHeight, profitBoxX + profitBoxWidth - radius, profitBoxY + profitBoxHeight);
-    ctx.lineTo(profitBoxX + radius, profitBoxY + profitBoxHeight);
-    ctx.quadraticCurveTo(profitBoxX, profitBoxY + profitBoxHeight, profitBoxX, profitBoxY + profitBoxHeight - radius);
-    ctx.lineTo(profitBoxX, profitBoxY + radius);
-    ctx.quadraticCurveTo(profitBoxX, profitBoxY, profitBoxX + radius, profitBoxY);
-    ctx.closePath();
+    // Draw PNL percentage - left aligned
+    ctx.font = 'bold 40px Arial'; // Slightly bigger
+    ctx.fillStyle = profitAmount >= 0 ? '#4CAF50' : '#F44336';
+    ctx.fillText(`+${data.pnlPercentage.toFixed(2)}%`, leftMargin, 360);
     
-    ctx.fillStyle = profitBoxGradient;
-    ctx.fill();
+    // Create section for bought/hold/sold values - spaced horizontally
+    const columnWidth = 300; // Width between columns
+    const labelY = 450;
+    const valueY = 490;
     
-    // Draw percentage with shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 10;
-    ctx.font = 'bold 80px Arial';
+    // TOTAL BOUGHT - left aligned
+    ctx.font = '22px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('TOTAL BOUGHT', leftMargin, labelY);
+    ctx.font = 'bold 32px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'center';
-    ctx.fillText(`+${data.pnlPercentage.toFixed(2)}%`, profitBoxX + profitBoxWidth/2, profitBoxY + 85);
-    ctx.shadowBlur = 0;
-
-    // Draw USD profit
-    ctx.font = 'bold 36px Arial';
+    ctx.fillText(`${data.initialSol.toFixed(1)} SOL`, leftMargin, valueY);
+    
+    // TOTAL HOLD - in the middle
+    ctx.font = '22px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('TOTAL HOLD', leftMargin + columnWidth, labelY);
+    ctx.font = 'bold 32px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'left';
-    ctx.fillText(`$${profitAmount.toLocaleString(undefined, {maximumFractionDigits: 0})} profit`, 100, 440);
-
-    // Draw market cap comparison
-    ctx.font = '28px Arial';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.fillText(`Initial MC: $${data.initialMarketCap.toLocaleString()}`, 100, 500);
-    ctx.fillText(`Current MC: $${data.currentMarketCap.toLocaleString()}`, 100, 540);
-
-    // Draw investment details in card-like boxes
-    const columns = [
-      { title: 'INITIAL INVESTMENT', value: `${data.initialSol.toFixed(1)} SOL` },
-      { title: 'CURRENT VALUE', value: `${data.returnedSol.toFixed(1)} SOL` }
-    ];
-
-    columns.forEach((col, index) => {
-      const boxWidth = 350;
-      const boxHeight = 100;
-      const boxMargin = 30;
-      const x = 600 + (index * (boxWidth + boxMargin));
-      const y = 260;
-      
-      // Draw box with gradient background
-      const boxGradient = ctx.createLinearGradient(x, y, x, y + boxHeight);
-      boxGradient.addColorStop(0, 'rgba(30, 30, 30, 0.7)');
-      boxGradient.addColorStop(1, 'rgba(20, 20, 20, 0.7)');
-      ctx.fillStyle = boxGradient;
-      
-      // Rounded rectangle
-      ctx.beginPath();
-      const boxRadius = 10;
-      ctx.moveTo(x + boxRadius, y);
-      ctx.lineTo(x + boxWidth - boxRadius, y);
-      ctx.quadraticCurveTo(x + boxWidth, y, x + boxWidth, y + boxRadius);
-      ctx.lineTo(x + boxWidth, y + boxHeight - boxRadius);
-      ctx.quadraticCurveTo(x + boxWidth, y + boxHeight, x + boxWidth - boxRadius, y + boxHeight);
-      ctx.lineTo(x + boxRadius, y + boxHeight);
-      ctx.quadraticCurveTo(x, y + boxHeight, x, y + boxHeight - boxRadius);
-      ctx.lineTo(x, y + boxRadius);
-      ctx.quadraticCurveTo(x, y, x + boxRadius, y);
-      ctx.closePath();
-      ctx.fill();
-      
-      // Add subtle border
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      
-      // Draw column title
-      ctx.font = '20px Arial';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.textAlign = 'center';
-      ctx.fillText(col.title, x + boxWidth/2, y + 30);
-
-      // Draw value with shadow
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-      ctx.shadowBlur = 5;
-      ctx.font = 'bold 32px Arial';
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(col.value, x + boxWidth/2, y + 70);
-      ctx.shadowBlur = 0;
-    });
-
-    // Add trading advice based on performance in a card-like box
-    let tradingAdvice = "Consider taking profits";
-    if (data.pnlPercentage >= 200) {
-      tradingAdvice = "Time to take profits!";
-    } else if (data.pnlPercentage <= 75) {
-      tradingAdvice = "Continue holding for now";
-    }
+    ctx.fillText('0 SOL', leftMargin + columnWidth, valueY);
     
-    // Draw advice box
-    const adviceBoxX = 600;
-    const adviceBoxY = 400;
-    const adviceBoxWidth = 480;
-    const adviceBoxHeight = 80;
-    
-    // Box gradient
-    const adviceGradient = ctx.createLinearGradient(adviceBoxX, adviceBoxY, adviceBoxX, adviceBoxY + adviceBoxHeight);
-    adviceGradient.addColorStop(0, 'rgba(55, 55, 55, 0.5)');
-    adviceGradient.addColorStop(1, 'rgba(40, 40, 40, 0.5)');
-    ctx.fillStyle = adviceGradient;
-    
-    // Rounded rectangle
-    ctx.beginPath();
-    const adviceRadius = 10;
-    ctx.moveTo(adviceBoxX + adviceRadius, adviceBoxY);
-    ctx.lineTo(adviceBoxX + adviceBoxWidth - adviceRadius, adviceBoxY);
-    ctx.quadraticCurveTo(adviceBoxX + adviceBoxWidth, adviceBoxY, adviceBoxX + adviceBoxWidth, adviceBoxY + adviceRadius);
-    ctx.lineTo(adviceBoxX + adviceBoxWidth, adviceBoxY + adviceBoxHeight - adviceRadius);
-    ctx.quadraticCurveTo(adviceBoxX + adviceBoxWidth, adviceBoxY + adviceBoxHeight, adviceBoxX + adviceBoxWidth - adviceRadius, adviceBoxY + adviceBoxHeight);
-    ctx.lineTo(adviceBoxX + adviceRadius, adviceBoxY + adviceBoxHeight);
-    ctx.quadraticCurveTo(adviceBoxX, adviceBoxY + adviceBoxHeight, adviceBoxX, adviceBoxY + adviceBoxHeight - adviceRadius);
-    ctx.lineTo(adviceBoxX, adviceBoxY + adviceRadius);
-    ctx.quadraticCurveTo(adviceBoxX, adviceBoxY, adviceBoxX + adviceRadius, adviceBoxY);
-    ctx.closePath();
-    ctx.fill();
-    
-    // Add border
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    
-    // Draw advice text
-    ctx.font = 'bold 30px Arial';
+    // TOTAL SOLD - on the right
+    ctx.font = '22px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('TOTAL SOLD', leftMargin + 2*columnWidth, labelY);
+    ctx.font = 'bold 32px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'center';
-    ctx.fillText(tradingAdvice, adviceBoxX + adviceBoxWidth/2, adviceBoxY + 50);
+    ctx.fillText(`${data.returnedSol.toFixed(1)} SOL`, leftMargin + 2*columnWidth, valueY);
     
-    // Draw footer section with proper spacing
-    const footerY = canvas.height - 70;  // Move up to create more spacing
+    // Draw "Powered by Moralis" text at bottom left
+    ctx.font = '20px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillText('Powered by Moralis', leftMargin, canvas.height - 60);
     
-    // Draw "Powered by Moralis" text on the left
-    ctx.font = '22px Arial';  // Slightly larger font
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.textAlign = 'left';
-    ctx.fillText('Powered by Moralis', 70, footerY);
-
-    // Draw STROBE branding in the bottom-right corner with adequate spacing
-    ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
-    ctx.shadowBlur = 10;
-    ctx.font = 'bold 44px Arial';
+    // Draw STROBE branding in bottom right
     ctx.textAlign = 'right';
+    ctx.font = 'bold 40px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('STROBE', canvas.width - 70, footerY);
-    ctx.shadowBlur = 0;
-
+    ctx.fillText('STROBE', canvas.width - 80, canvas.height - 60);
+    
+    // Reset text alignment for future drawing operations
+    ctx.textAlign = 'left';
+    
+    // Convert canvas to buffer
     return canvas.toBuffer('image/png');
   } catch (error) {
     console.error('Error creating PnL image:', error);
