@@ -235,7 +235,7 @@ class TelegramBot {
         channelId, 
         { source: pnlImage }, 
         { 
-          caption: `🚀 *PNL ALERT: $${tokenSymbol || 'TOKEN'}* - Growth: *+${pnlPercentage.toFixed(2)}%*\n\nToken: \`${tokenAddress}\`\n[Check it out](https://pump.fun/${tokenAddress})`,
+          caption: `🚀 *PNL ALERT: $${tokenSymbol || 'TOKEN'}* - Growth: *+${pnlPercentage.toFixed(2)}%*\n\nToken: \`${tokenAddress}\`\n[Check it out](https://birdeye.so/token/${tokenAddress}?chain=solana)`,
           parse_mode: 'Markdown'
         }
       );

@@ -15,7 +15,12 @@
     "pumpfun": "ts-node src/pumpfun-sniper.ts",
     "pumpfun15k": "ts-node src/discord-pumpfun-15k.ts",
     "daily": "ts-node src/test-daily-summary.ts",
-    "topcalls": "ts-node src/topCalls.ts"
+    "topcalls": "ts-node src/topCalls.ts",
+    "simulation": "ts-node src/simulation.ts",
+    "sim:today": "ts-node src/simulation.ts today",
+    "sim:yesterday": "ts-node src/simulation.ts yesterday",
+    "sim:last24h": "ts-node src/simulation.ts last24h",
+    "pnl": "ts-node src/pnl-check.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",

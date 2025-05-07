@@ -621,7 +621,7 @@ async function createPnLImage(data: {
       const boxHeight = 100;
       const boxMargin = 30;
       const x = 600 + (index * (boxWidth + boxMargin));
-      const y = 280;
+      const y = 260;
       
       // Draw box with gradient background
       const boxGradient = ctx.createLinearGradient(x, y, x, y + boxHeight);
@@ -674,7 +674,7 @@ async function createPnLImage(data: {
     
     // Draw advice box
     const adviceBoxX = 600;
-    const adviceBoxY = 420;
+    const adviceBoxY = 400;
     const adviceBoxWidth = 480;
     const adviceBoxHeight = 80;
     
@@ -710,20 +710,23 @@ async function createPnLImage(data: {
     ctx.textAlign = 'center';
     ctx.fillText(tradingAdvice, adviceBoxX + adviceBoxWidth/2, adviceBoxY + 50);
     
-    // Draw STROBE branding in the bottom-right corner with proper spacing
+    // Draw footer section with proper spacing
+    const footerY = canvas.height - 70;  // Move up to create more spacing
+    
+    // Draw "Powered by Moralis" text on the left
+    ctx.font = '22px Arial';  // Slightly larger font
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.textAlign = 'left';
+    ctx.fillText('Powered by Moralis', 70, footerY);
+
+    // Draw STROBE branding in the bottom-right corner with adequate spacing
     ctx.shadowColor = 'rgba(255, 255, 255, 0.5)';
     ctx.shadowBlur = 10;
     ctx.font = 'bold 44px Arial';
     ctx.textAlign = 'right';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('STROBE', canvas.width - 70, canvas.height - 40);
+    ctx.fillText('STROBE', canvas.width - 70, footerY);
     ctx.shadowBlur = 0;
-    
-    // Add "Powered by Moralis" text with proper spacing
-    ctx.font = '20px Arial';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.textAlign = 'left';
-    ctx.fillText('Powered by Moralis', 70, canvas.height - 40);
 
     return canvas.toBuffer('image/png');
   } catch (error) {
