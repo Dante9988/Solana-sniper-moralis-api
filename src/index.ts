@@ -18,6 +18,8 @@ import { formatMarketCap, formatVolume, getTokenMarketData } from "./services/to
 import { fetchSniperData } from "./services/sniperDataService";
 import { scheduleDailyTopTokensReport } from './services/dailyTopTokensService';
 import axios from 'axios';
+import { initApiServer } from './api';
+import { broadcastTokenAlert, TokenAlertData } from './api';
 
 // Define minimum market cap threshold
 const MINIMUM_MARKET_CAP = 15000; // $15k minimum threshold
@@ -1045,7 +1047,91 @@ async function sendTokenAlerts(
         } catch (error) {
             console.error(`📱 TELEGRAM: 💥 Error sending Telegram alert:`, error);
         }
+        
+        // Broadcast token alert to WebSocket clients
+        try {
+            console.log(`🔌 WEBSOCKET: Broadcasting token alert for ${tokenAddress}`);
+            
+            // Create structured token alert data
+            const tokenAlertData: TokenAlertData = {
+                tokenAddress,
+                tokenName: enrichedTokenName,
+                tokenSymbol: enrichedTokenSymbol,
+                price: latestPrice,
+                marketCap: enrichedMarketData.marketCap,
+                liquidityInSol: enrichedLiquidityInSol,
+                volume24h: enrichedMarketData.volume24h,
+                rugCheckPassed,
+                timestamp: Date.now(),
+                transactionSignature: signature,
+                buyLink,
+                isMigrationToken,
+                bundles: enrichedMarketData.bundles,
+                percentage: enrichedMarketData.percentage,
+                solSpent: enrichedMarketData.solSpent
+            };
+            
+            const broadcastResult = broadcastTokenAlert(tokenAlertData);
+            console.log(`🔌 WEBSOCKET: ${broadcastResult ? '✅ Successfully broadcast' : '⚠️ No clients connected'} token alert for: ${tokenAddress}`);
+        } catch (error) {
+            console.error(`🔌 WEBSOCKET: 💥 Error broadcasting token alert:`, error);
+        }
     } catch (error) {
         console.error(`💥 Error in sendTokenAlerts:`, error);
     }
 }
+
+async function main() {
+  // Log the environment
+  console.log(`
+  🔷 Solana Sniper Bot Starting...
+  ⚙️ Environment: ${process.env.NODE_ENV || 'development'}
+  🚀 Web3 Provider: ${process.env.HELIUS_HTTPS_URI?.substring(0, 25)}...
+  `);
+  
+  // Initialize Discord client
+  try {
+    await client.login(process.env.DISCORD_BOT_TOKEN);
+    console.log('✅ Discord client initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize Discord client:', error);
+  }
+  
+  // Initialize Telegram bot
+  try {
+    await telegramBot.initialize();
+    console.log('✅ Telegram bot initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize Telegram bot:', error);
+  }
+  
+  // Check if we should start the API server (only if API_ENABLED=true)
+  const enableApi = process.env.API_ENABLED === 'true';
+  
+  if (enableApi) {
+    try {
+      console.log('🔌 API_ENABLED is set to true - Starting API server with bot...');
+      initApiServer();
+      console.log('✅ API server initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize API server:', error);
+      console.log('⚠️ Continuing bot startup without API server');
+    }
+  } else {
+    console.log('🔌 API server not started (API_ENABLED not set to true)');
+    console.log('🔌 To enable API, run with: API_ENABLED=true yarn dev');
+    console.log('🔌 Or run API server separately with: yarn api:server');
+  }
+  
+  // Start periodic checks
+  startPeriodicChecks(client);
+  
+  // Start WebSocket connection for listening to new tokens
+  websocketHandler();
+  
+  // Schedule daily top tokens report
+  scheduleDailyTopTokensReport(client, telegramBot);
+}
+
+// Start the bot
+main().catch(console.error);

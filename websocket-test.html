@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Solana Sniper Bot WebSocket Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #messages { border: 1px solid #ccc; height: 400px; overflow-y: scroll; padding: 10px; margin-bottom: 10px; }
+        .connected { color: green; }
+        .disconnected { color: red; }
+        .alert { background-color: #f8f9fa; padding: 8px; margin: 5px 0; border-left: 3px solid #007bff; }
+        
+        .status-indicator {
+          padding: 5px 10px;
+          border-radius: 4px;
+          font-weight: bold;
+          display: inline-block;
+          margin-left: 10px;
+        }
+        
+        .connected {
+          background-color: #d4edda;
+          color: #155724;
+        }
+        
+        .disconnected {
+          background-color: #f8d7da;
+          color: #721c24;
+        }
+        
+        button {
+          padding: 8px 16px;
+          margin-right: 10px;
+          border-radius: 4px;
+          cursor: pointer;
+          background-color: #007bff;
+          color: white;
+          border: none;
+        }
+        
+        button:disabled {
+          background-color: #6c757d;
+          cursor: not-allowed;
+        }
+        
+        select {
+          padding: 8px;
+          border-radius: 4px;
+          margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Solana Sniper Bot WebSocket Client</h1>
+    <div style="margin-bottom: 10px;">
+        <label for="port-select">Server Port:</label>
+        <select id="port-select">
+            <option value="3001">3001 (Standalone API)</option>
+            <option value="3030" selected>3030 (Main App API)</option>
+        </select>
+    </div>
+    <div>
+        <strong>Status: </strong><span id="status" class="status-indicator disconnected">Disconnected</span>
+    </div>
+    <div style="margin: 10px 0;">
+        <button id="connect">Connect</button>
+        <button id="subscribe">Subscribe to Token Alerts</button>
+        <button id="disconnect">Disconnect</button>
+    </div>
+    <h3>Messages:</h3>
+    <div id="messages"></div>
+
+    <script>
+        let socket;
+        const statusElement = document.getElementById('status');
+        const messagesElement = document.getElementById('messages');
+        const connectButton = document.getElementById('connect');
+        const subscribeButton = document.getElementById('subscribe');
+        const disconnectButton = document.getElementById('disconnect');
+        const portSelect = document.getElementById('port-select');
+        
+        function addMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'alert';
+            
+            if (typeof message === 'object') {
+                const pre = document.createElement('pre');
+                pre.textContent = JSON.stringify(message, null, 2);
+                messageDiv.appendChild(pre);
+            } else {
+                messageDiv.textContent = message;
+            }
+            
+            messagesElement.appendChild(messageDiv);
+            messagesElement.scrollTop = messagesElement.scrollHeight;
+        }
+        
+        connectButton.addEventListener('click', () => {
+            if (socket && socket.readyState <= 1) {
+                addMessage('Already connected or connecting');
+                return;
+            }
+            
+            try {
+                const port = portSelect.value;
+                addMessage(`Connecting to WebSocket server on port ${port}...`);
+                socket = new WebSocket(`ws://localhost:${port}`);
+                
+                socket.onopen = () => {
+                    statusElement.textContent = `Connected (Port ${port})`;
+                    statusElement.className = 'status-indicator connected';
+                    addMessage(`Connected to WebSocket server on port ${port}`);
+                    
+                    connectButton.disabled = true;
+                    subscribeButton.disabled = false;
+                    disconnectButton.disabled = false;
+                };
+                
+                socket.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        addMessage(data);
+                        
+                        // If we receive a token alert, highlight it
+                        if (data.type === 'token-alert') {
+                            console.log('Token alert received:', data.data);
+                        }
+                    } catch (e) {
+                        addMessage('Received non-JSON message: ' + event.data);
+                    }
+                };
+                
+                socket.onclose = () => {
+                    statusElement.textContent = 'Disconnected';
+                    statusElement.className = 'status-indicator disconnected';
+                    addMessage('Disconnected from WebSocket server');
+                    
+                    connectButton.disabled = false;
+                    subscribeButton.disabled = true;
+                    disconnectButton.disabled = true;
+                };
+                
+                socket.onerror = (error) => {
+                    addMessage(`WebSocket error connecting to port ${port}: ${error.message || 'Connection failed'}`);
+                };
+            } catch (e) {
+                addMessage('Error connecting to WebSocket: ' + e.message);
+            }
+        });
+        
+        subscribeButton.addEventListener('click', () => {
+            if (!socket || socket.readyState !== 1) {
+                addMessage('Not connected to WebSocket server');
+                return;
+            }
+            
+            const subscriptionMessage = JSON.stringify({
+                type: 'subscribe',
+                topic: 'token-alerts'
+            });
+            
+            socket.send(subscriptionMessage);
+            addMessage('Sent subscription request for token alerts');
+        });
+        
+        disconnectButton.addEventListener('click', () => {
+            if (!socket) {
+                addMessage('Not connected');
+                return;
+            }
+            
+            socket.close();
+        });
+        
+        // Initial state
+        subscribeButton.disabled = true;
+        disconnectButton.disabled = true;
+    </script>
+</body>
+</html> 

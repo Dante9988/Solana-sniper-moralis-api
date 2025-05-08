@@ -5,8 +5,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
+    "start:api": "node dist/api-server.js",
     "start:tracker": "node dist/tracker/index.js",
     "dev": "ts-node src/index.ts",
+    "dev:all": "API_ENABLED=true ts-node src/index.ts",
+    "dev:api": "ts-node src/api-server.ts",
     "tracker": "ts-node src/tracker/index.ts",
     "test": "ts-node src/test.ts",
     "clean": "rm -rf dist",
@@ -20,7 +23,11 @@
     "sim:today": "ts-node src/simulation.ts today",
     "sim:yesterday": "ts-node src/simulation.ts yesterday",
     "sim:last24h": "ts-node src/simulation.ts last24h",
-    "pnl": "ts-node src/pnl-check.ts"
+    "pnl": "ts-node src/pnl-check.ts",
+    "api:test": "ts-node src/test-api.ts",
+    "websocket:test": "ts-node src/test-websocket.ts",
+    "api:server": "ts-node src/api-server.ts",
+    "check:api": "ts-node src/check-api.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
