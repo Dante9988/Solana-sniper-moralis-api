@@ -118,6 +118,7 @@ const processedSignatures = new Set<string>();
 const MAX_PROCESSED_SIGNATURES = 1000; // Keep last 1000 signatures
 
 // Performance metrics object
+/*
 const metrics = {
     websocket: {
         connections: 0,
@@ -159,30 +160,10 @@ const metrics = {
         uptime: 0,
     }
 };
+*/
 
 // Setup Express server for metrics
-const app = express();
-app.get('/metrics', (req, res) => {
-    metrics.performance.uptime = process.uptime();
-    metrics.performance.memoryUsage = process.memoryUsage();
-    res.json(metrics);
-});
-
-const metricsPort = process.env.METRICS_PORT || 3030;
-app.listen(metricsPort, () => {
-    console.log(`📊 Metrics server running on port ${metricsPort}`);
-});
-
-// // Initialize Telegram bot if enabled
-// if (config.telegram && config.telegram.enabled) {
-//     try {
-//         telegramBot.initialize().catch(error => {
-//             console.error('Failed to initialize Telegram bot:', error);
-//         });
-//     } catch (error) {
-//         console.error('Error initializing Telegram bot:', error);
-//     }
-// }
+// Completely removed metrics server to avoid running on any port
 
 // Single safe Telegram bot initialization
 (async () => {
@@ -316,7 +297,7 @@ async function processTransaction(signature: string): Promise<void> {
     }
 
     if (!data) {
-      metrics.transactions.failed++;
+      // metrics.transactions.failed++;
       console.log("⛔ Transaction aborted. No data returned after retries.");
       return;
     }
@@ -395,23 +376,25 @@ async function processTransaction(signature: string): Promise<void> {
     }
 
     // Track rug check metrics (only for Pump.fun tokens)
-    metrics.rugCheck.total++;
+    // metrics.rugCheck.total++;
     const rugCheckStart = performance.now();
     const isRugCheckPassed = await getRugCheckConfirmed(data.tokenMint);
     rugCheckPassed = isRugCheckPassed;
     
     const rugCheckTime = performance.now() - rugCheckStart;
+    /*
     metrics.rugCheck.avgCheckTime = 
         (metrics.rugCheck.avgCheckTime * (metrics.rugCheck.total - 1) + rugCheckTime) 
         / metrics.rugCheck.total;
+    */
 
     if (!isRugCheckPassed) {
-      metrics.rugCheck.failed++;
+      // metrics.rugCheck.failed++;
       console.log(`🚫 Rug Check failed for token: ${data.tokenMint}`);
       console.log("🚫 Rug Check not passed! Transaction aborted.");
       return;
     }
-    metrics.rugCheck.passed++;
+    // metrics.rugCheck.passed++;
 
     // Output logs
     console.log("Token found");
@@ -514,11 +497,13 @@ async function processTransaction(signature: string): Promise<void> {
     }
 
     const processingTime = performance.now() - start;
+    /*
     metrics.transactions.avgProcessingTime = 
         (metrics.transactions.avgProcessingTime * (metrics.transactions.total - 1) + processingTime) 
         / metrics.transactions.total;
     metrics.transactions.maxProcessingTime = Math.max(metrics.transactions.maxProcessingTime, processingTime);
     metrics.transactions.minProcessingTime = Math.min(metrics.transactions.minProcessingTime, processingTime);
+    */
 
     // We've already sent alerts above, so we can skip this duplicated alert logic
     // This entire block is redundant since we're already sending alerts earlier
@@ -610,10 +595,12 @@ async function processTransaction(signature: string): Promise<void> {
 
   } catch (error) {
     console.error("Error processing transaction:", error);
+    /*
     metrics.transactions.failed++;
     metrics.errors.count++;
     metrics.errors.lastError = error instanceof Error ? error.message : 'Unknown error';
     metrics.errors.lastErrorTime = new Date();
+    */
     throw error; // Re-throw to be caught by the caller
   }
 }
@@ -629,7 +616,7 @@ async function websocketHandler(): Promise<void> {
   let ws: WebSocket | null = new WebSocket(env.HELIUS_WSS_URI);
   
   if (!init) console.clear();
-  metrics.websocket.connections++;
+  // metrics.websocket.connections++;
 
   // Reset reconnect attempts when successfully connected
   ws.on("open", () => {
@@ -667,9 +654,11 @@ async function websocketHandler(): Promise<void> {
       }
 
       if (parsedData.error) {
+        /*
         metrics.errors.count++;
         metrics.errors.lastError = parsedData.error;
         metrics.errors.lastErrorTime = new Date();
+        */
         console.error("🚫 RPC Error:", parsedData.error);
         return;
       }
@@ -722,7 +711,7 @@ async function websocketHandler(): Promise<void> {
 
       // Verify if we have reached the max concurrent transactions
       if (activeTransactions >= MAX_CONCURRENT) {
-        metrics.transactions.skipped++;
+        // metrics.transactions.skipped++;
         console.log("⏳ Max concurrent transactions reached, skipping...");
         return;
       }
@@ -733,29 +722,33 @@ async function websocketHandler(): Promise<void> {
       
       try {
         await processTransaction(signature);
-        metrics.transactions.successful++;
+        // metrics.transactions.successful++;
         
         const processingTime = performance.now() - processStart;
+        /*
         metrics.transactions.avgProcessingTime = 
             (metrics.transactions.avgProcessingTime * (metrics.transactions.total - 1) + processingTime) 
             / metrics.transactions.total;
         metrics.transactions.maxProcessingTime = Math.max(metrics.transactions.maxProcessingTime, processingTime);
         metrics.transactions.minProcessingTime = Math.min(metrics.transactions.minProcessingTime, processingTime);
-        
+        */
       } catch (error) {
+        /*
         metrics.transactions.failed++;
         metrics.errors.count++;
         metrics.errors.lastError = error instanceof Error ? error.message : 'Unknown error';
         metrics.errors.lastErrorTime = new Date();
+        */
         console.error("Error processing transaction:", error);
       } finally {
         activeTransactions--;
       }
 
       // Update performance metrics
-      metrics.performance.lastMinute.transactions++;
+      // metrics.performance.lastMinute.transactions++;
 
       // Log performance stats every minute
+      /*
       if (Date.now() - metrics.performance.lastMinute.startTime > 60000) {
         console.log(`
 📊 Last Minute Performance:
@@ -768,19 +761,22 @@ async function websocketHandler(): Promise<void> {
         metrics.performance.lastMinute.transactions = 0;
         metrics.performance.lastMinute.startTime = Date.now();
       }
+      */
 
     } catch (error) {
+      /*
       metrics.errors.count++;
       metrics.errors.lastError = error instanceof Error ? error.message : 'Unknown error';
       metrics.errors.lastErrorTime = new Date();
+      */
       console.error("💥 Error processing message:", error);
     }
   });
 
   ws.on("close", () => {
     clearInterval(pingInterval);
-    metrics.websocket.reconnects++;
-    metrics.websocket.lastReconnect = new Date();
+    // metrics.websocket.reconnects++;
+    // metrics.websocket.lastReconnect = new Date();
     
     console.log("📴 WebSocket connection closed, cleaning up...");
     if (ws) {
@@ -801,9 +797,11 @@ async function websocketHandler(): Promise<void> {
 
   // Add specific error handling
   ws.on("error", (err: Error) => {
+    /*
     metrics.errors.count++;
     metrics.errors.lastError = err.message;
     metrics.errors.lastErrorTime = new Date();
+    */
     console.error("WebSocket error:", err);
     
     // Force close the connection on error to trigger reconnect
@@ -1030,6 +1028,7 @@ async function sendTokenAlerts(
             }
             
             // Send the complete enriched data to Telegram
+            console.log(`📱 TELEGRAM: Calling sendTokenAlert with enriched data for ${tokenAddress}`);
             await telegramBot.sendTokenAlert(
                 tokenAddress,
                 enrichedTokenName,
@@ -1088,6 +1087,10 @@ async function main() {
   ⚙️ Environment: ${process.env.NODE_ENV || 'development'}
   🚀 Web3 Provider: ${process.env.HELIUS_HTTPS_URI?.substring(0, 25)}...
   `);
+
+  console.log('🔌 API_ENABLED is set to true - Starting API server with bot...');
+  initApiServer();
+  console.log('✅ API server initialized successfully');
   
   // Initialize Discord client
   try {
@@ -1097,31 +1100,26 @@ async function main() {
     console.error('Failed to initialize Discord client:', error);
   }
   
-  // Initialize Telegram bot
-  try {
-    await telegramBot.initialize();
-    console.log('✅ Telegram bot initialized successfully');
-  } catch (error) {
-    console.error('Failed to initialize Telegram bot:', error);
-  }
+  // Telegram bot is already initialized at the top of the file
+  // No need to initialize it again
   
   // Check if we should start the API server (only if API_ENABLED=true)
-  const enableApi = process.env.API_ENABLED === 'true';
+  //const enableApi = process.env.API_ENABLED === 'true';
   
-  if (enableApi) {
-    try {
-      console.log('🔌 API_ENABLED is set to true - Starting API server with bot...');
-      initApiServer();
-      console.log('✅ API server initialized successfully');
-    } catch (error) {
-      console.error('❌ Failed to initialize API server:', error);
-      console.log('⚠️ Continuing bot startup without API server');
-    }
-  } else {
-    console.log('🔌 API server not started (API_ENABLED not set to true)');
-    console.log('🔌 To enable API, run with: API_ENABLED=true yarn dev');
-    console.log('🔌 Or run API server separately with: yarn api:server');
-  }
+  // if (enableApi) {
+  //   try {
+  //     console.log('🔌 API_ENABLED is set to true - Starting API server with bot...');
+  //     initApiServer();
+  //     console.log('✅ API server initialized successfully');
+  //   } catch (error) {
+  //     console.error('❌ Failed to initialize API server:', error);
+  //     console.log('⚠️ Continuing bot startup without API server');
+  //   }
+  // } else {
+  //   console.log('🔌 API server not started (API_ENABLED not set to true)');
+  //   console.log('🔌 To enable API, run with: API_ENABLED=true yarn dev');
+  //   console.log('🔌 Or run API server separately with: yarn api:server');
+  // }
   
   // Start periodic checks
   startPeriodicChecks(client);

@@ -3,11 +3,84 @@
 <head>
     <title>Solana Sniper Bot WebSocket Test</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        #messages { border: 1px solid #ccc; height: 400px; overflow-y: scroll; padding: 10px; margin-bottom: 10px; }
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        #messages { height: 600px; overflow-y: scroll; padding: 10px; margin-bottom: 10px; }
         .connected { color: green; }
         .disconnected { color: red; }
-        .alert { background-color: #f8f9fa; padding: 8px; margin: 5px 0; border-left: 3px solid #007bff; }
+        .message { background-color: #f8f9fa; padding: 8px; margin: 5px 0; border-left: 3px solid #007bff; }
+        
+        .token-card {
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+            padding: 16px;
+            border-top: 5px solid #5664d2;
+        }
+        
+        .token-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .token-title {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .token-address {
+            font-family: monospace;
+            background-color: #f0f0f0;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 300px;
+        }
+        
+        .token-metrics {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .metric {
+            background-color: #f5f7ff;
+            padding: 8px 12px;
+            border-radius: 6px;
+        }
+        
+        .metric-title {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 4px;
+        }
+        
+        .metric-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .token-actions {
+            margin-top: 10px;
+        }
+        
+        .action-button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            font-size: 14px;
+            margin-right: 10px;
+        }
         
         .status-indicator {
           padding: 5px 10px;
@@ -47,6 +120,21 @@
           border-radius: 4px;
           margin-right: 10px;
         }
+        
+        .security-passed {
+            color: #28a745;
+        }
+        
+        .security-failed {
+            color: #dc3545;
+        }
+        
+        .timestamp {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 8px;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -55,7 +143,7 @@
         <label for="port-select">Server Port:</label>
         <select id="port-select">
             <option value="3001">3001 (Standalone API)</option>
-            <option value="3030" selected>3030 (Main App API)</option>
+            <option value="3030" selected>3030 (API/WebSocket Server)</option>
         </select>
     </div>
     <div>
@@ -66,7 +154,7 @@
         <button id="subscribe">Subscribe to Token Alerts</button>
         <button id="disconnect">Disconnect</button>
     </div>
-    <h3>Messages:</h3>
+    <h3>Token Alerts:</h3>
     <div id="messages"></div>
 
     <script>
@@ -80,7 +168,7 @@
         
         function addMessage(message) {
             const messageDiv = document.createElement('div');
-            messageDiv.className = 'alert';
+            messageDiv.className = 'message';
             
             if (typeof message === 'object') {
                 const pre = document.createElement('pre');
@@ -92,6 +180,111 @@
             
             messagesElement.appendChild(messageDiv);
             messagesElement.scrollTop = messagesElement.scrollHeight;
+        }
+        
+        function formatTokenAlert(data) {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'token-card';
+            
+            // Token header with name and symbol
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'token-header';
+            
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'token-title';
+            titleDiv.textContent = `${data.tokenName} (${data.tokenSymbol})`;
+            
+            headerDiv.appendChild(titleDiv);
+            cardDiv.appendChild(headerDiv);
+            
+            // Token address
+            const addressDiv = document.createElement('div');
+            addressDiv.className = 'token-address';
+            addressDiv.textContent = data.tokenAddress;
+            cardDiv.appendChild(addressDiv);
+            
+            // Token metrics
+            const metricsDiv = document.createElement('div');
+            metricsDiv.className = 'token-metrics';
+            
+            // Market Cap
+            metricsDiv.appendChild(createMetric('Market Cap', data.marketCap || 'Unknown'));
+            
+            // Liquidity
+            const formattedLiquidity = data.liquidityInSol ? 
+                `${data.liquidityInSol.toFixed(2)} SOL` : 'Unknown';
+            metricsDiv.appendChild(createMetric('Liquidity', formattedLiquidity));
+            
+            // 24h Volume
+            metricsDiv.appendChild(createMetric('24h Volume', data.volume24h || 'Unknown'));
+            
+            // Price
+            const formattedPrice = data.price ? 
+                `$${data.price.toLocaleString(undefined, {minimumFractionDigits: 8, maximumFractionDigits: 8})}` : 'Unknown';
+            metricsDiv.appendChild(createMetric('Price', formattedPrice));
+            
+            // Bundles
+            metricsDiv.appendChild(createMetric('Bundles', data.bundles || 'Unknown'));
+            
+            // Percentage
+            metricsDiv.appendChild(createMetric('Percentage', data.percentage || 'Unknown'));
+            
+            // SOL Spent
+            metricsDiv.appendChild(createMetric('SOL Spent', data.solSpent || 'Unknown'));
+            
+            // Security Check
+            const securityClass = data.rugCheckPassed ? 'security-passed' : 'security-failed';
+            const securityStatus = data.rugCheckPassed ? 'PASSED' : 'FAILED';
+            metricsDiv.appendChild(createMetric('Security Check', `<span class="${securityClass}">${securityStatus}</span>`));
+            
+            // Migration Token
+            metricsDiv.appendChild(createMetric('Migration Token', data.isMigrationToken ? 'Yes' : 'No'));
+            
+            cardDiv.appendChild(metricsDiv);
+            
+            // Token actions
+            const actionsDiv = document.createElement('div');
+            actionsDiv.className = 'token-actions';
+            
+            const buyButton = document.createElement('a');
+            buyButton.href = data.buyLink || `https://jup.ag/swap/SOL-${data.tokenAddress}`;
+            buyButton.className = 'action-button';
+            buyButton.textContent = 'Buy Token';
+            buyButton.target = '_blank';
+            
+            actionsDiv.appendChild(buyButton);
+            cardDiv.appendChild(actionsDiv);
+            
+            // Timestamp
+            const timestampDiv = document.createElement('div');
+            timestampDiv.className = 'timestamp';
+            const date = data.timestamp ? new Date(data.timestamp) : new Date();
+            timestampDiv.textContent = `Detected: ${date.toLocaleString()}`;
+            cardDiv.appendChild(timestampDiv);
+            
+            return cardDiv;
+        }
+        
+        function createMetric(title, value) {
+            const metricDiv = document.createElement('div');
+            metricDiv.className = 'metric';
+            
+            const titleDiv = document.createElement('div');
+            titleDiv.className = 'metric-title';
+            titleDiv.textContent = title;
+            
+            const valueDiv = document.createElement('div');
+            valueDiv.className = 'metric-value';
+            if (title === 'Security Check') {
+                valueDiv.innerHTML = value; // Use innerHTML for the security status
+            } else {
+                valueDiv.textContent = value;
+            }
+            
+            metricDiv.appendChild(titleDiv);
+            metricDiv.appendChild(valueDiv);
+            
+            return metricDiv;
         }
         
         connectButton.addEventListener('click', () => {
@@ -118,11 +311,15 @@
                 socket.onmessage = (event) => {
                     try {
                         const data = JSON.parse(event.data);
-                        addMessage(data);
                         
-                        // If we receive a token alert, highlight it
+                        // If we receive a token alert, format it nicely
                         if (data.type === 'token-alert') {
                             console.log('Token alert received:', data.data);
+                            const tokenCard = formatTokenAlert(data.data);
+                            messagesElement.prepend(tokenCard); // Add newest alerts to the top
+                        } else {
+                            // For other messages, just show the raw data
+                            addMessage(data);
                         }
                     } catch (e) {
                         addMessage('Received non-JSON message: ' + event.data);

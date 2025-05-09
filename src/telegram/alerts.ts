@@ -86,16 +86,21 @@ ${isMigrationToken ? '🔄 *This appears to be a migration token!*' : ''}
     const channelConfig = getChannelConfig();
     console.log(`📱 TELEGRAM/alerts: Channel config:`, channelConfig);
     
+    let channelAlertSent = false;
+    let channelId: string | undefined = undefined;
+    
     if (channelConfig.channelId && channelConfig.enabled) {
       try {
-        console.log(`📱 TELEGRAM/alerts: Attempting to send to channel: ${channelConfig.channelId}`);
-        await bot.telegram.sendMessage(channelConfig.channelId, alertMessage, {
+        channelId = channelConfig.channelId; // Store channel ID to prevent duplicate messages
+        console.log(`📱 TELEGRAM/alerts: Attempting to send to channel: ${channelId}`);
+        await bot.telegram.sendMessage(channelId, alertMessage, {
           parse_mode: 'Markdown',
           disable_web_page_preview: true
         } as any);
-        console.log(`📱 TELEGRAM/alerts: ✅ Alert successfully sent to channel ${channelConfig.channelId} for token ${tokenAddress}`);
+        console.log(`📱 TELEGRAM/alerts: ✅ Alert successfully sent to channel ${channelId} for token ${tokenAddress}`);
+        channelAlertSent = true;
       } catch (error) {
-        console.error(`📱 TELEGRAM/alerts: ❌ Error sending alert to channel ${channelConfig.channelId}:`, error);
+        console.error(`📱 TELEGRAM/alerts: ❌ Error sending alert to channel ${channelId}:`, error);
       }
     } else {
       console.log(`📱 TELEGRAM/alerts: ❌ Channel alert not sent: channelId=${channelConfig.channelId}, enabled=${channelConfig.enabled}`);
@@ -111,6 +116,12 @@ ${isMigrationToken ? '🔄 *This appears to be a migration token!*' : ''}
     
     for (const user of userPrefs) {
       try {
+        // Skip if this user ID is the same as the channel ID (to avoid duplicate alerts)
+        if (user.userId === channelId) {
+          console.log(`📱 TELEGRAM/alerts: ⏭️ Skipping user ${user.userId} because it matches the channel ID`);
+          continue;
+        }
+        
         // For Pump.fun tokens, check pumpSwapEnabled
         if (user.pumpSwapEnabled) {
           console.log(`📱 TELEGRAM/alerts: Sending alert to user ${user.userId} who has pumpSwapEnabled=true`);
