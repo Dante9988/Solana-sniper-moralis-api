@@ -1,0 +1,251 @@
+Phase 3’s live runtime path is now verified through a real mainnet pool-creation event.
+
+Before Phase 4, implement Phase 3.1 only: Moralis API compatibility cleanup and trench.bot removal.
+
+Do not implement Phase 4, Chroma, trending tracking, new bundle forensics, macro/news, X ingestion or trading.
+
+## First: stop and clean the live smoke-test environment
+
+Before editing:
+
+1. Confirm the live listener process has been stopped.
+2. Confirm no unattended background listener remains.
+3. Remove temporary smoke-test source files:
+
+   * src/__smoke_test_anthropic.ts
+   * src/__smoke_test_anthropic_raw.ts
+4. Do not display `.env`, API keys, prompts or credentials.
+
+## Part 1: Audit every Moralis integration
+
+Search the entire repository for:
+
+* moralis
+* solana-gateway.moralis.io
+* deep-index.moralis.io
+* /holders
+* /top-holders
+* /historical
+* /snipers
+* /discovery
+* /exchange/
+* bonding-status
+* token score
+* score
+* metadata
+* price
+* swaps
+* pairs
+
+Before editing, produce a table:
+
+| File/function | Current endpoint | Consumer | Current status | Replacement/action |
+| ------------- | ---------------- | -------- | -------------- | ------------------ |
+
+Compare the actual code against the current official Moralis documentation and changelog.
+
+## Removed Moralis functionality
+
+The following Moralis endpoints were removed and must not remain active:
+
+Removed July 31, 2026:
+
+* GET /token/{network}/holders/{address}
+* GET /token/{network}/{address}/top-holders
+* GET /token/{network}/holders/{address}/historical
+* GET /token/{network}/exchange/{exchange}/new
+* GET /token/{network}/exchange/{exchange}/bonding
+* GET /token/{network}/exchange/{exchange}/graduated
+* GET /token/{network}/{address}/bonding-status
+* Solana Token Score endpoints and Solana response `score` fields
+
+Removed June 4, 2026:
+
+* GET /token/{network}/pairs/{pairAddress}/snipers
+* legacy /discovery/* endpoints
+* legacy /volume/* endpoints
+* any other endpoints listed as removed in the current Moralis changelog
+
+Do not simply change these removed URLs to guessed URLs.
+
+Where no supported REST replacement exists:
+
+* return a typed UNAVAILABLE/ENDPOINT_REMOVED result
+* add a data-quality warning
+* allow the deterministic report to remain usable
+* make the report PARTIAL when the missing evidence is material
+* never replace unavailable information with zero
+* never label the token safe because the provider returned no data
+
+Moralis Data Feeds may provide recipes for some retired holder/discovery functionality, but do not adopt Data Feeds in this phase. It is a separate infrastructure decision and may require early-access provisioning.
+
+## Supported Moralis functionality
+
+Verify request and response handling for currently supported APIs before retaining them:
+
+* GET /token/{network}/{address}/metadata
+* GET /token/{network}/{address}/price
+* POST /token/{network}/prices
+* GET /token/{network}/{address}/swaps
+* supported token-pair endpoint
+* GET /token/{network}/pairs/{pairAddress}/stats
+* supported OHLC/candlestick endpoints
+* supported Universal Token API endpoints already used by the repository
+
+For every retained endpoint:
+
+* use the documented host and path
+* use X-Api-Key without logging it
+* validate HTTP status before JSON parsing
+* distinguish TOKEN_NOT_FOUND from ENDPOINT_REMOVED
+* classify 401/403 as authentication/permission failure
+* classify 404 accurately
+* retry 429 and retryable 5xx only
+* do not retry ordinary 4xx responses
+* enforce timeout and maximum response size
+* validate responses with existing schemas or minimal Zod schemas
+* tolerate missing/null fields
+* store source and retrieval timestamp
+
+Do not introduce Moralis Onchain Skills or another Moralis AI feature. Anthropic remains the synthesis provider.
+
+## Part 2: Remove trench.bot
+
+The project will calculate bundle, sniper, developer and insider information internally in the next safety phase.
+
+Remove the trench.bot dependency from the runtime intelligence path.
+
+Audit and remove:
+
+* trench.bot HTTP calls
+* trenchClient imports
+* trench-specific configuration
+* trench-specific environment-variable names
+* trench-specific documentation
+* trench-only tests
+* dead package dependencies, if any
+
+Do not remove the general bundle/sniper research interface or report fields.
+
+Preserve:
+
+* BundleSniperResearcher contract
+* bundlesAndSnipers report shape
+* confidence
+* findings
+* evidence
+* error/unavailable status
+
+Until the internal analyzer is implemented, return an honest typed result similar to:
+
+```ts
+{
+  status: "UNAVAILABLE",
+  source: "INTERNAL_FORENSICS_PENDING",
+  findings: [],
+  evidence: [],
+  confidence: 0,
+  errors: ["Internal bundle and wallet-cluster forensics are not implemented yet"]
+}
+```
+
+Do not return:
+
+```ts
+bundledPct: 0
+sniperPct: 0
+confidence: 1
+```
+
+Missing analysis is unknown—not evidence of safety.
+
+A missing bundle analysis must prevent an `ELIGIBLE` or “safe” conclusion later. The hard eligibility policy will be implemented in the next safety phase.
+
+## Part 3: Preserve all safety and execution boundaries
+
+Do not modify:
+
+* src/index.ts listener integration, unless necessary only for compilation
+* existing Discord alert behavior
+* pumpfun-sniper.ts
+* wallet/private-key code
+* buy/sell/swap/signing functions
+* Sniperoo
+* transaction execution
+* holdings/PnL behavior
+* Anthropic security rules
+* recommendation: RESEARCH_ONLY
+
+No new imports from intelligence code to execution code are allowed.
+
+## Tests
+
+Add or update mocked tests covering:
+
+* current Moralis metadata URL
+* current Moralis price URL
+* current Moralis swap URL
+* supported pair/pair-stats URL
+* removed holder endpoint is never called
+* removed sniper endpoint is never called
+* removed discovery endpoint is never called
+* removed Solana score is not read
+* 404 token-not-found classification
+* removed-endpoint classification
+* 401 authentication failure
+* 429 bounded retry
+* 5xx bounded retry
+* timeout
+* malformed response
+* missing/null fields
+* trench.bot is never called
+* bundle analysis reports unavailable rather than zero
+* pipeline remains PARTIAL and usable
+* no trading/wallet/execution imports
+
+All tests must mock network requests.
+
+## Optional controlled live verification
+
+After mocked tests pass, perform only low-cost read-only smoke calls against supported Moralis endpoints using the same mint observed in the existing live event log.
+
+Do not hardcode that mint into production or test fixtures.
+
+Report:
+
+* endpoint category
+* status code
+* validation success/failure
+* latency
+* which expected fields were present
+
+Do not print the API key or complete raw payload.
+
+Do not require live holder/sniper calls because those REST endpoints were removed.
+
+## Verification
+
+Run:
+
+```bash
+npx tsc --noEmit
+npx vitest run src/intelligence
+npx vitest run
+npx prisma@6.5.0 validate
+git diff --check
+git status --short
+```
+
+Because the repository’s `yarn` command resolves incorrectly to Yarn Berry in this environment, do not modify package-manager configuration merely to run this phase. Use the exact underlying command from the existing package.json script for any controlled runtime smoke test.
+
+Finally report:
+
+1. Every removed Moralis endpoint found.
+2. Every retained Moralis endpoint and its official replacement/current path.
+3. Files changed.
+4. Tests and actual results.
+5. Controlled live smoke results, if performed.
+6. Confirmation that trench.bot is gone from the runtime path.
+7. Confirmation that missing bundle analysis is represented as unavailable.
+8. Confirmation that existing Discord/listener/trading behavior is unchanged.
+9. Confirmation that no temporary smoke-test files or background processes remain.

@@ -1,0 +1,44 @@
+Phase 1 is approved.
+
+Implement Phase 2 only: connect the existing migrated-token / pool-discovery listener to `TokenIntelligenceOrchestrator`.
+
+Requirements:
+
+- Do not modify, remove, or disable the existing Discord alert behavior.
+- Do not modify `pumpfun-sniper.ts`.
+- Do not change any token-buy, sell, swap, wallet, private-key, tracker, or execution code.
+- Do not add notifications from the intelligence pipeline yet.
+- Do not change the currently configured Pump.fun/PumpSwap program IDs during this phase.
+
+Integration goal:
+
+Existing listener event
+  → existing alert flow remains unchanged
+  → additionally construct `TokenDiscoveryEvent`
+  → call `TokenIntelligenceOrchestrator.processTokenDiscoveryEvent()`
+  → persist the report through the new report store
+
+The intelligence path must be non-blocking:
+
+- The existing listener must not wait for all research to complete before continuing.
+- Use bounded concurrency, timeouts, structured errors, and no unhandled promise rejections.
+- A research failure must never crash or disconnect the WebSocket listener.
+- Deduplicate using the transaction signature and mint.
+- Do not process the same discovery twice after reconnects.
+- Record `source` accurately as PUMPFUN, PUMPSWAP, or MIGRATION based on evidence; use an explicit fallback/unknown handling strategy if the current listener cannot prove the source.
+- Preserve the exact raw listener payload and transaction signature in the event.
+
+Add only the smallest necessary integration point and tests.
+
+Before editing, show:
+1. The exact active listener handler to integrate.
+2. How mint, signature, pool address, and source will be derived.
+3. The intended non-blocking/error-handling behavior.
+4. Files that will change.
+
+After implementation, run TypeScript compilation, intelligence tests, any affected listener tests, and `git diff --check`.
+
+Report actual command results and explicitly confirm:
+- Existing Discord code has not changed.
+- No execution/trading path was imported.
+- The orchestrator cannot submit a transaction.

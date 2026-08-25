@@ -18,7 +18,7 @@ A sophisticated trading bot for the Solana blockchain that monitors multiple DEX
 - **Multi-Source Data Aggregation** 🔄
   - Moralis API integration for enhanced token data 🔋
   - Pump.fun native data analysis 📊
-  - Trench analytics integration 📉
+  - Internal bundle and wallet-cluster analytics (planned) 📉
   - DexScreener market data 📈
 
 ### 🛡️ Intelligent Security Features

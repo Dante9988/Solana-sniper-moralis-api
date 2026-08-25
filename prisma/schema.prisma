@@ -87,3 +87,116 @@ model WalletBalance {
   @@index([walletId])
   @@index([tokenMint])
 }
+
+// --- Token Intelligence layer (read-only research/reporting; no execution) ---
+
+model TokenIntelligenceReport {
+  id                String   @id @default(uuid())
+  eventId           String   @unique
+  mint              String
+
+  // token
+  tokenName         String?
+  tokenSymbol       String?
+  tokenImageUrl     String?
+  tokenMetadataUri  String?
+  tokenCreator      String?
+  tokenCreationTime DateTime?
+
+  // socials
+  socialWebsite     String?
+  socialTwitter     String?
+  socialTelegram    String?
+  socialDiscord     String?
+  socialFindings    Json     @default("[]")
+
+  // market
+  marketPrice       Float?
+  marketCap         Float?
+  marketFdv         Float?
+  marketLiquidity   Float?
+  marketVolume24h   Float?
+  marketHolders     Int?
+  marketPools       Json     @default("[]")
+  marketSources     Json     @default("[]")
+
+  // safety
+  safetyMintAuthority              String?
+  safetyFreezeAuthority            String?
+  safetyCreatorHoldingsPct         Float?
+  safetyTopHolderConcentrationPct  Float?
+  safetyRugCheck                   Json?
+  safetySolSniffer                 Json?
+  safetyRiskFactors                Json     @default("[]")
+  safetyConfidence                 Float    @default(0)
+
+  // bundlesAndSnipers
+  bundleSniperPct       Float?
+  bundleBundledPct      Float?
+  bundleFindings        Json     @default("[]")
+  bundleConfidence      Float    @default(0)
+
+  // aiAssessment
+  aiNarrative       String?
+  aiCategory        String?
+  aiRiskLevel       String   @default("UNKNOWN")
+  aiConfidence      Float    @default(0)
+  aiPositiveSignals Json     @default("[]")
+  aiRiskFactors     Json     @default("[]")
+  aiReasons         Json     @default("[]")
+  aiMissingInfo     Json     @default("[]")
+  aiDataQualityWarnings Json @default("[]")
+  aiRecommendation  String   @default("RESEARCH_ONLY")
+
+  // aiAssessment.meta — Anthropic provider telemetry (Phase 3)
+  aiProvider          String?
+  aiModel             String?
+  aiPromptVersion     String?
+  aiSchemaVersion     String?
+  aiLatencyMs         Int?
+  aiInputTokens       Int?
+  aiOutputTokens      Int?
+  aiCompletedAt       DateTime?
+  aiValidationStatus  String?
+  aiFailureReason     String?
+
+  // processing
+  status            String
+  startedAt         DateTime
+  completedAt       DateTime?
+
+  evidence          TokenIntelligenceEvidence[]
+  errors            TokenIntelligenceError[]
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([mint])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model TokenIntelligenceEvidence {
+  id         String   @id @default(uuid())
+  reportId   String
+  report     TokenIntelligenceReport @relation(fields: [reportId], references: [id])
+  category   String
+  payload    Json
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+  @@index([category])
+}
+
+model TokenIntelligenceError {
+  id         String   @id @default(uuid())
+  reportId   String
+  report     TokenIntelligenceReport @relation(fields: [reportId], references: [id])
+  worker     String
+  message    String
+  fatal      Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+  @@index([worker])
+}
