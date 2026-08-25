@@ -6,7 +6,7 @@
 **Snapshot date:** 2026-08-25  
 **Latest intelligence commit family:** `feat: add token intelligence phase 3.1` (`54d5772`)
 
-**Stack:** TypeScript / Node 18+, Solana Web3.js, Discord.js v14, Prisma + PostgreSQL, SQLite holdings tracker, Express metrics, Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (legacy trading only), Anthropic Claude (AI synthesis), Vitest.
+**Stack:** TypeScript / Node 18+, Solana Web3.js, Discord.js v14, Prisma + PostgreSQL, SQLite holdings tracker, Express metrics, Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (legacy trading only), Anthropic Claude (AI synthesis), canonical cross-chain research assets, Vitest.
 
 ---
 
@@ -77,9 +77,49 @@ Two layers share one codebase:
 | **2** | Wire `index.ts` → dispatcher → orchestrator; non-blocking; Discord untouched | Done |
 | **3** | Replace AI stub with Anthropic structured outputs + Zod; fail → PARTIAL | Done |
 | **3.1** | Moralis 2026 removals cleanup; remove trench.bot; bundle worker = UNAVAILABLE | Done |
-| **4+** | Chroma/RAG, forensics, notifications, presentation API | Not started |
+| **4** | Canonical chain/address identity and shared research/market observations | Done; not wired into runtime |
+| **5+** | Chroma/RAG, forensics, notifications, presentation API | Not started |
 
 Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt` (historical prompts).
+
+### Phase 4 details
+
+Phase 4 implements a canonical, provider-neutral research foundation for cross-chain assets and market observations. It is intentionally not wired into active listeners, the TokenIntelligenceOrchestrator, Discord alerts, tracker writes, or any execution/trading paths.
+
+Primary artifacts (created under `src/assets/`):
+
+- `src/assets/types.ts` — canonical AssetIdentity types and research observation types
+- `src/assets/chainRegistry.ts` — immutable supported-chain registry (`SOLANA`, `ETHEREUM`, `BNB_SMART_CHAIN`)
+- `src/assets/assetResolver.ts` — explicit AssetResolutionInput → AssetResolutionResult behavior (RESOLVED / AMBIGUOUS_CHAIN / INVALID_ADDRESS / UNSUPPORTED_CHAIN)
+- `src/assets/marketObservation.ts` — provider-neutral MarketObservation contract and validation
+- `src/assets/assetStore.ts` — controlled PostgreSQL store with idempotent upsert and observation persistence
+- `src/assets/tokenDiscoveryAssetAdapter.ts` — pure adapter from legacy `TokenDiscoveryEvent` to AssetResolutionResult
+- Tests: `src/assets/__tests__/` covering resolver, observations, store, and execution boundary checks
+- `src/assets/README.md` — Phase 4 documentation and boundary rules
+
+Database
+
+- Additive Prisma models and migration were created to persist canonical assets and research observations in PostgreSQL (additive only; no destructive migration or legacy SQLite changes). The canonical `Asset` uses `@@unique([chainId, normalizedAddress])` and `AssetObservation` uses `@@unique([assetId, source, observationKey])` for idempotency.
+
+Verification
+
+Phase 4 verification instructions are captured in `phase4.txt` and include:
+
+- `npx prisma@6.5.0 generate` and `npx prisma@6.5.0 validate`
+- `npx tsc --noEmit`
+- `npx vitest run src/assets` and `npm run test:intelligence`
+- `git diff -- prisma/schema.prisma prisma/migrations` and `git diff -- src/assets`
+
+Notes and boundaries
+
+- EVM addresses are validated as `0x` + 40 hex chars and normalized to lowercase; no EIP-55 checksums generated in this phase.
+- Solana addresses are validated with `PublicKey` and remain case-sensitive; canonical identity preserves Solana casing.
+- A bare `0x` address without a chain hint returns `AMBIGUOUS_CHAIN` with candidates `ETHEREUM` and `BNB_SMART_CHAIN`; there is no silent default to Ethereum.
+- `POSITION` observations are rejected by the Phase 4 store — research observations are distinct from portfolio holdings (SQLite remains legacy tracker).
+- No live Ethereum/BNB RPC or provider is added in Phase 4; adapters and constructors are pure and perform no network or DB I/O.
+
+For full Phase 4 requirements and the approved audit plan, see `phase4.txt` at the repository root and `src/assets/README.md`.
+
 
 ---
 
