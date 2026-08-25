@@ -1,369 +1,394 @@
 # Architecture & Handoff Guide
 
-> Internal reference for continuing development. Describes what exists, what works, and known gaps — especially **Pump.fun** vs **PumpSwap** Discord notifications.
+> Source of truth for how this repository works **today** (Phases **1–3.1**).  
+> Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone).
 
-**Stack:** TypeScript / Node 18+, Solana Web3.js, Discord.js v14, Prisma + PostgreSQL, SQLite (holdings tracker), Express, Helius RPC/WSS, Moralis, Jupiter, Rugcheck/SolSniffer.
+**Snapshot date:** 2026-08-25  
+**Latest intelligence commit family:** `feat: add token intelligence phase 3.1` (`54d5772`)
 
-**Date of this snapshot:** 2026-08-24
+**Stack:** TypeScript / Node 18+, Solana Web3.js, Discord.js v14, Prisma + PostgreSQL, SQLite holdings tracker, Express metrics, Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (legacy trading only), Anthropic Claude (AI synthesis), Vitest.
 
 ---
 
 ## 1. What This Project Is
 
-A Solana token-monitoring / sniper system with two primary live alert paths:
+Two layers share one codebase:
 
-| Path | Event | Discord channel env | Entry script |
-|------|--------|---------------------|--------------|
-| **Pump.fun (new mint)** | New bonding-curve token (`InitializeMint2`) | `PUMPFUN_DISCORD_CHANNEL_ID` | `yarn pumpfun` → `src/pumpfun-sniper.ts` |
-| **PumpSwap / pool migration** | Pool create (`CreatePool`) on configured program | `DISCORD_CHANNEL_ID` | `yarn dev` → `src/index.ts` |
+| Layer | Purpose | Trading |
+|-------|---------|---------|
+| **Legacy listeners + Discord** | Detect Pump.fun mints / pool CreatePool events; alert Discord; optional PnL tracking | Simulation-gated; keep disabled for production research |
+| **Token intelligence (Phases 1–3.1)** | Non-blocking research pipeline on pool/migration discoveries → deterministic report → optional Anthropic synthesis → PostgreSQL | **Impossible** from this path (fail-closed, no execution imports) |
 
-Plus supporting systems: rug checks, Moralis market data, PnL tracking, Sniperoo wallets, optional auto-buy/sell (mostly simulation today), Grok analysis hooks, and a holdings price tracker.
+**Implemented:** event types, orchestrator, researchers, Prisma report store, non-blocking listener dispatch, Anthropic synthesis, Moralis compatibility cleanup, trench.bot removed from runtime.
 
----
-
-## 2. High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PROCESS A: yarn pumpfun                         │
-│  pumpfun-sniper.ts                                                      │
-│  WSS (GEYSER_RPC) → Pump.fun program logs                               │
-│  Filter: "Instruction: InitializeMint2"                                 │
-│  → fetchTokenMintFromTx → bonding curve MC data                         │
-│  → sendPumpFunAlert()  [discord/discord-pumpfun.ts]                     │
-│  → Discord: PUMPFUN_DISCORD_CHANNEL_ID                                  │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         PROCESS B: yarn dev                             │
-│  index.ts                                                               │
-│  WSS (HELIUS_WSS_URI) → enabled liquidity_pool programs from config     │
-│  Currently enabled: id "pump1" name "pumpswap"                          │
-│  Filter: "Program log: Instruction: CreatePool"                         │
-│  → fetchTokenMintFromTx → rug check (pump* mints only)                  │
-│  → sendTokenAlert()  [discord/discord.ts]                               │
-│  → Discord: DISCORD_CHANNEL_ID                                          │
-│  → storeTokenAlert (Prisma) → PnL periodic checks                       │
-│  Metrics HTTP: METRICS_PORT (default 3030) /metrics                     │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    OPTIONAL: yarn pumpfun15k                            │
-│  discord/discord-pumpfun-15k.ts                                         │
-│  Stores new Pump.fun mints in Prisma PumpFunToken                       │
-│  Polls until MC ~15k then alerts PUMPFUN_15K_DISCORD_CHANNEL_ID         │
-│  ⚠️ package.json script path is wrong (see Known Issues)                │
-└─────────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Shared libraries                                                       │
-│  transactions.ts     – tx parse, Jupiter swap, rugcheck                 │
-│  services/*          – Moralis, PumpSwap helpers, Sniperoo, PnL         │
-│  config.ts           – pools, fees, rug filters, simulation flags       │
-│  prisma              – Wallet, TokenAlert, PumpFunToken, etc.           │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-**Important:** These are separate Node processes. Running only `yarn pumpfun` does **not** send PumpSwap/migration alerts. Running only `yarn dev` does **not** send new Pump.fun mint alerts.
+**Not implemented yet (Phase 4+ / later):** Chroma/RAG, trending history, macro/news, X ingestion, internal bundle/wallet-cluster forensics, hard eligibility policy, intelligence → Discord notifications, dashboard API.
 
 ---
 
-## 3. Pump.fun vs PumpSwap — What Works
+## 2. End-to-End Runtime Map
 
-### 3.1 Pump.fun — new token creation ✅ WORKING (notify path)
+```text
+┌─ PROCESS A: npm run pumpfun ─────────────────────────────────────────┐
+│  src/pumpfun-sniper.ts                                               │
+│  Geyser WSS → Pump.fun program → InitializeMint2                     │
+│  → Discord PUMPFUN_DISCORD_CHANNEL_ID                                │
+│  ✗ Does NOT enter TokenIntelligenceOrchestrator (by design, Phase 2) │
+└──────────────────────────────────────────────────────────────────────┘
 
-**Program ID:** `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P` (`PUMP_FUN_PROGRAM` in `src/constants.ts`)
-
-**Flow:**
-1. `src/pumpfun-sniper.ts` opens WebSocket to `GEYSER_RPC`.
-2. Subscribes with `logsSubscribe` mentioning Pump.fun program.
-3. On log containing `Program log: Instruction: InitializeMint2`, queues the signature.
-4. `fetchTokenMintFromTx(signature)` reads post-token balances for the mint.
-5. Reads bonding-curve PDA for price / MC / liquidity.
-6. Calls `sendPumpFunAlert(mint)` from `src/discord/discord-pumpfun.ts`.
-7. Discord embed: **"NEW PUMP.FUN TOKEN DETECTED"** with MC, liquidity, bonding progress bar, socials, trading buttons.
-8. Channel: `PUMPFUN_DISCORD_CHANNEL_ID` (bot: `DISCORD_BOT_TOKEN` — note there is also unused `PUMPFUN_DISCORD_BOT_TOKEN` in `.env`).
-
-**Rug check on this path:** Currently **commented out** in `pumpfun-sniper.ts` — alerts go out without rug filtering.
-
-**Env required:**
-- `GEYSER_RPC` (WSS)
-- `RPC_ENDPOINT`
-- `DISCORD_BOT_TOKEN`
-- `PUMPFUN_DISCORD_CHANNEL_ID`
-- Prefer also `HELIUS_HTTPS_URI` (used by discord-pumpfun connection fallback)
-
----
-
-### 3.2 PumpSwap / graduated pool alerts ✅ INTENDED & PARTIALLY WIRED
-
-This is the **main** `yarn dev` / `src/index.ts` path. Config labels it **`pumpswap`**.
-
-**Config (`src/config.ts`):**
-```ts
-{
-  enabled: true,
-  id: "pump1",
-  name: "pumpswap",
-  program: "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", // same as Pump.fun bonding program
-  instruction: "Program log: Instruction: CreatePool",
-}
+┌─ PROCESS B: npm run dev ─────────────────────────────────────────────┐
+│  src/index.ts                                                        │
+│  Helius WSS → enabled config.liquidity_pool programs                 │
+│  Filter: CreatePool (currently “pumpswap”-labeled pool)              │
+│                                                                      │
+│  On mint extracted:                                                  │
+│    1) dispatchTokenIntelligence(...)   ← fire-and-forget (Phase 2)   │
+│    2) existing Discord / rug / simulation trade flow (unchanged)     │
+│    3) PnL periodic checks via Discord client                         │
+│  Metrics: METRICS_PORT /metrics                                      │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+┌─ Token intelligence pipeline ────────────────────────────────────────┐
+│  tokenIntelligenceDispatch.ts                                        │
+│    dedupe(signature:mint) · maxConcurrent=3 · timeoutMs=20s          │
+│    deriveTokenSource(programId) → PUMPSWAP | MIGRATION | UNKNOWN     │
+│         │                                                            │
+│         ▼                                                            │
+│  TokenIntelligenceOrchestrator.process()                             │
+│    parallel: metadata · market · safety · bundleSniper               │
+│    then:     social (needs metadata)                                 │
+│    then:     aiSynthesis (Anthropic; optional)                       │
+│         │                                                            │
+│         ▼                                                            │
+│  reportStore.saveReport() → Prisma TokenIntelligenceReport (+evidence│
+│                            / errors)                                 │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-Raydium pool watch is present but **`enabled: false`**.
-
-**Flow:**
-1. Subscribe to Helius WSS for each enabled pool program.
-2. On logs containing configured `CreatePool` instruction → process signature.
-3. Extract mint via `fetchTokenMintFromTx`.
-4. If mint ends with `pump`:
-   - Run `getRugCheckConfirmed` (Rugcheck → SolSniffer fallback).
-   - If pass → `sendTokenAlert(mint, true)`.
-5. If mint does **not** end with `pump`:
-   - Skip rug check; still call `sendTokenAlert` — but **`sendTokenAlert` itself skips non-`pump` mints**, so Discord is silent.
-6. If `config.rug_check.simulation_mode === true` (current default): **no Jupiter buy** — alert only.
-7. On successful alert for pump tokens: `storeTokenAlert` → Prisma `TokenAlert` for PnL tracking.
-
-**Discord (`sendTokenAlert` in `discord/discord.ts`):**
-- Channel: `DISCORD_CHANNEL_ID`
-- Title style: **"New Token Launch Detected"**
-- Minimum market cap gate: **`$15,000`** (`MINIMUM_MARKET_CAP`)
-- Enriches with Moralis (`tokenDataService`); internal bundle/sniper forensics are pending
-- Stores alert for PnL; `startPeriodicChecks(client)` runs from `index.ts`
-
-**This is the “PumpSwap / migration / pool create” Discord notify path** the project uses today — even though the subscribed program ID is still the Pump.fun program, not the standalone PumpSwap AMM ID.
+**Rule:** listeners are event sources. Analysis lives under `src/intelligence/**`. Discord alerts and intelligence are parallel—not substitutes.
 
 ---
 
-### 3.3 PumpSwap helper module — EXISTS BUT NOT WIRED ⚠️
+## 3. Implementation Phases (what landed)
 
-`src/services/pumpSwapService.ts` defines the **real** PumpSwap AMM program:
+| Phase | Goal | Status |
+|-------|------|--------|
+| **1** | Types, orchestrator, workers, Prisma models, unit tests; no listener change | Done |
+| **2** | Wire `index.ts` → dispatcher → orchestrator; non-blocking; Discord untouched | Done |
+| **3** | Replace AI stub with Anthropic structured outputs + Zod; fail → PARTIAL | Done |
+| **3.1** | Moralis 2026 removals cleanup; remove trench.bot; bundle worker = UNAVAILABLE | Done |
+| **4+** | Chroma/RAG, forensics, notifications, presentation API | Not started |
 
-| Constant | Value |
+Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt` (historical prompts).
+
+---
+
+## 4. Legacy Listeners (still active)
+
+### 4.1 Pump.fun new mints — `npm run pumpfun`
+
+| Item | Detail |
+|------|--------|
+| File | `src/pumpfun-sniper.ts` |
+| Program | `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P` |
+| Signal | `Program log: Instruction: InitializeMint2` |
+| Discord | `sendPumpFunAlert` → `PUMPFUN_DISCORD_CHANNEL_ID` |
+| Intelligence | **Not wired** |
+
+### 4.2 Pool / “pumpswap”-labeled CreatePool — `npm run dev`
+
+| Item | Detail |
+|------|--------|
+| File | `src/index.ts` |
+| Config | `config.liquidity_pool[0]`: name `"pumpswap"`, **program = Pump.fun bonding program**, instruction `CreatePool` |
+| Real PumpSwap AMM | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA` in `pumpSwapService.ts` — **not subscribed yet** |
+| Discord | `sendTokenAlert` → `DISCORD_CHANNEL_ID` (still filters `mint.endsWith("pump")`, MC ≥ $15k) |
+| Intelligence | `dispatchTokenIntelligence(signature, mint, matchedPool.program, rawWsValue)` after mint extract |
+| Trading | `rug_check.simulation_mode: true` → no Jupiter buy |
+
+### 4.3 Other processes
+
+| Script | Entry | Notes |
+|--------|-------|-------|
+| `npm run pumpfun15k` | Wrong path in `package.json` (`src/discord-pumpfun-15k.ts`); real file is `src/discord/discord-pumpfun-15k.ts` | Broken script |
+| `npm run tracker` | SQLite holdings TP/SL | Legacy |
+| `npm run server` | Older Express + WS | Overlaps `index.ts` |
+
+---
+
+## 5. Token Intelligence Layer (detail)
+
+### 5.1 Canonical event — `TokenDiscoveryEvent`
+
+Defined in `src/intelligence/types.ts`:
+
+- `id`, `signature`, `mint`, optional `poolAddress`
+- `source`: `PUMPFUN` \| `PUMPSWAP` \| `MIGRATION` \| `UNKNOWN`
+- `discoveredAt` / `receivedAt`
+- `rawPayload` (WebSocket value preserved)
+
+**Source derivation** (`deriveTokenSource` in `tokenIntelligenceDispatch.ts`):
+
+| Program ID | Source |
+|------------|--------|
+| `pAMMBay…` (PumpSwap AMM) | `PUMPSWAP` |
+| `39azUYFW…` (Pump.fun→Raydium migration account) | `MIGRATION` |
+| Anything else (including current enabled pump1 config) | `UNKNOWN` |
+
+Sources are never guessed from the config **name** `"pumpswap"`.
+
+### 5.2 Dispatcher — `src/services/tokenIntelligenceDispatch.ts`
+
+- Fire-and-forget: listener must not `await` research
+- Dedup key: `signature:mint` (LRU-ish cap 1000)
+- Concurrency: default 3; overflow → skip with log
+- Timeout: default 20s frees the concurrency slot; work may continue in background
+- Synchronous throws and promise rejections are swallowed/logged (listener stays up)
+
+### 5.3 Orchestrator — `TokenIntelligenceOrchestrator`
+
+File: `src/intelligence/orchestrator.ts`  
+Public API: `processTokenDiscoveryEvent(event)`.
+
+Order:
+
+1. **Parallel:** metadata, market, safety, bundleSniper  
+2. **After metadata:** social  
+3. **Then:** AI synthesis on the partial report  
+4. **Persist:** `saveReport` (best-effort; persistence failure does not throw away the in-memory report)
+
+**Status rules:**
+
+| Status | Meaning |
+|--------|---------|
+| `COMPLETE` | Research workers succeeded without errors; AI also OK if configured |
+| `PARTIAL` | Some evidence exists but worker errors/fatals and/or AI failure |
+| `FAILED` | No usable deterministic research |
+
+AI failure can only **downgrade** `COMPLETE` → `PARTIAL`. AI success cannot rescue a `FAILED` research baseline.
+
+`recommendation` is always `RESEARCH_ONLY`.
+
+### 5.4 Workers
+
+| Worker | File | Sources / behavior |
+|--------|------|--------------------|
+| Metadata | `workers/metadataResearcher.ts` | Moralis via `tokenDataService`; Pump.fun frontend via `pumpFunSocialClient`; optional on-chain migration check when source is PUMPSWAP/MIGRATION |
+| Market | `workers/marketResearcher.ts` | Moralis price/metadata/swaps (+ Birdeye volume/liquidity fallbacks in token data path) |
+| Safety | `workers/safetyResearcher.ts` | **Read-only** `safetyCheckService` (RugCheck + SolSniffer). Never imports `transactions.ts` |
+| Social | `workers/socialResearcher.ts` | Links already present on metadata / pump.fun frontend payload |
+| Bundle/sniper | `workers/bundleSniperResearcher.ts` | **UNAVAILABLE** / `INTERNAL_FORENSICS_PENDING`, confidence `0`, no zero-valued “safe” percentages (Phase 3.1) |
+| AI synthesis | `workers/aiSynthesisAgent.ts` | Calls `anthropicSynthesisProvider`; maps failures to safe UNKNOWN assessment |
+
+### 5.5 Anthropic provider (Phase 3)
+
+File: `src/intelligence/providers/anthropicSynthesisProvider.ts`
+
+- Official `@anthropic-ai/sdk`, Messages API, **zero tools**
+- Env: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-haiku-4-5-20251001`), `ANTHROPIC_TIMEOUT_MS`, `ANTHROPIC_MAX_TOKENS`
+- Strict structured output + local Zod validation
+- Prompt-injection treated as untrusted data
+- Local reject of prohibited trading language
+- Retries only for 429 / retryable 5xx
+- Telemetry persisted on report: provider, model, prompt/schema versions, latency, tokens, validation status, failure reason
+- Unconfigured key → `NOT_CONFIGURED`; deterministic report still usable
+
+### 5.6 Persistence (Prisma)
+
+Migrations:
+
+- `20250324020906_init` — Wallet / TokenAlert / PumpFunToken / …
+- `20260825013814_add_token_intelligence` — intelligence tables
+- `20260825022923_add_ai_synthesis_meta` — AI telemetry columns
+
+Models:
+
+- `TokenIntelligenceReport` — upsert by unique `eventId`
+- `TokenIntelligenceEvidence` — category + JSON payload
+- `TokenIntelligenceError` — per-worker messages + fatal flag
+
+Shared client: `src/services/prismaClient.ts`.
+
+---
+
+## 6. Moralis (Phase 3.1)
+
+Shared client: `src/services/moralisClient.ts`  
+Host: `https://solana-gateway.moralis.io`  
+Header: `X-Api-Key` (never logged).
+
+### Retained
+
+| Endpoint | Helper |
 |----------|--------|
-| `PUMPSWAP_PROGRAM_ID` | `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA` |
-| `PUMP_FUN_PROGRAM_ID` | `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P` |
-| `PUMP_FUN_RAYDIUM_MIGRATION` | `39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg` |
+| `GET /token/mainnet/{address}/metadata` | `getMoralisMetadata` |
+| `GET /token/mainnet/{address}/price` | `getMoralisPrice` |
+| `GET /token/mainnet/{address}/swaps` | `getMoralisSwaps` |
+| `GET /token/mainnet/{address}/pairs` | `getMoralisPairs` |
+| `GET /token/mainnet/pairs/{pairAddress}/stats` | `getMoralisPairStats` |
 
-Helpers: `isPumpSwapPoolCreation`, `isBondingCurveComplete`, `verifyPumpFunMigration`, `getTokenMintFromLogs`, etc.
+Behavior: timeout, max body size, Zod parse, typed `AVAILABLE` / `UNAVAILABLE` with codes (`TOKEN_NOT_FOUND`, `AUTHENTICATION_FAILED`, `RATE_LIMITED`, …). Retry **only** 429 and retryable 5xx.
 
-**None of these are imported by `index.ts`.**
-`index.ts` also defines local helpers `isHighWsolPoolCreation` / `getTokenMintFromLogs` (look for `Create_pool` + WSOL > 80) that are **never called** by the active message handler — the live filter is only the config instruction string `CreatePool`.
+### Removed (must not be called)
 
-**Implication for the next AI:**
-- Discord **can** notify for both Pump.fun (process A) and pool-create / “pumpswap”-labeled path (process B).
-- True AMM program `pAMMBay...` subscription is **not** live yet; fixing that (and wiring `pumpSwapService`) is a clear next upgrade.
+- Holders / top-holders / historical holders  
+- Pair snipers (`…/pairs/{pair}/snipers`) — `fetchSniperData` now returns `null`  
+- Legacy discovery / volume  
+- Exchange new / bonding / graduated  
+- Bonding-status  
+- Solana Token Score / metadata `score`  
 
----
+`removedMoralisEndpoint(feature)` returns typed `ENDPOINT_REMOVED`. Missing data ≠ zeros ≠ “safe”.
 
-## 4. Discord Surface Map
-
-| Bot / module | File | Channel env | Trigger | Status |
-|--------------|------|-------------|---------|--------|
-| Main launch alerts | `discord/discord.ts` | `DISCORD_CHANNEL_ID` | Pool CreatePool via `index.ts` | Working path (pump mints, MC ≥ 15k) |
-| New Pump.fun mints | `discord/discord-pumpfun.ts` | `PUMPFUN_DISCORD_CHANNEL_ID` | InitializeMint2 via `pumpfun-sniper.ts` | Working |
-| 15k MC monitor | `discord/discord-pumpfun-15k.ts` | `PUMPFUN_15K_DISCORD_CHANNEL_ID` | DB poll after mint store | Implemented; npm script path broken |
-| PnL alerts | `tokenTrackingService.ts` | `PNL_DISCORD_CHANNEL_ID` | Periodic PnL ≥ ~50% | Wired when `yarn dev` runs |
-| Daily PnL summary | `tokenTrackingService.ts` | `DISCORD_PNL_SUMMARY_CHANNEL_ID` | Scheduled in periodic checks | Wired when `yarn dev` runs |
-| Slash commands | `discord/commands/*` | — | buy/sell/wallet/config | Present; registration mostly commented out in `discord.ts` |
-
-Shared bot token in practice: `DISCORD_BOT_TOKEN`.
+`tokenDataService.ts` is rebuilt on the shared client for intelligence/Discord market enrichment.
 
 ---
 
-## 5. npm Scripts
+## 7. trench.bot removal (Phase 3.1)
 
-| Script | Command | Purpose |
-|--------|---------|---------|
-| `yarn dev` | `ts-node src/index.ts` | Main listener + Discord launch alerts + PnL |
-| `yarn pumpfun` | `ts-node src/pumpfun-sniper.ts` | New Pump.fun mint Discord alerts |
-| `yarn pumpfun15k` | `ts-node src/discord-pumpfun-15k.ts` | **Broken path** — file is `src/discord/discord-pumpfun-15k.ts` |
-| `yarn tracker` | `ts-node src/tracker/index.ts` | SQLite holdings TP/SL monitor |
-| `yarn server` / `server:dev` | `src/server.ts` | Older Express + WS listener (overlap with index) |
-| `yarn daily` | `test-daily-summary.ts` | Manual daily summary test |
-| `yarn build` / `start` | `tsc` / `node dist/index.js` | Production build of main entry |
+| Item | Status |
+|------|--------|
+| `src/services/trenchClient.ts` | **Deleted** |
+| Intelligence bundle worker | No HTTP; UNAVAILABLE stub |
+| Discord / PnL paths | Must not call trench (cleaned in 3.1 commit) |
+| Future forensics | Internal analyzer (not built); missing evidence blocks any future ELIGIBLE/safe policy |
 
 ---
 
-## 6. Key Source Map
+## 8. Safety / execution boundary
 
-```
+### Intelligence danger zone (must never import)
+
+Documented in `src/intelligence/README.md`:
+
+- `src/transactions.ts` (even rug helpers have trading-tracker side effects)
+- `sniperooService`, `tradingService`, `buyToken`, `jito`
+- Tracker DB writers
+- Discord modules that `client.login` at import time
+- Wallet / private-key env material in Anthropic prompts
+
+Safety HTTP lives in `src/services/safetyCheckService.ts` (read-only clone of rug/sniffer fetches).
+
+### Legacy trading still exists (separate)
+
+- Jupiter swap/sell in `transactions.ts`
+- Sniperoo wallets/commands
+- Dead `handleWebsocketMessage` auto-buy in `index.ts` (not hooked to live WS)
+- `config.rug_check.simulation_mode: true` and `rugSafe.simulation_mode: true`
+
+**Intelligence cannot submit a transaction.** Do not treat the whole monorepo as safe for unattended trading without a separate audit.
+
+---
+
+## 9. Source map (current)
+
+```text
 src/
-├── index.ts                 # Main WSS sniper (pumpswap-labeled CreatePool) + Discord + PnL
-├── pumpfun-sniper.ts        # Pump.fun InitializeMint2 sniper + Discord
-├── oldpumpfun.ts            # Legacy / unused pumpfun logic
-├── config.ts                # Pool list, swap fees, rug rules, simulation_mode, sniperoo
-├── constants.ts             # Pump.fun program IDs, bonding curve layout
-├── transactions.ts          # Tx fetch, Jupiter swap/sell, rugcheck/solsniffer
-├── server.ts                # Alternate Express control API + listener
-├── grok.ts                  # Grok AI token analysis → Discord update helper
-├── callStats.ts             # Discord call/reaction stats analyzer
-├── discord/
-│   ├── discord.ts           # Main alerts (sendTokenAlert), PnL client export
-│   ├── discord-pumpfun.ts   # sendPumpFunAlert
-│   ├── discord-pumpfun-15k.ts
-│   └── commands/            # buy, sell, wallet, config (Sniperoo-backed)
+├── index.ts                          # Pool CreatePool listener + Discord + intel dispatch
+├── pumpfun-sniper.ts                 # New mint Discord only
+├── config.ts                         # Pools, fees, simulation, sniperoo
+├── transactions.ts                   # Legacy tx / swap / rug gate (danger for intel)
+├── intelligence/
+│   ├── types.ts
+│   ├── orchestrator.ts
+│   ├── reportStore.ts
+│   ├── providers/anthropicSynthesisProvider.ts
+│   ├── workers/{metadata,market,safety,social,bundleSniper,aiSynthesis}Researcher*.ts
+│   └── __tests__/                    # Vitest (mocked network)
 ├── services/
-│   ├── pumpSwapService.ts   # PumpSwap IDs + detection helpers (unused by index)
-│   ├── tokenDataService.ts  # Moralis price/metadata/swaps
-│   ├── tokenTrackingService.ts # TokenAlert store, PnL, daily summary, canvas cards
-│   ├── sniperDataService.ts
-│   ├── sniperooService.ts   # External Sniperoo API + Prisma wallets
-│   └── tradingService.ts    # Jupiter trading singleton
-├── tracker/                 # SQLite holdings auto-sell loop
-├── pumputils/               # Anchor IDL + buyToken on bonding curve
-└── utils/                   # env-validator, jito, apiUtils, keys
-prisma/schema.prisma         # Wallet, UserConfig, PumpFunToken, TokenAlert, tx/balances
+│   ├── tokenIntelligenceDispatch.ts
+│   ├── moralisClient.ts
+│   ├── tokenDataService.ts
+│   ├── safetyCheckService.ts
+│   ├── pumpFunSocialClient.ts
+│   ├── pumpSwapService.ts            # AMM IDs + helpers (listener not fully wired)
+│   ├── sniperDataService.ts          # Retired endpoint → null
+│   ├── tokenTrackingService.ts       # PnL / Discord summaries
+│   ├── sniperooService.ts / tradingService.ts  # Legacy execution
+│   └── prismaClient.ts
+├── discord/                          # Alert bots (import-time login)
+├── tracker/                          # SQLite holdings
+└── pumputils/                        # Bonding-curve buy helpers (legacy)
+prisma/schema.prisma
 ```
 
 ---
 
-## 7. Data Stores
+## 10. Discord surface (unchanged role)
 
-### PostgreSQL (Prisma)
+| Module | Channel env | Trigger |
+|--------|-------------|---------|
+| `discord/discord.ts` | `DISCORD_CHANNEL_ID` | Pool CreatePool via `index.ts` |
+| `discord/discord-pumpfun.ts` | `PUMPFUN_DISCORD_CHANNEL_ID` | New mint via `pumpfun-sniper` |
+| `discord/discord-pumpfun-15k.ts` | `PUMPFUN_15K_DISCORD_CHANNEL_ID` | 15k MC poll |
+| PnL / daily summary | `PNL_*` / `DISCORD_PNL_SUMMARY_*` | Periodic from `index.ts` |
 
-- `Wallet` / `UserConfig` / `WalletTransaction` / `WalletBalance` — Sniperoo user trading
-- `PumpFunToken` — 15k monitor queue (`mint`, `alerted`)
-- `TokenAlert` — launch alerts for PnL (`initialMarketCap`, `pnlAlerted`, etc.)
-
-`DATABASE_URL` required for PnL / 15k / Sniperoo features.
-
-### SQLite
-
-- `src/tracker/holdings.db` (path from `config.swap.db_name_tracker_holdings`) — post-buy holdings for TP/SL tracker.
+Intelligence does **not** post Discord alerts yet.
 
 ---
 
-## 8. External Integrations
-
-| Service | Role |
-|---------|------|
-| Helius HTTPS + WSS | RPC, logSubscribe (`yarn dev`) |
-| Geyser / custom WSS (`GEYSER_RPC`) | Pump.fun mint listen |
-| Moralis | Token price, metadata, swaps |
-| Jupiter Quote/Swap | Buys/sells (when not in simulation) |
-| DexScreener | SOL price / pair prices |
-| Pump.fun frontend API | Coin metadata, SOL price (pumpfun Discord) |
-| Rugcheck.xyz | Primary security report |
-| SolSniffer | Rugcheck fallback |
-| Birdeye | Optional / fallback market data |
-| Sniperoo API | Custodial wallets + buys |
-| Grok (`GROK_API_KEY`) | Optional AI commentary on alerts |
-| Discord | Alerts / PnL / summaries |
-
----
-
-## 9. Config Knobs That Matter Now
-
-From `src/config.ts` (current defaults as of snapshot):
-
-- **`liquidity_pool[0]`** (`pumpswap`): **enabled** — this drives Process B Discord.
-- **`liquidity_pool[1]`** (Raydium): **disabled**.
-- **`rug_check.simulation_mode: true`** — Discord + analysis only; **no live swaps** on `index.ts`.
-- **`rugSafe.simulation_mode: true`** — same idea for alternate rug gate.
-- **`swap.amount`**: `"1000000"` lamports comment says 0.1 SOL (verify before going live).
-- **`sell.auto_sell` / stop_loss / take_profit** — used by tracker path.
-- **`sniperoo.enabled: true`** — Discord command / auto-buy plumbing exists; slash registration largely commented out.
-
-Discord MC filter (hardcoded in `discord.ts`, not config): **`MINIMUM_MARKET_CAP = 15000`**.
-
----
-
-## 10. Environment Variables (names only)
-
-**Core sniper (`yarn dev`):**
-`PRIV_KEY_WALLET`, `HELIUS_HTTPS_URI`, `HELIUS_WSS_URI`, `HELIUS_HTTPS_URI_TX`, `JUP_HTTPS_*`, `DEX_HTTPS_LATEST_TOKENS`, `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `MORALIS_API_KEY`, `METRICS_PORT`, `DATABASE_URL`, `PNL_DISCORD_CHANNEL_ID`, `DISCORD_PNL_SUMMARY_CHANNEL_ID`
-
-**Pump.fun sniper (`yarn pumpfun`):**
-`GEYSER_RPC`, `RPC_ENDPOINT`, `DISCORD_BOT_TOKEN`, `PUMPFUN_DISCORD_CHANNEL_ID`
-
-**15k monitor:**
-`RPC_ENDPOINT_15K`, `PUMPFUN_15K_DISCORD_CHANNEL_ID`, `DATABASE_URL`
-
-**Optional:**
-`SOLSNIFFER_API_KEY`, `GROK_API_KEY`, `BIRDEYE_API_KEY`, `SNIPEROO_API_KEY`, `RUGCHECK_PRIVATE_KEY`, pump buy flags (`IS_JITO`, `JITO_FEE`, `PRIVATE_KEY`, …)
-
-Do not commit `.env`. Secrets are already present locally for development.
-
----
-
-## 11. Runtime Behavior Summary
-
-### Working today (with correct env + both processes)
-
-1. **Notify Discord from Pump.fun** — new mints → `PUMPFUN_DISCORD_CHANNEL_ID`.
-2. **Notify Discord from pool CreatePool path labeled pumpswap** — pump mints, rug pass, MC ≥ 15k → `DISCORD_CHANNEL_ID`.
-3. **PnL follow-up + daily summary** — when main process is running and DB is up.
-4. **Rugcheck pipeline** — used on main path for `*pump` tokens.
-5. **Moralis enrichment** — main Discord embeds.
-6. **Simulation mode** — live trading disabled by default.
-
-### Partial / dormant
-
-- `pumpSwapService.ts` (correct AMM ID) unused.
-- High-WSOL (>80) filters defined but unused in live WS handler.
-- Raydium listener disabled in config.
-- Discord slash trading commands mostly disabled.
-- `handleWebsocketMessage` auto-buy loop at bottom of `index.ts` is **dead code** (never hooked to WS).
-- `server.ts` duplicates older listener without Discord alerts.
-- Grok analysis helpers exist; not central to the two notify paths.
-- `package.json` `pumpfun15k` points at wrong file path.
-
----
-
-## 12. Known Issues / Pitfalls for Next Work
-
-1. **Program ID mismatch for “pumpswap”**
-   Config name says pumpswap but program is Pump.fun bonding program. Real AMM is `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`. Validate on-chain which program emits the `CreatePool` logs you care about, then subscribe to the correct one(s).
-
-2. **`pumpSwapService` not integrated** — wire into `index.ts` or replace duplicated log parsers.
-
-3. **Two Discord bots / channels must both be running** for full coverage (Pump.fun + PumpSwap/pool).
-
-4. **`sendTokenAlert` hard-filters `mint.endsWith('pump')`** — non-pump graduations never alert even if detected.
-
-5. **`yarn pumpfun15k` broken** — fix script to `ts-node src/discord/discord-pumpfun-15k.ts`.
-
-6. **Simulation mode on** — turning on live buys needs intentional config + wallet funding + fee review.
-
-7. **Duplicate Discord clients** — `discord.ts` and `discord-pumpfun.ts` each `client.login` the same token if both processes run (OK as separate processes; do not import both into one process without care).
-
-8. **README vs reality** — README still describes Raydium-first and yarn scripts that don’t match all behaviors; trust this file + source over README for architecture.
-
----
-
-## 13. Suggested Continuation Priorities
-
-1. Confirm live CreatePool logs: Pump.fun program vs PumpSwap AMM (`pAMMBay...`); update `config.liquidity_pool` accordingly (keep **both** Pump.fun mint alerts and PumpSwap pool alerts).
-2. Import and use `pumpSwapService` for detection / migration verification; remove dead local helpers or call the WSOL>80 filter if still desired.
-3. Fix `pumpfun15k` script path; decide if 15k monitor overlaps with main `MINIMUM_MARKET_CAP` gate.
-4. Unify Discord alert formatting / channels if product wants clearer “Pump.fun mint” vs “PumpSwap graduated” labels.
-5. Before live trading: set `simulation_mode: false`, audit swap amount/slippage/priority fees, test with tiny size.
-6. Clean dead code (`handleWebsocketMessage`, commented slash cmds) or re-enable intentionally.
-
----
-
-## 14. Quick Start for Another AI
+## 11. Commands & verification
 
 ```bash
-# Terminal 1 — PumpSwap / pool CreatePool Discord (DISCORD_CHANNEL_ID)
-yarn dev
+npm install
+npx prisma generate
+npx prisma migrate deploy
 
-# Terminal 2 — Pump.fun new mint Discord (PUMPFUN_DISCORD_CHANNEL_ID)
-yarn pumpfun
+npm run build                 # tsc
+npx vitest run                # full mocked suite
+npm run test:intelligence     # intelligence subset
+npx prisma@6.5.0 validate
 
-# Optional holdings TP/SL
-yarn tracker
+npm run dev                   # listener + Discord + intelligence dispatch
+npm run pumpfun               # Pump.fun mint Discord only
 ```
 
-Ensure `.env` has Helius, Geyser, Discord tokens/channels, Moralis, and `DATABASE_URL` as needed.
+Phase 3.1 verification expectation (from README): TypeScript build OK, ~52 tests / 6 files, Prisma validate OK, no trench URLs, no removed Moralis paths, no leftover `__smoke_test_*` files.
 
-**Verify both notify paths:**
-- Mint a / watch a new Pump.fun create → channel A.
-- Watch a CreatePool / graduation matching config → channel B (pump mint, MC ≥ 15k, rug pass).
+Prefer `npm` / `npx` for scripts in this environment if Yarn Berry resolves incorrectly.
 
 ---
 
-## 15. One-Line Truth
+## 12. Environment (names only)
 
-**Yes — the project can notify Discord for both Pump.fun (new tokens) and the pumpswap-labeled pool-create path; they are two separate processes (`yarn pumpfun` + `yarn dev`). PumpSwap AMM helpers exist (`pumpSwapService`) but the live subscriber still uses the Pump.fun program ID in config — wiring the real AMM ID is the main architectural gap.**
+See `.env.example` for Anthropic names. Also used depending on process:
+
+| Area | Keys |
+|------|------|
+| DB | `DATABASE_URL` |
+| RPC | `HELIUS_HTTPS_URI`, `HELIUS_WSS_URI`, `HELIUS_HTTPS_URI_TX`, `GEYSER_RPC`, `RPC_ENDPOINT*` |
+| Moralis | `MORALIS_API_KEY`, optional `MORALIS_TIMEOUT_MS` |
+| Discord | `DISCORD_BOT_TOKEN`, channel IDs |
+| AI | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_TIMEOUT_MS`, `ANTHROPIC_MAX_TOKENS` |
+| Legacy trade | Jupiter URLs, `PRIV_KEY_WALLET`, Sniperoo, etc. |
+
+Never commit real values. Never log API keys.
+
+---
+
+## 13. Known gaps (still true)
+
+1. Config pool named `"pumpswap"` still listens to **Pump.fun program**, not `pAMMBay…` → intelligence `source` is usually `UNKNOWN`.
+2. `pumpSwapService` helpers exist but are not the active subscribe target.
+3. `sendTokenAlert` still skips non-`pump` mints.
+4. `pumpfun15k` npm script path is wrong.
+5. Bundle/sniper forensics pending → reports typically `PARTIAL`.
+6. No Chroma/RAG, no intelligence notifications, no X monitor.
+7. `swap.amount: "1000000"` is **0.001 SOL**, not 0.1 SOL (comment wrong); simulation stays on.
+8. Multiple Discord clients may login the same bot token from separate processes.
+
+---
+
+## 14. Suggested next work
+
+1. Subscribe to real PumpSwap AMM (`pAMMBay…`) **in addition to** current CreatePool watch; keep Pump.fun mint process separate.  
+2. Internal bundle/sniper/dev/insider forensics + hard eligibility (missing forensics ⇒ not ELIGIBLE).  
+3. Chroma semantic projection (Postgres remains source of truth).  
+4. Optional: intelligence Discord/API presentation; do not auto-trade.  
+5. Fix `pumpfun15k` script path when touching scripts.
+
+---
+
+## 15. One-line truth
+
+**`npm run dev` still alerts Discord on CreatePool while also dispatching a non-blocking, read-only Token Intelligence pipeline (Moralis/RugCheck/social + Anthropic synthesis → Prisma). Pump.fun mint alerts remain a separate process. Trading stays simulation-gated and unreachable from intelligence. Bundle forensics and Chroma are not built yet—absence is recorded as unavailable, not as safety.**
