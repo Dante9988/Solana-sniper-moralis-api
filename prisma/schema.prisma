@@ -214,6 +214,7 @@ model Asset {
   updatedAt         DateTime @updatedAt
 
   observations AssetObservation[]
+  forensicsJobs SolanaForensicsJob[]
 
   @@unique([chainId, normalizedAddress])
   @@index([chain])
@@ -246,4 +247,189 @@ model AssetObservation {
   @@index([assetId, observedAt])
   @@index([type, observedAt])
   @@index([source, observedAt])
+}
+
+// --- Phase 5D: Solana forensics jobs/runs (durable, additive, read-only research) ---
+// Not wired into the active listener or the Phase 1-4 intelligence tables.
+
+model SolanaForensicsJob {
+  id                String    @id @default(uuid())
+  /// Stable identity for idempotency: solana-mainnet + normalized mint +
+  /// discovery signature/event identity + analysis level + policy version.
+  /// Never rely on a nullable composite unique for this.
+  jobKey            String    @unique
+  assetId           String
+  asset             Asset     @relation(fields: [assetId], references: [id])
+  mint              String
+  eventId           String?
+  discoverySignature String?
+  discoverySource   String
+  analysisLevel     String
+  policyVersion     String
+
+  status            String    @default("PENDING")
+  priority          Int       @default(0)
+  attemptCount      Int       @default(0)
+  maxAttempts       Int       @default(5)
+  availableAt       DateTime  @default(now())
+
+  leaseOwner        String?
+  leaseExpiresAt    DateTime?
+
+  startedAt         DateTime?
+  completedAt       DateTime?
+
+  lastErrorCode     String?
+  lastErrorMessage  String?
+
+  runs              SolanaForensicsRun[]
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status, availableAt])
+  @@index([mint])
+  @@index([assetId])
+}
+
+model SolanaForensicsRun {
+  id            String   @id @default(uuid())
+  jobId         String
+  job           SolanaForensicsJob @relation(fields: [jobId], references: [id])
+  assetId       String
+  mint          String
+  attemptNumber Int
+  analysisLevel String
+  policyVersion String
+
+  runStatus      String
+  coverageStatus String
+
+  launchSlot   Int?
+  snapshotSlot Int?
+
+  initialBundleMetricStatus String
+  currentBundleMetricStatus String
+
+  // Raw token amounts are never floats — percentages are the only Decimal
+  // values persisted here; bounded compact JSON below carries any amounts.
+  initialBundledAcquisitionPct   Decimal? @db.Decimal(9, 4)
+  currentBundleWalletHoldingsPct Decimal? @db.Decimal(9, 4)
+  directDeveloperPct             Decimal? @db.Decimal(9, 4)
+  developerClusterPct            Decimal? @db.Decimal(9, 4)
+  suspectedCoordinatedPct        Decimal? @db.Decimal(9, 4)
+  insiderPct                     Decimal? @db.Decimal(9, 4)
+  initialSniperAcquisitionPct    Decimal? @db.Decimal(9, 4)
+  currentSniperHoldingsPct       Decimal? @db.Decimal(9, 4)
+  boundedFreshWalletHoldingsPct  Decimal? @db.Decimal(9, 4)
+  rawTop10Pct                    Decimal? @db.Decimal(9, 4)
+  adjustedTop10Pct               Decimal? @db.Decimal(9, 4)
+  largestNonSystemHolderPct      Decimal? @db.Decimal(9, 4)
+
+  holderCount             Int?
+  holderAccountsAnalyzed  Int?
+  transactionsAnalyzed    Int?
+  walletsAnalyzed         Int?
+  estimatedCreditsUsed    Int?
+  requestCount            Int?
+
+  reachedConfiguredLimit Boolean @default(false)
+  budgetExhausted        Boolean @default(false)
+  deadlineExceeded       Boolean @default(false)
+
+  /// Compact, bounded report snapshot (evidence/cluster IDs, not unlimited
+  /// raw transaction payloads — those live only as signatures/slots on the
+  /// evidence rows below).
+  reportJson Json
+
+  evidence     SolanaForensicsEvidence[]
+  clusters     SolanaWalletCluster[]
+  errors       SolanaForensicsError[]
+  eligibility  SolanaTokenEligibilityAssessment?
+
+  startedAt   DateTime
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([jobId])
+  @@index([assetId])
+  @@index([mint, createdAt])
+}
+
+model SolanaForensicsEvidence {
+  id          String   @id @default(uuid())
+  runId       String
+  run         SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// The in-memory ForensicEvidence.id — unique within a run, not globally.
+  evidenceKey String
+  category    String
+  reasonCode  String
+  source      String
+  signature   String?
+  slot        Int?
+  wallets     Json     @default("[]")
+  amounts     Json?
+  retrievedAt DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([runId, evidenceKey])
+  @@index([runId, category])
+}
+
+model SolanaWalletCluster {
+  id          String   @id @default(uuid())
+  runId       String
+  run         SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// The in-memory WalletCluster.id — unique within a run, not globally.
+  clusterKey  String
+  classification String
+  confidence  Decimal  @db.Decimal(4, 3)
+  reasonCodes Json     @default("[]")
+  members     SolanaWalletClusterMember[]
+  createdAt   DateTime @default(now())
+
+  @@unique([runId, clusterKey])
+  @@index([runId, classification])
+}
+
+model SolanaWalletClusterMember {
+  id        String   @id @default(uuid())
+  clusterId String
+  cluster   SolanaWalletCluster @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  wallet    String
+  createdAt DateTime @default(now())
+
+  @@unique([clusterId, wallet])
+  @@index([wallet])
+}
+
+model SolanaTokenEligibilityAssessment {
+  id                     String   @id @default(uuid())
+  runId                  String   @unique
+  run                    SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  mint                   String
+  eligibility            String
+  displaySeverity        String
+  reasonCodes            Json     @default("[]")
+  evaluatedMetrics       Json     @default("{}")
+  requiredEvidenceComplete Boolean
+  policyVersion          String
+  evaluatedAt            DateTime
+  createdAt              DateTime @default(now())
+
+  @@index([mint, createdAt])
+  @@index([eligibility])
+}
+
+model SolanaForensicsError {
+  id        String   @id @default(uuid())
+  runId     String
+  run       SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stage     String
+  message   String
+  retryable Boolean  @default(false)
+  occurredAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([runId])
 }

@@ -15,7 +15,9 @@
     "pumpfun": "ts-node src/pumpfun-sniper.ts",
     "pumpfun15k": "ts-node src/discord-pumpfun-15k.ts",
     "daily": "ts-node src/test-daily-summary.ts",
-    "test:intelligence": "vitest run src/intelligence"
+    "test:intelligence": "vitest run src/intelligence",
+    "forensics:worker": "ts-node src/forensics/scripts/forensicsWorkerMain.ts",
+    "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",

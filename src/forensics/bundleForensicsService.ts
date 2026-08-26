@@ -27,6 +27,7 @@ import {
   SniperMetrics,
   SolanaTokenForensicsReport,
   TokenEligibilityAssessment,
+  WalletCluster,
 } from "./types";
 import { ForensicsRpcClient } from "./solanaForensicsClient";
 import { analyzeLaunchTransaction, LaunchAcquirer, NON_BUYER_ACQUISITION_CLASSIFICATIONS } from "./launchTransactionAnalyzer";
@@ -68,6 +69,10 @@ export interface BundleForensicsDependencies {
 export interface BundleForensicsOutput {
   report: SolanaTokenForensicsReport;
   eligibility: TokenEligibilityAssessment;
+  /** Every cluster produced this run (bundle/dev-linked/coordinated/insider/sniper/unknown) — for persistence/audit, not just the subsets re-exposed in specific report metrics. */
+  clusters: WalletCluster[];
+  /** The holder snapshot's context/indexed slot, when available — for persistence's "snapshot slot" field. */
+  holderSnapshotSlot?: number;
 }
 
 function worseOf(a: CoverageStatus, b: CoverageStatus): CoverageStatus {
@@ -383,5 +388,5 @@ export async function runBundleForensics(
 
   report.policyVersion = eligibility.policyVersion;
 
-  return { report, eligibility };
+  return { report, eligibility, clusters, holderSnapshotSlot: snapshot.contextSlot };
 }
