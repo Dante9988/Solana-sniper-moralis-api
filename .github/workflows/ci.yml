@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    # A placeholder connection string only — CI never talks to a real
+    # database. `prisma generate` only needs DATABASE_URL to be *set* to
+    # produce the typed client; the full test suite mocks Prisma completely
+    # and makes no live network/database calls (a small number of real-
+    # local-Postgres verification tests are gated behind their own
+    # explicit opt-in and are skipped by default, same as local `vitest run`).
+    env:
+      DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci_placeholder"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npx vitest run
+
+      - name: Build
+        run: npm run build
