@@ -200,3 +200,50 @@ model TokenIntelligenceError {
   @@index([reportId])
   @@index([worker])
 }
+
+// Canonical cross-chain research identity. Legacy positions remain separate.
+model Asset {
+  id                String   @id @default(uuid())
+  chain             String
+  chainId           String
+  address           String
+  normalizedAddress String
+  symbol            String?
+  name              String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  observations AssetObservation[]
+
+  @@unique([chainId, normalizedAddress])
+  @@index([chain])
+  @@index([normalizedAddress])
+}
+
+model AssetObservation {
+  id             String   @id @default(uuid())
+  assetId        String
+  type           String
+  source         String
+  observationKey String
+  observedAt     DateTime
+  provider       String?
+
+  priceUsd              Decimal?
+  estimatedBuyPriceUsd  Decimal?
+  estimatedSellPriceUsd Decimal?
+  liquidityUsd          Decimal?
+  marketCapUsd          Decimal?
+  fdvUsd                Decimal?
+  volume24hUsd          Decimal?
+
+  rawPayload Json?
+  createdAt  DateTime @default(now())
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, source, observationKey])
+  @@index([assetId, observedAt])
+  @@index([type, observedAt])
+  @@index([source, observedAt])
+}

@@ -1,0 +1,535 @@
+Phase 4 audit is approved.
+
+Implement Phase 4 only: canonical asset identity and the shared research/market-observation foundation.
+
+Do not repeat the audit. Follow the approved audit plan with the corrections and constraints below.
+
+## Phase objective
+
+Implement:
+
+1. Canonical chain-plus-address asset identity
+2. Explicit asset-input resolution
+3. Solana and EVM address normalization
+4. Explicit ambiguous-chain handling
+5. Provider-neutral market observations
+6. Durable PostgreSQL research observations
+7. A backward-compatible adapter for existing Solana `TokenDiscoveryEvent`
+8. Tests and documentation
+
+Do not wire these components into the active listener, tracker, orchestrator, Discord, or trading paths during this phase.
+
+## Approved files
+
+Create:
+
+* `src/assets/types.ts`
+* `src/assets/chainRegistry.ts`
+* `src/assets/assetResolver.ts`
+* `src/assets/marketObservation.ts`
+* `src/assets/assetStore.ts`
+* `src/assets/tokenDiscoveryAssetAdapter.ts`
+* `src/assets/__tests__/assetResolver.test.ts`
+* `src/assets/__tests__/marketObservation.test.ts`
+* `src/assets/__tests__/assetStore.test.ts`
+* `src/assets/__tests__/executionBoundary.test.ts`
+* `src/assets/README.md`
+
+Modify only as required:
+
+* `prisma/schema.prisma`
+* one new additive Prisma migration
+* root architecture/README documentation if necessary
+
+Do not modify:
+
+* `src/index.ts`
+* `src/pumpfun-sniper.ts`
+* `src/services/tokenIntelligenceDispatch.ts`
+* `src/intelligence/orchestrator.ts`
+* `src/intelligence/reportStore.ts`
+* `src/intelligence/providers/anthropicSynthesisProvider.ts`
+* `src/tracker/**`
+* `src/services/tokenTrackingService.ts`
+* Discord modules
+* trading, transaction, wallet, Jupiter, Sniperoo, or signing modules
+* existing Prisma migrations
+* simulation configuration
+
+## 1. Canonical chain registry
+
+Support identity definitions only for:
+
+```ts
+type SupportedChain =
+  | "SOLANA"
+  | "ETHEREUM"
+  | "BNB_SMART_CHAIN";
+```
+
+Registry values:
+
+* Solana mainnet:
+
+  * internal chain ID: `solana-mainnet`
+  * address format: Solana public key
+* Ethereum mainnet:
+
+  * chain ID: `1`
+  * address format: EVM
+* BNB Smart Chain mainnet:
+
+  * chain ID: `56`
+  * address format: EVM
+
+Do not add live Ethereum or BNB RPC/API calls.
+
+Use a centralized immutable registry rather than scattered constants.
+
+## 2. Canonical asset identity
+
+Implement a shape equivalent to:
+
+```ts
+interface AssetIdentity {
+  id?: string;
+  chain: SupportedChain;
+  chainId: string;
+  address: string;
+  normalizedAddress: string;
+  symbol?: string;
+  name?: string;
+}
+```
+
+Rules:
+
+* Canonical database identity is `chainId + normalizedAddress`.
+* Solana addresses remain case-sensitive.
+* Validate Solana addresses using `PublicKey`.
+* For valid Solana input, canonicalize through the public key representation without lowercasing.
+* EVM addresses must be exactly `0x` plus 40 hexadecimal characters.
+* EVM `normalizedAddress` must be lowercase.
+* Preserve the supplied address separately for display when useful.
+* The same EVM address on Ethereum and BNB Chain must produce different canonical identities.
+* Symbol and name are mutable metadata and must never determine identity.
+* Do not merge assets by symbol, name, website, or social links.
+* Do not silently default ambiguous EVM input to Ethereum.
+* Unsupported chains must return an explicit error result.
+
+No new EVM library is necessary unless the existing dependency graph already provides a suitable validator. Strict hexadecimal validation and lowercase normalization are sufficient for Phase 4.
+
+Do not implement EIP-55 checksum generation in this phase.
+
+## 3. Asset resolution API
+
+Create an explicit resolution input and result.
+
+Use behavior equivalent to:
+
+```ts
+interface AssetResolutionInput {
+  address: string;
+  chain?: SupportedChain;
+}
+
+type AssetResolutionResult =
+  | {
+      status: "RESOLVED";
+      asset: AssetIdentity;
+    }
+  | {
+      status: "AMBIGUOUS_CHAIN";
+      inputAddress: string;
+      candidateChains: SupportedChain[];
+    }
+  | {
+      status: "INVALID_ADDRESS";
+      reason: string;
+    }
+  | {
+      status: "UNSUPPORTED_CHAIN";
+      reason: string;
+    };
+```
+
+Required behavior:
+
+* Valid Solana address without a chain hint may resolve to Solana if it unambiguously validates as a Solana public key.
+* A bare valid `0x` address without a chain hint must return `AMBIGUOUS_CHAIN`.
+* Its candidates must include Ethereum and BNB Smart Chain.
+* A valid EVM address plus Ethereum resolves to chain ID `1`.
+* A valid EVM address plus BNB Smart Chain resolves to chain ID `56`.
+* A Solana address with an EVM chain hint is invalid.
+* An EVM address with a Solana chain hint is invalid.
+* Whitespace may be trimmed at the input boundary.
+* Empty, malformed, or unsupported input must not produce a fabricated asset.
+* Expected user-input errors should be returned as result values, not uncontrolled exceptions.
+
+## 4. Observation types
+
+Define a contract that distinguishes portfolio positions from research data.
+
+A compatible type may include:
+
+```ts
+type AssetObservationType =
+  | "POSITION"
+  | "DISCOVERY"
+  | "TRENDING"
+  | "SIGNAL"
+  | "RESEARCH"
+  | "MARKET";
+```
+
+However:
+
+* `POSITION` is reserved for the future portfolio layer.
+* Phase 4 must not create or persist position observations.
+* Provide a narrower research-observation type that excludes `POSITION`.
+* The Phase 4 persistence API must accept only research observation types.
+* A discovered, trending, or researched asset must never become a fake holding.
+* Do not write anything to the SQLite holdings or tokens tables.
+
+Actual positions remain owned by the existing legacy tracker until a later portfolio phase.
+
+## 5. Market-observation contract
+
+Implement a provider-neutral shape equivalent to:
+
+```ts
+interface MarketObservation {
+  asset: AssetIdentity;
+  observationKey: string;
+  observedAt: Date;
+  source: string;
+  provider?: string;
+  priceUsd?: number;
+  estimatedBuyPriceUsd?: number;
+  estimatedSellPriceUsd?: number;
+  liquidityUsd?: number;
+  marketCapUsd?: number;
+  fdvUsd?: number;
+  volume24hUsd?: number;
+  rawPayload?: unknown;
+}
+```
+
+Rules:
+
+* `observationKey` must be stable and caller-supplied or deterministically constructed from stable source evidence.
+* Do not use `observedAt` as the sole idempotency key.
+* Missing numerical data remains `undefined`/`null`, never zero.
+* Never use a hardcoded SOL/USD value as research evidence.
+* Never convert provider failure into zero liquidity, zero price, or zero volume.
+* Validate that supplied numerical values are finite and non-negative where applicable.
+* Record both `source` and `observedAt`.
+* Keep displayed market price separate from estimated executable buy and sell prices.
+* Preserve raw provider evidence when supplied.
+* Constructors/adapters must be pure and must not perform HTTP, RPC, database, scheduler, wallet, or transaction operations.
+
+Do not refactor the existing trackers or provider fallback order in this phase.
+
+## 6. PostgreSQL models
+
+Add only additive Prisma models and an additive migration.
+
+Use repository naming conventions, but implement a relational structure equivalent to:
+
+```prisma
+model Asset {
+  id                String   @id @default(cuid())
+  chain             String
+  chainId           String
+  address           String
+  normalizedAddress String
+  symbol            String?
+  name              String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  observations AssetObservation[]
+
+  @@unique([chainId, normalizedAddress])
+  @@index([chain])
+  @@index([normalizedAddress])
+}
+
+model AssetObservation {
+  id             String   @id @default(cuid())
+  assetId        String
+  type           String
+  source         String
+  observationKey String
+  observedAt     DateTime
+  provider       String?
+
+  priceUsd             Decimal?
+  estimatedBuyPriceUsd Decimal?
+  estimatedSellPriceUsd Decimal?
+  liquidityUsd         Decimal?
+  marketCapUsd         Decimal?
+  fdvUsd               Decimal?
+  volume24hUsd         Decimal?
+
+  rawPayload Json?
+  createdAt  DateTime @default(now())
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, source, observationKey])
+  @@index([assetId, observedAt])
+  @@index([type, observedAt])
+  @@index([source, observedAt])
+}
+```
+
+Adjust scalar types only when required by the existing Prisma/PostgreSQL conventions.
+
+Critical idempotency rule:
+
+```text
+UNIQUE(assetId, source, observationKey)
+```
+
+Do not use this weaker design:
+
+```text
+UNIQUE(assetId, type, source, observedAt)
+```
+
+Two legitimate observations can share a timestamp, and retry timestamps may differ. The stable observation key must own deduplication.
+
+Do not:
+
+* modify existing intelligence models destructively
+* add foreign keys to all legacy tables
+* migrate legacy SQLite holdings
+* migrate `TokenAlert`
+* add listener dual writes
+* run destructive migrations
+* apply the migration to an unknown/live database
+
+Generate or hand-write the additive SQL using Prisma 6.5-compatible tooling and review it manually.
+
+The SQL must contain only additive enum/table/index/constraint operations required by Phase 4.
+
+## 7. Asset store
+
+Implement a narrow, controlled PostgreSQL store using the existing shared Prisma client.
+
+Required operations should be equivalent to:
+
+```ts
+upsertAsset(identity: AssetIdentity): Promise<Asset>
+saveResearchObservation(
+  identity: AssetIdentity,
+  observation: ResearchAssetObservation
+): Promise<AssetObservation>
+```
+
+Requirements:
+
+* Upsert assets by `chainId + normalizedAddress`.
+* Do not upsert by ticker or name.
+* Preserve canonical identity fields.
+* Metadata updates must not change canonical identity.
+* Save observations idempotently using `assetId + source + observationKey`.
+* A duplicate retry must return/update the same logical observation instead of creating another row.
+* Never persist `POSITION` through this store.
+* Validate inputs before persistence.
+* No SQLite imports.
+* No tracker imports.
+* No execution imports.
+* Database errors must be returned or handled explicitly; never silently reported as successful.
+* Tests must completely mock Prisma and must not require a live PostgreSQL instance.
+
+Do not wire this store into `TokenIntelligenceOrchestrator` or the active listener yet.
+
+## 8. Existing event adapter
+
+Keep the existing `TokenDiscoveryEvent` contract unchanged.
+
+Create a pure adapter equivalent to:
+
+```ts
+resolveTokenDiscoveryAsset(
+  event: TokenDiscoveryEvent
+): AssetResolutionResult
+```
+
+Because current `TokenDiscoveryEvent.mint` values are explicitly Solana mints, the adapter may supply the explicit `SOLANA` chain hint.
+
+Requirements:
+
+* It must not infer a chain from ticker or event source.
+* `PUMPFUN`, `PUMPSWAP`, `MIGRATION`, and `UNKNOWN` are discovery sources, not blockchain identities.
+* Invalid mint input returns `INVALID_ADDRESS`.
+* No RPC or database call.
+* No listener or orchestrator integration in this phase.
+
+## 9. Tests
+
+Add tests covering at minimum:
+
+### Asset resolution
+
+* valid Solana mint
+* invalid Solana mint
+* Solana case preservation
+* valid Ethereum address with explicit chain
+* valid BNB address with explicit chain
+* same `0x` address produces distinct Ethereum and BNB identities
+* mixed-case EVM normalization
+* chainless EVM input returns `AMBIGUOUS_CHAIN`
+* malformed `0x` input
+* empty input
+* unsupported chain
+* incompatible address and chain combinations
+* symbol/name cannot affect canonical identity
+
+### Token-discovery adapter
+
+* valid Solana event
+* invalid mint
+* event source does not control chain identity
+* adapter is pure and performs no network/database calls
+
+### Market observations
+
+* valid complete observation
+* partial observation with unavailable values
+* unavailable values remain undefined/null, not zero
+* invalid `NaN`, infinity, or negative values
+* stable observation key requirement
+* separate market, estimated-buy, and estimated-sell values
+* raw payload preservation
+
+### Persistence
+
+* canonical asset upsert
+* Ethereum and BNB versions of the same address remain separate
+* duplicate observation retry is idempotent
+* two observations at the same timestamp with different keys both persist
+* same observation key cannot duplicate for the same asset/source
+* `POSITION` persistence is rejected
+* Prisma error is not reported as success
+* no live database call during tests
+
+### Execution boundary
+
+Automate a source/import scan proving that `src/assets/**` does not import:
+
+* `transactions.ts`
+* `tradingService`
+* `sniperooService`
+* tracker writers
+* Discord clients
+* wallet/private-key helpers
+* Jupiter execution
+* `Keypair`
+* `sendTransaction`
+* `signTransaction`
+* buy/sell/swap functions
+
+## 10. Package-manager and Prisma handling
+
+Do not pin or change Prisma versions in Phase 4.
+
+Current verification already confirms Prisma 6.5.0 works.
+
+Use explicitly compatible commands such as:
+
+```bash
+npx prisma@6.5.0 generate
+npx prisma@6.5.0 validate
+```
+
+Do not allow bare `npx prisma` to install Prisma 7.
+
+Do not add new dependencies unless absolutely required.
+
+Do not convert the repository to Yarn Berry/PnP.
+
+Before removing accidental Yarn Berry files, verify:
+
+```bash
+git ls-files -- .pnp.cjs .pnp.loader.mjs .yarn
+git status --short -- .pnp.cjs .pnp.loader.mjs .yarn
+```
+
+If and only if those exact paths are untracked accidental artifacts and contain no tracked project files, remove:
+
+* `.pnp.cjs`
+* `.pnp.loader.mjs`
+* the untracked `.yarn/` directory
+
+Do not remove tracked files or unrelated user work.
+
+Do not modify `package.json`, `package-lock.json`, or `yarn.lock` unless a genuine Phase 4 dependency change becomes unavoidable. If that happens, stop and report before proceeding.
+
+## 11. Documentation
+
+Document:
+
+* canonical identity is chain plus normalized address
+* EVM addresses require an explicit chain
+* Solana case sensitivity
+* ticker/name are not identity
+* actual positions remain separate from research observations
+* SQLite remains the legacy position tracker
+* PostgreSQL owns canonical research assets and observations
+* no listener integration exists yet
+* no live Ethereum/BNB providers exist yet
+* no execution capability exists
+* Chroma remains a later semantic projection
+
+Update the architecture handoff only if necessary and preserve its current Phase 1–3.1 history.
+
+## 12. Verification
+
+After implementation, run:
+
+```bash
+npx prisma@6.5.0 generate
+npx prisma@6.5.0 validate
+npx tsc --noEmit
+npx vitest run src/assets
+npm run test:intelligence
+npx vitest run
+git diff --check
+git status --short
+```
+
+Also inspect:
+
+```bash
+git diff -- prisma/schema.prisma prisma/migrations
+git diff -- src/assets
+git diff --name-only
+```
+
+Do not claim success unless the commands actually pass.
+
+Do not run `prisma migrate deploy` or `prisma migrate dev` against an unknown database.
+
+## Final report
+
+Return:
+
+1. Changed files
+2. Canonical identity behavior
+3. Ambiguous-chain behavior
+4. Observation and persistence design
+5. Migration summary
+6. Tests added
+7. Exact verification results
+8. Any unverified database behavior
+9. Confirmation that active listeners and tracker behavior are unchanged
+10. Confirmation that no research observation becomes a fake holding
+11. Confirmation that no wallet/trading/execution path is reachable
+12. Any remaining Phase 4 limitations
+
+Explicitly state whether Phase 4 is complete.
+
+Implement now and stop after Phase 4. Do not begin bundle forensics, trending tracking, Chroma, macro/news, X ingestion, portfolio optimization, chatbot, voice, or execution work.

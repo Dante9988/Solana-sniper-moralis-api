@@ -2,7 +2,7 @@
 
 An event-driven Solana listener with Discord alerts, legacy trading utilities, and a new read-only token-intelligence pipeline. The intelligence layer researches newly discovered tokens, persists normalized reports, and optionally uses Anthropic Claude to synthesize evidence into a constrained `RESEARCH_ONLY` assessment.
 
-The current intelligence implementation covers Phases 1–3.1:
+The current intelligence implementation covers Phases 1–4:
 
 - Event normalization and non-blocking listener dispatch
 - Deterministic metadata, market, social, and safety research
@@ -10,8 +10,9 @@ The current intelligence implementation covers Phases 1–3.1:
 - Anthropic structured-output synthesis with strict safety boundaries
 - Moralis API compatibility cleanup for the 2026 endpoint removals
 - Removal of trench.bot from runtime paths
+- Canonical Solana/Ethereum/BNB asset identity and durable research observations
 
-Phase 4 features such as Chroma/RAG, trending tracking, macro/news ingestion, X ingestion, and internal bundle/wallet-cluster forensics are not implemented.
+Later features such as Chroma/RAG, trending tracking, macro/news ingestion, X ingestion, live EVM providers, portfolios, and internal bundle/wallet-cluster forensics are not implemented.
 
 ## 🏗️ Current architecture
 
@@ -33,6 +34,8 @@ Solana listener
 The listener does not wait for intelligence processing. Dispatch is deduplicated, concurrency-bounded, timeout-isolated, and protected against synchronous errors and unhandled promise rejections.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the broader legacy application map and [src/intelligence/README.md](./src/intelligence/README.md) for intelligence-specific boundaries.
+
+The Phase 4 asset foundation is documented in [src/assets/README.md](./src/assets/README.md). It is intentionally not connected to an active listener or tracker yet.
 
 ## 🧠 Token intelligence
 
@@ -147,6 +150,14 @@ trench.bot and the retired Moralis sniper endpoint have been removed from runtim
 
 Until internal forensics is built, the worker returns `INTERNAL_FORENSICS_PENDING`, empty findings/evidence, confidence `0`, and no synthetic percentages. This makes the overall report `PARTIAL`.
 
+## 🪪 Canonical assets and observations
+
+Canonical asset identity is the chain ID plus normalized address. Solana public keys remain case-sensitive. EVM addresses normalize to lowercase and require an explicit Ethereum or BNB Smart Chain selection; a bare EVM address returns an ambiguous-chain result. Ticker and name never determine identity.
+
+PostgreSQL stores canonical research assets and idempotent observations. SQLite remains the legacy actual-position tracker. `POSITION` observations are reserved and cannot be persisted by the research store, so discoveries never become fake holdings.
+
+Phase 4 provides types, resolution, a pure `TokenDiscoveryEvent` adapter, provider-neutral market observations, and a controlled Prisma store. It adds no listener integration, polling scheduler, live Ethereum/BNB provider, or execution capability.
+
 ## 🛡️ Safety boundary
 
 The intelligence layer is read-only. It must not import or access:
@@ -254,11 +265,11 @@ All intelligence and provider tests mock network access. Tests do not call Moral
 
 ## ✅ Verification status
 
-The latest Phase 3.1 verification completed with:
+The latest Phase 4 verification covers:
 
 - TypeScript production build passing
-- 52 tests passing across 6 files
-- Prisma 6.5 schema validation passing
+- Canonical resolution, ambiguous EVM chains, observation validation, idempotent mocked persistence, and execution-boundary tests
+- Prisma 6.5 schema validation
 - No active trench.bot URL or client
 - No active removed Moralis endpoint calls
 - No temporary Anthropic smoke-test files or background listener processes
@@ -267,6 +278,8 @@ Native bigint bindings may emit a warning during tests and fall back to their pu
 
 ## 🚧 Known limitations and next work
 
+- The Phase 4 asset store is not wired into listeners or the intelligence orchestrator yet.
+- Live Ethereum and BNB data providers are not implemented.
 - Internal bundle, sniper, developer, insider, and wallet-cluster forensics are pending.
 - Hard eligibility policy is pending; missing forensic evidence must prevent a future `ELIGIBLE` or safe conclusion.
 - Chroma/RAG, trending history, macro/news research, and X ingestion are not implemented.
