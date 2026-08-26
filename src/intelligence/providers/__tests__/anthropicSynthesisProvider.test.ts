@@ -18,6 +18,7 @@ const partial: Omit<TokenIntelligenceReport, "aiAssessment" | "processing"> = {
   market: { price: 0.001, pools: [], sources: [] },
   safety: { riskFactors: [], confidence: 0.5 },
   bundlesAndSnipers: { findings: [], evidence: [], confidence: 0 },
+  forensics: { status: "DISABLED", reasonCodes: [], requiredEvidenceComplete: false },
 };
 
 const VALID_OUTPUT = {

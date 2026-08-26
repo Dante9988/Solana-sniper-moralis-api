@@ -30,7 +30,7 @@ describe("TokenIntelligenceOrchestrator", () => {
       metadata: () => ok({ name: "Synth", symbol: "SYNTH" }),
       market: () => ok({ price: 1, pools: [], sources: [] }),
       safety: () => ok({ riskFactors: [], confidence: 1 }),
-      bundleSniper: () => ok({ findings: [], evidence: [], confidence: 1 }),
+      bundleSniper: () => ok({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 1 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: () => ok({ findings: [] }),
       aiSynthesis: () =>
         ok({
@@ -60,7 +60,7 @@ describe("TokenIntelligenceOrchestrator", () => {
         throw new Error("market API down");
       },
       safety: () => ok({ riskFactors: [], confidence: 1 }),
-      bundleSniper: () => ok({ findings: [], evidence: [], confidence: 1 }),
+      bundleSniper: () => ok({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 1 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: () => ok({ findings: [] }),
       aiSynthesis: () =>
         ok({
@@ -93,7 +93,7 @@ describe("TokenIntelligenceOrchestrator", () => {
           errors: [],
           fatal: "no safety data source available",
         }),
-      bundleSniper: () => ok({ findings: [], evidence: [], confidence: 1 }),
+      bundleSniper: () => ok({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 1 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: () => ok({ findings: [] }),
       aiSynthesis: () =>
         ok({
@@ -122,7 +122,7 @@ describe("TokenIntelligenceOrchestrator", () => {
       metadata: () => fatal({}),
       market: () => fatal({ pools: [], sources: [] }),
       safety: () => fatal({ riskFactors: [], confidence: 0 }),
-      bundleSniper: () => fatal({ findings: [], evidence: [], confidence: 0 }),
+      bundleSniper: () => fatal({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 0 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: () => fatal({ findings: [] }),
       aiSynthesis: () =>
         ok({
@@ -149,7 +149,7 @@ describe("TokenIntelligenceOrchestrator", () => {
       metadata: () => ok({ name: "Synth", symbol: "SYNTH" }),
       market: () => ok({ pools: [], sources: [] }),
       safety: () => ok({ riskFactors: [], confidence: 1 }),
-      bundleSniper: () => ok({ findings: [], evidence: [], confidence: 1 }),
+      bundleSniper: () => ok({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 1 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: (_event, metadata) => {
         receivedMetadata = metadata;
         return ok({ findings: [] });
@@ -177,7 +177,7 @@ describe("TokenIntelligenceOrchestrator", () => {
       metadata: () => ok({ name: "Synth", symbol: "SYNTH" }),
       market: () => ok({ price: 1, pools: [], sources: [] }),
       safety: () => ok({ riskFactors: [], confidence: 1 }),
-      bundleSniper: () => ok({ findings: [], evidence: [], confidence: 1 }),
+      bundleSniper: () => ok({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 1 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: () => ok({ findings: [] }),
       aiSynthesis: () =>
         Promise.resolve({
@@ -214,7 +214,7 @@ describe("TokenIntelligenceOrchestrator", () => {
       metadata: () => fatal({}),
       market: () => fatal({ pools: [], sources: [] }),
       safety: () => fatal({ riskFactors: [], confidence: 0 }),
-      bundleSniper: () => fatal({ findings: [], evidence: [], confidence: 0 }),
+      bundleSniper: () => fatal({ bundlesAndSnipers: { findings: [], evidence: [], confidence: 0 }, forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false } }),
       social: () => fatal({ findings: [] }),
       aiSynthesis: () =>
         ok({

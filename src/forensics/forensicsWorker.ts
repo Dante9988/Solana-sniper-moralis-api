@@ -41,6 +41,19 @@ export interface ForensicsWorkerDependencies {
   workerId: string;
   config: ForensicsWorkerConfig;
   logger?: ForensicsWorkerLogger;
+  /**
+   * Phase 5E (phase5e.txt §9): invoked AFTER a forensic run transaction has
+   * already committed, only when reconciliation is enabled by the caller —
+   * this class never checks any reconciliation flag itself. Forensic
+   * persistence always succeeds independently of this callback; a
+   * reconciliation failure here is logged and swallowed, never marks the
+   * forensic job/run failed. Wired only from the worker entrypoint script,
+   * never from an import or the listener.
+   */
+  onRunPersisted?: (runId: string) => Promise<void>;
+  /** Periodic sweep for previously-unreconciled runs. Only scheduled if provided. */
+  reconciliationSweep?: () => Promise<void>;
+  reconciliationSweepMs?: number;
 }
 
 async function interruptibleSleep(ms: number, isStopping: () => boolean): Promise<void> {
@@ -59,6 +72,7 @@ export class ForensicsWorker {
   private readonly activeAbortControllers = new Set<AbortController>();
   private readonly heartbeatTimers = new Set<ReturnType<typeof setInterval>>();
   private loopPromises: Promise<void>[] = [];
+  private reconciliationSweepTimer: ReturnType<typeof setInterval> | undefined;
   private readonly logger: ForensicsWorkerLogger;
 
   constructor(private readonly deps: ForensicsWorkerDependencies) {
@@ -77,6 +91,15 @@ export class ForensicsWorker {
     this.loopPromises = Array.from({ length: this.deps.config.concurrency }, (_, i) =>
       this.runLoop(`${this.deps.workerId}#${i}`)
     );
+
+    if (this.deps.reconciliationSweep) {
+      const intervalMs = this.deps.reconciliationSweepMs ?? 60_000;
+      this.reconciliationSweepTimer = setInterval(() => {
+        this.deps.reconciliationSweep?.().catch((err) => {
+          this.logger.warn(`reconciliation sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }, intervalMs);
+    }
   }
 
   get isRunning(): boolean {
@@ -87,6 +110,10 @@ export class ForensicsWorker {
   async stop(): Promise<void> {
     this.stopping = true;
     for (const controller of this.activeAbortControllers) controller.abort();
+    if (this.reconciliationSweepTimer) {
+      clearInterval(this.reconciliationSweepTimer);
+      this.reconciliationSweepTimer = undefined;
+    }
     await Promise.allSettled(this.loopPromises);
     this.running = false;
   }
@@ -153,6 +180,15 @@ export class ForensicsWorker {
       // and do not automatically retry/spend again (phase5d.txt §10).
       await completeForensicsJob(this.deps.db, job.id, workerId, jobStatus);
       this.logger.info(`forensics job ${job.id} (${job.mint}) -> ${jobStatus} (run ${runId})`);
+
+      // Forensic persistence above has already succeeded independently of
+      // this — a reconciliation failure here must never mark the job/run
+      // failed (phase5e.txt §9).
+      if (this.deps.onRunPersisted) {
+        await this.deps.onRunPersisted(runId).catch((err) => {
+          this.logger.warn(`reconciliation callback failed for run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     } catch (err) {
       await this.handleJobFailure(job, workerId, err);
     } finally {

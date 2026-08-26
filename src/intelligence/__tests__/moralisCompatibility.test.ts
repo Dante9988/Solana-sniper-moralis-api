@@ -77,9 +77,12 @@ describe("Moralis Phase 3.1 compatibility", () => {
     expect(removedMoralisEndpoint("holders")).toMatchObject({ code: "ENDPOINT_REMOVED" });
     expect(await fetchSniperData("mint")).toBeNull();
     const bundle = await bundleSniperResearcher(pumpfunEvent);
-    expect(bundle.data).toMatchObject({ status: "UNAVAILABLE", source: "INTERNAL_FORENSICS_PENDING", confidence: 0 });
-    expect(bundle.data.bundledPct).toBeUndefined();
-    expect(bundle.data.sniperPct).toBeUndefined();
+    // FORENSICS_ENQUEUE_ENABLED defaults to false, so this stays DISABLED —
+    // the exact same UNAVAILABLE/confidence-0 shape as the pre-Phase-5E stub.
+    expect(bundle.data.forensics.status).toBe("DISABLED");
+    expect(bundle.data.bundlesAndSnipers).toMatchObject({ status: "UNAVAILABLE", source: "INTERNAL_FORENSICS_PENDING", confidence: 0 });
+    expect(bundle.data.bundlesAndSnipers.bundledPct).toBeUndefined();
+    expect(bundle.data.bundlesAndSnipers.sniperPct).toBeUndefined();
     expect(get).not.toHaveBeenCalled();
     const runtime = ["src/services/moralisClient.ts", "src/intelligence/workers/bundleSniperResearcher.ts", "src/services/sniperDataService.ts"]
       .map((path) => readFileSync(path, "utf8")).join("\n");

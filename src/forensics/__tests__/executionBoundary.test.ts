@@ -36,6 +36,14 @@ const persistenceFiles = [
 
 const scriptFiles = ["src/forensics/scripts/forensicsWorkerMain.ts", "src/forensics/scripts/forensicsFixtureMain.ts"];
 
+const phase5eDeterministicFiles = [
+  "src/forensics/forensicsIntegrationConfig.ts",
+  "src/forensics/candidateGate.ts",
+  "src/services/forensicsIntelligenceLookupService.ts",
+  "src/services/forensicsIntelligenceReconciliation.ts",
+  "src/intelligence/workers/bundleSniperResearcher.ts",
+];
+
 const X_CREDENTIAL_PATTERNS = [/X_API_KEY/, /X_BEARER_TOKEN/, /X_ACCESS_TOKEN/, /X_STREAM_ENABLED/, /TWITTER_API/i, /\btwitter\b/i];
 
 const EXECUTION_PATTERNS = [
@@ -173,6 +181,77 @@ describe("forensics execution boundary — Phase 5D persistence/worker", () => {
       if (!/^main\(\)/.test(line.trim())) {
         expect(line).not.toMatch(/\.start\(\)/);
       }
+    }
+  });
+});
+
+describe("forensics execution boundary — Phase 5E async integration/reconciliation/gate", () => {
+  it("has no transaction-submission, signing, trading, wallet, or tracker/Discord reachability", () => {
+    const source = phase5eDeterministicFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+    for (const prohibited of EXECUTION_PATTERNS) {
+      expect(source).not.toMatch(prohibited);
+    }
+  });
+
+  it("never references X/Twitter credentials or streaming flags (X integration is out of scope for Phase 5E)", () => {
+    const source = phase5eDeterministicFiles.map((file) => readFileSync(file, "utf8")).join("\n");
+    for (const prohibited of X_CREDENTIAL_PATTERNS) {
+      expect(source).not.toMatch(prohibited);
+    }
+  });
+
+  it("the deterministic gate/lookup/reconciliation/researcher files never import Anthropic directly", () => {
+    // forensicsIntelligenceReconciliation.ts only ever reaches the AI layer
+    // via a dynamic import() gated behind isForensicsAiResynthesisEnabled(),
+    // never a static top-level import — the AI layer must never be reachable
+    // just by importing this module.
+    for (const file of phase5eDeterministicFiles) {
+      const source = readFileSync(file, "utf8");
+      const importLines = source.match(/^import .+$/gm) ?? [];
+      for (const line of importLines) {
+        expect(line).not.toMatch(/anthropic/i);
+      }
+    }
+  });
+
+  it("bundleSniperResearcher.ts never runs its own analysis or blocks on forensic completion — it only calls an injected service", () => {
+    const source = readFileSync("src/intelligence/workers/bundleSniperResearcher.ts", "utf8");
+    expect(source).not.toMatch(/runBundleForensics|bundleForensicsService/);
+    expect(source).not.toMatch(/new Connection\(/);
+    expect(source).not.toMatch(/\bfetch\(/);
+  });
+
+  it("candidateGate.ts is a pure function with no Prisma or network imports", () => {
+    const source = readFileSync("src/forensics/candidateGate.ts", "utf8");
+    expect(source).not.toMatch(/@prisma\/client|prismaClient/);
+    expect(source).not.toMatch(/\bfetch\(/);
+  });
+});
+
+describe("forensics execution boundary — Phase 5E optional AI re-synthesis (explanation-only, disabled by default)", () => {
+  const source = readFileSync("src/services/forensicsAiResynthesis.ts", "utf8");
+
+  it("never writes to a forensics* column — only pre-existing ai* columns", () => {
+    const dataBlockMatch = source.match(/data:\s*\{([^}]*)\}/s);
+    expect(dataBlockMatch).not.toBeNull();
+    const dataBlock = dataBlockMatch?.[1] ?? "";
+    expect(dataBlock).not.toMatch(/forensics[A-Z]/);
+  });
+
+  it("never outputs an eligibility field and never passes a tools param to the model", () => {
+    expect(source).not.toMatch(/eligibility:\s*z\./);
+    expect(source).not.toMatch(/\btools:\s*\[/);
+  });
+
+  it("has no transaction-submission, signing, trading, wallet, or tracker/Discord reachability", () => {
+    for (const prohibited of EXECUTION_PATTERNS) {
+      expect(source).not.toMatch(prohibited);
+    }
+  });
+
+  it("never references X/Twitter credentials or streaming flags", () => {
+    for (const prohibited of X_CREDENTIAL_PATTERNS) {
+      expect(source).not.toMatch(prohibited);
     }
   });
 });

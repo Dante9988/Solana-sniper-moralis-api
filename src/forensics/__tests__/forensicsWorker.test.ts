@@ -127,6 +127,107 @@ describe("ForensicsWorker — lifecycle", () => {
   });
 });
 
+describe("ForensicsWorker — onRunPersisted / reconciliation sweep (phase5e.txt §9)", () => {
+  it("invokes onRunPersisted with the new run id only after the job is marked complete", async () => {
+    const job = fakeJob();
+    const db = fakeDb([job]);
+    const calls: string[] = [];
+    const onRunPersisted = vi.fn(async (runId: string) => {
+      calls.push(runId);
+    });
+    const worker = new ForensicsWorker({
+      db,
+      workerId: "w1",
+      config: baseConfig({ pollMs: 20 }),
+      createRpcClient: () => successfulFixtureClient(),
+      onRunPersisted,
+    });
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await worker.stop();
+
+    expect(onRunPersisted).toHaveBeenCalledTimes(1);
+    expect(onRunPersisted).toHaveBeenCalledWith("run-1");
+    // completeForensicsJob (via updateMany) must have already been called
+    // before this test's assertions run, proving job completion is not
+    // gated on the reconciliation callback.
+    expect(db.solanaForensicsJob.updateMany).toHaveBeenCalled();
+  });
+
+  it("a failing onRunPersisted callback is swallowed and never marks the job/run failed", async () => {
+    const job = fakeJob();
+    const db = fakeDb([job]);
+    const onRunPersisted = vi.fn(async () => {
+      throw new Error("reconciliation exploded");
+    });
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const worker = new ForensicsWorker({
+      db,
+      workerId: "w1",
+      config: baseConfig({ pollMs: 20 }),
+      createRpcClient: () => successfulFixtureClient(),
+      onRunPersisted,
+      logger,
+    });
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await worker.stop();
+
+    expect(onRunPersisted).toHaveBeenCalledTimes(1);
+    // The job was still marked COMPLETE/PARTIAL — never FAILED — despite the callback throwing.
+    const updateCall = db.solanaForensicsJob.updateMany.mock.calls.at(-1)[0];
+    expect(updateCall.data.status).toMatch(/COMPLETE|PARTIAL/);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("reconciliation exploded"));
+  });
+
+  it("never invokes onRunPersisted when it is not provided (no crash, opt-in only)", async () => {
+    const job = fakeJob();
+    const db = fakeDb([job]);
+    const worker = new ForensicsWorker({ db, workerId: "w1", config: baseConfig({ pollMs: 20 }), createRpcClient: () => successfulFixtureClient() });
+    worker.start();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await worker.stop();
+    expect(db.solanaForensicsJob.updateMany).toHaveBeenCalled();
+  });
+
+  it("schedules the reconciliation sweep only when provided, and stops it on stop()", async () => {
+    vi.useFakeTimers();
+    try {
+      const db = fakeDb([null]);
+      const reconciliationSweep = vi.fn(async () => {});
+      const worker = new ForensicsWorker({
+        db,
+        workerId: "w1",
+        config: baseConfig({ pollMs: 100_000 }),
+        createRpcClient: () => successfulFixtureClient(),
+        reconciliationSweep,
+        reconciliationSweepMs: 1000,
+      });
+      worker.start();
+      await vi.advanceTimersByTimeAsync(3500);
+      expect(reconciliationSweep.mock.calls.length).toBeGreaterThanOrEqual(3);
+
+      const callsBeforeStop = reconciliationSweep.mock.calls.length;
+      const stopPromise = worker.stop();
+      await vi.advanceTimersByTimeAsync(1000);
+      await stopPromise;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(reconciliationSweep.mock.calls.length).toBe(callsBeforeStop);
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 10_000);
+
+  it("does not schedule any sweep timer when reconciliationSweep is not provided", () => {
+    const db = fakeDb([null]);
+    const worker = new ForensicsWorker({ db, workerId: "w1", config: baseConfig({ pollMs: 100_000 }), createRpcClient: () => successfulFixtureClient() });
+    worker.start();
+    // @ts-expect-error accessing a private field for a whitebox timer-existence check
+    expect(worker.reconciliationSweepTimer).toBeUndefined();
+    void worker.stop();
+  });
+});
+
 describe("ForensicsWorker — abort propagation on shutdown", () => {
   it("aborts the in-flight client signal when stop() is called mid-analysis", async () => {
     const job = fakeJob();

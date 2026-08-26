@@ -53,6 +53,26 @@ export async function saveReport(report: TokenIntelligenceReport): Promise<void>
     bundleFindings: report.bundlesAndSnipers.findings,
     bundleConfidence: report.bundlesAndSnipers.confidence,
 
+    // forensics (Phase 5E) — deterministic, denormalized from the latest
+    // reconciled SolanaForensicsRun. Never touched by aiAssessment.
+    forensicsStatus: report.forensics.status,
+    forensicsJobId: report.forensics.jobId,
+    forensicsRunId: report.forensics.runId,
+    forensicsAnalysisLevel: report.forensics.analysisLevel,
+    forensicsPolicyVersion: report.forensics.policyVersion,
+    forensicsEligibility: report.forensics.eligibility,
+    forensicsDisplaySeverity: report.forensics.displaySeverity,
+    forensicsReasonCodes: report.forensics.reasonCodes,
+    forensicsRequiredEvidenceComplete: report.forensics.requiredEvidenceComplete,
+    forensicsInitialBundledAcquisitionPct: report.forensics.initialBundledAcquisitionPct,
+    forensicsCurrentBundleWalletHoldingsPct: report.forensics.currentBundleWalletHoldingsPct,
+    forensicsDeveloperClusterHoldingsPct: report.forensics.developerClusterHoldingsPct,
+    forensicsSuspectedCoordinatedHoldingsPct: report.forensics.suspectedCoordinatedHoldingsPct,
+    forensicsInsiderHoldingsPct: report.forensics.insiderHoldingsPct,
+    forensicsSniperHoldingsPct: report.forensics.sniperHoldingsPct,
+    forensicsAdjustedTop10HoldingsPct: report.forensics.adjustedTop10HoldingsPct,
+    forensicsCompletedAt: report.forensics.completedAt,
+
     aiNarrative: report.aiAssessment.narrative,
     aiCategory: report.aiAssessment.category,
     aiRiskLevel: report.aiAssessment.riskLevel,

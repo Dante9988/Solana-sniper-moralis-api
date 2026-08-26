@@ -168,12 +168,36 @@ model TokenIntelligenceReport {
   evidence          TokenIntelligenceEvidence[]
   errors            TokenIntelligenceError[]
 
+  // forensics (Phase 5E) — deterministic, separate from aiAssessment.
+  // Denormalized from the latest reconciled SolanaForensicsRun; the run
+  // itself remains the immutable audit record, never overwritten here.
+  forensicsStatus                          String   @default("NOT_REQUESTED")
+  forensicsJobId                           String?
+  forensicsRunId                           String?
+  forensicsAnalysisLevel                   String?
+  forensicsPolicyVersion                   String?
+  forensicsEligibility                     String?
+  forensicsDisplaySeverity                 String?
+  forensicsReasonCodes                     Json     @default("[]")
+  forensicsRequiredEvidenceComplete        Boolean  @default(false)
+  forensicsInitialBundledAcquisitionPct    Decimal? @db.Decimal(9, 4)
+  forensicsCurrentBundleWalletHoldingsPct  Decimal? @db.Decimal(9, 4)
+  forensicsDeveloperClusterHoldingsPct     Decimal? @db.Decimal(9, 4)
+  forensicsSuspectedCoordinatedHoldingsPct Decimal? @db.Decimal(9, 4)
+  forensicsInsiderHoldingsPct              Decimal? @db.Decimal(9, 4)
+  forensicsSniperHoldingsPct               Decimal? @db.Decimal(9, 4)
+  forensicsAdjustedTop10HoldingsPct        Decimal? @db.Decimal(9, 4)
+  forensicsCompletedAt                     DateTime?
+  forensicsReconciledAt                    DateTime?
+
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([mint])
   @@index([status])
   @@index([createdAt])
+  @@index([forensicsStatus])
+  @@index([forensicsRunId])
 }
 
 model TokenIntelligenceEvidence {
@@ -351,9 +375,18 @@ model SolanaForensicsRun {
   completedAt DateTime?
   createdAt   DateTime @default(now())
 
+  // Reconciliation bookkeeping (Phase 5E) — operational metadata about
+  // syncing this run into TokenIntelligenceReport, not forensic content.
+  // Never touched by the deterministic forensic content above.
+  reconciliationStatus   String    @default("PENDING")
+  reconciliationAttempts Int       @default(0)
+  reconciliationError    String?
+  reconciledAt           DateTime?
+
   @@index([jobId])
   @@index([assetId])
   @@index([mint, createdAt])
+  @@index([reconciliationStatus])
 }
 
 model SolanaForensicsEvidence {

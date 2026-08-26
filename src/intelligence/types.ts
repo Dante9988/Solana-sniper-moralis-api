@@ -14,6 +14,40 @@ export interface TokenDiscoveryEvent {
   rawPayload: unknown;
 }
 
+export type IntelligenceForensicsStatus =
+  | "DISABLED"
+  | "NOT_REQUESTED"
+  | "PENDING"
+  | "RUNNING"
+  | "COMPLETE"
+  | "PARTIAL"
+  | "FAILED";
+
+/**
+ * Deterministic, read-only projection of the latest reconciled
+ * SolanaForensicsRun for this mint — never computed here, only read/mapped.
+ * Optional percentage fields are absent (never `0`) when unavailable.
+ */
+export interface IntelligenceForensicsAssessment {
+  status: IntelligenceForensicsStatus;
+  jobId?: string;
+  runId?: string;
+  analysisLevel?: "FAST" | "DEEP";
+  policyVersion?: string;
+  eligibility?: "ELIGIBLE" | "CAUTION" | "EXCLUDED" | "UNKNOWN";
+  displaySeverity?: "NORMAL" | "WARNING" | "DANGEROUS_EXCLUDED" | "UNKNOWN";
+  reasonCodes: string[];
+  requiredEvidenceComplete: boolean;
+  initialBundledAcquisitionPct?: number;
+  currentBundleWalletHoldingsPct?: number;
+  developerClusterHoldingsPct?: number;
+  suspectedCoordinatedHoldingsPct?: number;
+  insiderHoldingsPct?: number;
+  sniperHoldingsPct?: number;
+  adjustedTop10HoldingsPct?: number;
+  completedAt?: Date;
+}
+
 export interface TokenIntelligenceReport {
   eventId: string;
   mint: string;
@@ -62,6 +96,13 @@ export interface TokenIntelligenceReport {
     confidence: number;
     errors?: string[];
   };
+  /**
+   * Deterministic Phase 5 forensic assessment — separate from `aiAssessment`
+   * and never influenced by it. Populated by `bundleSniperResearcher` via an
+   * injected lookup/enqueue service; the researcher itself never runs the
+   * expensive analyzer inline (see src/services/forensicsIntelligenceLookupService.ts).
+   */
+  forensics: IntelligenceForensicsAssessment;
   aiAssessment: {
     narrative?: string;
     category?: string | null;
@@ -137,9 +178,14 @@ export type SafetyWorker = (
   event: TokenDiscoveryEvent
 ) => Promise<WorkerResult<TokenIntelligenceReport["safety"]>>;
 
+export interface BundleSniperWorkerResult {
+  bundlesAndSnipers: TokenIntelligenceReport["bundlesAndSnipers"];
+  forensics: TokenIntelligenceReport["forensics"];
+}
+
 export type BundleSniperWorker = (
   event: TokenDiscoveryEvent
-) => Promise<WorkerResult<TokenIntelligenceReport["bundlesAndSnipers"]>>;
+) => Promise<WorkerResult<BundleSniperWorkerResult>>;
 
 // Takes the metadata result as input: the pump.fun frontend payload used for
 // metadata already carries website/twitter/telegram in the same HTTP call.

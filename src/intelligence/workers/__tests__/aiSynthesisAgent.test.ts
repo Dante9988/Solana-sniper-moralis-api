@@ -19,6 +19,7 @@ const partial: Omit<TokenIntelligenceReport, "aiAssessment" | "processing"> = {
   market: { pools: [], sources: [] },
   safety: { riskFactors: [], confidence: 0 },
   bundlesAndSnipers: { findings: [], evidence: [], confidence: 0 },
+  forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false },
 };
 
 const baseMeta = {
@@ -98,6 +99,7 @@ describe("aiSynthesisAgent", () => {
       market: { pools: [], sources: [] },
       safety: { riskFactors: [], confidence: 0 },
       bundlesAndSnipers: { findings: [], evidence: [], confidence: 0 },
+  forensics: { status: "DISABLED" as const, reasonCodes: [], requiredEvidenceComplete: false },
     };
 
     const result = await aiSynthesisAgent(pumpfunEvent, emptyPartial);

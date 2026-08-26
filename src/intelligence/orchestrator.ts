@@ -74,9 +74,8 @@ export class TokenIntelligenceOrchestrator {
       confidence: 0,
     });
     const bundleSniperPromise = safeRun("bundleSniper", () => this.workers.bundleSniper(event), {
-      findings: [],
-      evidence: [],
-      confidence: 0,
+      bundlesAndSnipers: { findings: [], evidence: [], confidence: 0 },
+      forensics: { status: "FAILED" as const, reasonCodes: [], requiredEvidenceComplete: false },
     });
     const socialPromise = metadataPromise.then((metadataResult) =>
       safeRun("social", () => this.workers.social(event, metadataResult.data), { findings: [] })
@@ -115,7 +114,8 @@ export class TokenIntelligenceOrchestrator {
       socials: socialResult.data,
       market: marketResult.data,
       safety: safetyResult.data,
-      bundlesAndSnipers: bundleSniperResult.data,
+      bundlesAndSnipers: bundleSniperResult.data.bundlesAndSnipers,
+      forensics: bundleSniperResult.data.forensics,
     };
 
     const aiResult = await safeRun("aiSynthesis", () => this.workers.aiSynthesis(event, partial), {

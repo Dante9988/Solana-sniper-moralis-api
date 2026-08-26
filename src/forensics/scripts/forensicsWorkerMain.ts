@@ -12,6 +12,8 @@ import { ForensicsWorker, ForensicsWorkerLogger } from "../forensicsWorker";
 import { loadForensicsWorkerConfig } from "../forensicsWorkerConfig";
 import { SolanaForensicsClient } from "../solanaForensicsClient";
 import { resolveHeliusRpcUrl } from "../forensicsConfig";
+import { isForensicsReconciliationEnabled } from "../forensicsIntegrationConfig";
+import { reconcileForensicsRun, reconcilePendingForensicsRuns } from "../../services/forensicsIntelligenceReconciliation";
 
 const logger: ForensicsWorkerLogger = {
   info: (message) => console.log(`[forensics:worker] ${message}`),
@@ -30,6 +32,7 @@ async function main(): Promise<void> {
   }
 
   const rpcUrl = resolveHeliusRpcUrl();
+  const reconciliationEnabled = isForensicsReconciliationEnabled();
 
   const worker = new ForensicsWorker({
     db: prisma,
@@ -38,6 +41,10 @@ async function main(): Promise<void> {
     logger,
     createRpcClient: ({ budget, deadlineMs, signal }) =>
       new SolanaForensicsClient({ rpcUrl, budget, totalDeadlineMs: deadlineMs, signal }),
+    // Reconciliation runs only inside this worker process, only when
+    // explicitly enabled — never from an import or the listener (phase5e.txt §9).
+    onRunPersisted: reconciliationEnabled ? (runId) => reconcileForensicsRun(prisma, runId).then(() => undefined) : undefined,
+    reconciliationSweep: reconciliationEnabled ? () => reconcilePendingForensicsRuns(prisma).then(() => undefined) : undefined,
   });
 
   let shuttingDown = false;

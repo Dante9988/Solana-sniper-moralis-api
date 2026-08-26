@@ -17,7 +17,8 @@
     "daily": "ts-node src/test-daily-summary.ts",
     "test:intelligence": "vitest run src/intelligence",
     "forensics:worker": "ts-node src/forensics/scripts/forensicsWorkerMain.ts",
-    "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts"
+    "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts",
+    "forensics:integration-fixture": "ts-node src/forensics/scripts/forensicsIntegrationFixtureMain.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
