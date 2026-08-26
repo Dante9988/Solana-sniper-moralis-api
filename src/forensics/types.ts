@@ -151,8 +151,12 @@ export interface SniperMetrics {
 }
 
 export interface InsiderMetrics {
+  /** Only wallets with a deterministic privileged-access link (creator/developer, controlled initial distribution, etc.) — never every LIKELY_COORDINATED cluster (phase5d.txt §3). */
   holdingsPct?: number;
   clusters: WalletCluster[];
+  /** LIKELY_COORDINATED clusters WITHOUT a privileged-access link land here instead of `holdingsPct`. */
+  suspectedCoordinatedHoldingsPct?: number;
+  suspectedCoordinatedClusters: WalletCluster[];
 }
 
 export interface FreshWalletMetrics {

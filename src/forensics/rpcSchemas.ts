@@ -222,22 +222,10 @@ export const DasTokenAccountsResultSchema = z.object({
 });
 export type DasTokenAccountsResult = z.infer<typeof DasTokenAccountsResultSchema>;
 
-export const TransactionsForAddressItemSchema = z
-  .object({
-    signature: z.string(),
-    slot: z.number().int().nonnegative().optional(),
-    err: z.unknown().nullable().optional(),
-    blockTime: z.number().int().nullable().optional(),
-    memo: z.string().nullable().optional(),
-  })
-  .passthrough();
-export type TransactionsForAddressItem = z.infer<typeof TransactionsForAddressItemSchema>;
-
-export const TransactionsForAddressResultSchema = z.object({
-  data: z.array(TransactionsForAddressItemSchema),
-  paginationToken: z.string().nullable().optional(),
-});
-export type TransactionsForAddressResult = z.infer<typeof TransactionsForAddressResultSchema>;
+// `TransactionsForAddressItemSchema`/`TransactionsForAddressResultSchema` are
+// declared after `TransactionMetaSchema`/`ParsedMessageSchema` below, so
+// "full" mode items can be typed with the same jsonParsed transaction/meta
+// shapes as `getTransaction`.
 
 export const SignatureForAddressEntrySchema = z.object({
   signature: z.string(),
@@ -250,17 +238,128 @@ export const SignatureForAddressEntrySchema = z.object({
 export const SignaturesForAddressResultSchema = z.array(SignatureForAddressEntrySchema);
 export type SignaturesForAddressResult = z.infer<typeof SignaturesForAddressResultSchema>;
 
-/** Deliberately loose on `transaction`/`meta` — full decoding is Phase 5C's job. */
+// ---- `getTransaction` with `encoding: "jsonParsed"` ----
+// The RPC node parses well-known programs (System, SPL Token, Token-2022,
+// ...) into a typed `{type, info}` shape and resolves address-lookup-table
+// accounts inline into `accountKeys`, so Phase 5C never hand-decodes
+// base58 instruction data or manually merges ALT-loaded addresses.
+
+export const ParsedAccountKeySchema = z.object({
+  pubkey: z.string(),
+  signer: z.boolean(),
+  writable: z.boolean(),
+  source: z.enum(["transaction", "lookupTable"]).optional(),
+});
+export type ParsedAccountKey = z.infer<typeof ParsedAccountKeySchema>;
+
+/** A well-known-program instruction the RPC node decoded into a typed shape. */
+export const ParsedInstructionSchema = z.object({
+  program: z.string().optional(),
+  programId: z.string(),
+  parsed: z.object({ type: z.string(), info: z.record(z.string(), z.unknown()) }).optional(),
+  stackHeight: z.number().int().nonnegative().optional(),
+});
+export type ParsedInstruction = z.infer<typeof ParsedInstructionSchema>;
+
+/** An instruction for a program the RPC node did not semantically parse — still real evidence. */
+export const RawInstructionSchema = z.object({
+  programId: z.string(),
+  accounts: z.array(z.string()),
+  data: z.string(),
+  stackHeight: z.number().int().nonnegative().optional(),
+});
+export type RawInstruction = z.infer<typeof RawInstructionSchema>;
+
+export const InstructionSchema = z.union([ParsedInstructionSchema, RawInstructionSchema]);
+export type Instruction = z.infer<typeof InstructionSchema>;
+
+export function isParsedInstruction(
+  instruction: Instruction
+): instruction is ParsedInstruction & { parsed: NonNullable<ParsedInstruction["parsed"]> } {
+  return "parsed" in instruction && instruction.parsed !== undefined;
+}
+
+export const InnerInstructionsSchema = z.object({
+  index: z.number().int().nonnegative(),
+  instructions: z.array(InstructionSchema),
+});
+
+export const TokenBalanceSchema = z.object({
+  accountIndex: z.number().int().nonnegative(),
+  mint: z.string(),
+  owner: z.string().optional(),
+  programId: z.string().optional(),
+  uiTokenAmount: z.object({
+    amount: z.string(),
+    decimals: z.number().int().nonnegative(),
+    uiAmount: z.number().nullable(),
+    uiAmountString: z.string().optional(),
+  }),
+});
+export type TokenBalance = z.infer<typeof TokenBalanceSchema>;
+
+export const ParsedMessageSchema = z.object({
+  accountKeys: z.array(ParsedAccountKeySchema),
+  instructions: z.array(InstructionSchema),
+  recentBlockhash: z.string().optional(),
+});
+
+export const TransactionMetaSchema = z
+  .object({
+    err: z.unknown().nullable().optional(),
+    fee: z.number().nonnegative().optional(),
+    preBalances: z.array(z.number()).optional(),
+    postBalances: z.array(z.number()).optional(),
+    preTokenBalances: z.array(TokenBalanceSchema).optional(),
+    postTokenBalances: z.array(TokenBalanceSchema).optional(),
+    innerInstructions: z.array(InnerInstructionsSchema).nullable().optional(),
+    logMessages: z.array(z.string()).nullable().optional(),
+  })
+  .passthrough();
+export type TransactionMeta = z.infer<typeof TransactionMetaSchema>;
+
 export const GetTransactionResultSchema = z
   .object({
     slot: z.number().int().nonnegative(),
     blockTime: z.number().int().nullable().optional(),
-    transaction: z.unknown(),
-    meta: z.unknown().nullable().optional(),
+    transaction: z.object({
+      signatures: z.array(z.string()),
+      message: ParsedMessageSchema,
+    }),
+    meta: TransactionMetaSchema.nullable().optional(),
     version: z.union([z.number(), z.string()]).optional(),
   })
   .nullable();
 export type GetTransactionResult = z.infer<typeof GetTransactionResultSchema>;
+
+/**
+ * `transaction`/`meta` are only present when `transactionDetails: "full"` was
+ * requested; signatures-only mode omits them (matching the smoke-test-verified
+ * `{signature, slot, ...}` shape).
+ */
+export const TransactionsForAddressItemSchema = z
+  .object({
+    signature: z.string(),
+    slot: z.number().int().nonnegative().optional(),
+    err: z.unknown().nullable().optional(),
+    blockTime: z.number().int().nullable().optional(),
+    memo: z.string().nullable().optional(),
+    transaction: z
+      .object({
+        signatures: z.array(z.string()),
+        message: ParsedMessageSchema,
+      })
+      .optional(),
+    meta: TransactionMetaSchema.nullable().optional(),
+  })
+  .passthrough();
+export type TransactionsForAddressItem = z.infer<typeof TransactionsForAddressItemSchema>;
+
+export const TransactionsForAddressResultSchema = z.object({
+  data: z.array(TransactionsForAddressItemSchema),
+  paginationToken: z.string().nullable().optional(),
+});
+export type TransactionsForAddressResult = z.infer<typeof TransactionsForAddressResultSchema>;
 
 export const TokenLargestAccountEntrySchema = z.object({
   address: z.string(),

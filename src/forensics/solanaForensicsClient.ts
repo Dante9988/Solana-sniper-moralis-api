@@ -414,9 +414,12 @@ export class SolanaForensicsClient {
       endSlot?: number;
     } = {}
   ): Promise<ForensicsClientResult<TransactionsForAddressResult>> {
+    const merged = { transactionDetails: "signatures", limit: 25, ...options } as const;
     return this.rpcCall({
       method: "getTransactionsForAddress",
-      params: [address, { transactionDetails: "signatures", limit: 25, ...options }],
+      // "full" mode is requested with jsonParsed encoding, matching getTransaction,
+      // so item.transaction/meta validate against the same parsed schemas.
+      params: [address, merged.transactionDetails === "full" ? { ...merged, encoding: "jsonParsed" } : merged],
       schema: TransactionsForAddressResultSchema,
       estimatedCredits: 10,
     });
@@ -479,13 +482,19 @@ export class SolanaForensicsClient {
     return { status, pagesFetched, items, warnings };
   }
 
+  /**
+   * `encoding: "jsonParsed"` so the RPC node decodes well-known-program
+   * instructions (System/SPL-Token/Token-2022) and resolves address-lookup-
+   * table accounts inline, instead of Phase 5C hand-decoding base58
+   * instruction data or manually merging ALT-loaded addresses.
+   */
   async getTransaction(
     signature: string,
     options: { commitment?: "confirmed" | "finalized"; maxSupportedTransactionVersion?: number } = {}
   ): Promise<ForensicsClientResult<GetTransactionResult>> {
     return this.rpcCall({
       method: "getTransaction",
-      params: [signature, { maxSupportedTransactionVersion: 0, encoding: "json", ...options }],
+      params: [signature, { maxSupportedTransactionVersion: 0, encoding: "jsonParsed", ...options }],
       schema: GetTransactionResultSchema,
       estimatedCredits: 1,
     });
@@ -563,6 +572,26 @@ export class SolanaForensicsClient {
       extractContextSlot: (data) => data.context.slot,
     });
   }
+}
+
+/**
+ * The subset of `SolanaForensicsClient` that Phase 5C analyzers depend on.
+ * `SolanaForensicsClient` satisfies this structurally — analyzers take this
+ * interface (not the concrete class) so tests can inject a fake without
+ * mocking `fetch`, and so analyzers can never reach any client method this
+ * interface doesn't list.
+ */
+export interface ForensicsRpcClient {
+  getTokenAccountsByMint: SolanaForensicsClient["getTokenAccountsByMint"];
+  getTokenAccountsPaginated: SolanaForensicsClient["getTokenAccountsPaginated"];
+  getTransactionsForAddress: SolanaForensicsClient["getTransactionsForAddress"];
+  getTransactionsForAddressPaginated: SolanaForensicsClient["getTransactionsForAddressPaginated"];
+  getTransaction: SolanaForensicsClient["getTransaction"];
+  getSignaturesForAddress: SolanaForensicsClient["getSignaturesForAddress"];
+  getTokenSupply: SolanaForensicsClient["getTokenSupply"];
+  getTokenLargestAccounts: SolanaForensicsClient["getTokenLargestAccounts"];
+  getAccountInfo: SolanaForensicsClient["getAccountInfo"];
+  getMultipleAccounts: SolanaForensicsClient["getMultipleAccounts"];
 }
 
 function mapHttpStatus(status: number): { code: ForensicsClientFailureCode; reason: string } {
