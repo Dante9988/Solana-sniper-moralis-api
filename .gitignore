@@ -33,7 +33,7 @@ next-env.d.ts
 
 yarn.lock
 .yarn
-
+*.txt
 .pnp.loader.mjs
 .pnp.cjs
 # Project Personal Files
