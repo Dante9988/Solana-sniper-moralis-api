@@ -1,3 +1,19 @@
+/**
+ * Pure, side-effect-free pool/migration-detection constants and helpers used
+ * by the Token Intelligence pipeline (src/intelligence/**, tokenIntelligenceDispatch.ts).
+ *
+ * Deliberately kept separate from src/services/pumpswapService.ts (the
+ * trading module used by index.ts and the Telegram bot) — that file
+ * constructs a live `Connection` and a `PumpSwapService` instance at module
+ * load time (`export const pumpSwapService = new PumpSwapService()`), which
+ * crashes on import without a live RPC URl (e.g. in CI/tests). This module
+ * has no such side effect and is safe to import anywhere, including tests.
+ *
+ * Also deliberately NOT named with only a case difference from
+ * pumpswapService.ts: the two previously collided on a case-insensitive
+ * filesystem, which is what caused this file to go missing in the first
+ * place (see the merge-damage fix that restored it).
+ */
 import { Connection, PublicKey } from '@solana/web3.js';
 
 export const PUMPSWAP_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA');

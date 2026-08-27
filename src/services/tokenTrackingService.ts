@@ -5,6 +5,9 @@ import axios from 'axios';
 import { getMoralisPrice, getMoralisSwaps } from './moralisClient';
 import path from 'path';
 import { createCanvas, loadImage } from 'canvas';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const prisma = new PrismaClient();
 const PUMPFUN_TOTAL_SUPPLY = 1_000_000_000; // 1 billion tokens
@@ -307,6 +310,9 @@ export async function checkTokenPnL(discordClient: Client) {
       `);
     }
 
+    // Import Telegram bot functions
+    const { telegramBot } = await import('../telegram/telegramBot');
+    
     for (const token of tokens) {
       try {
         // Get highest price from Birdeye history
@@ -342,14 +348,66 @@ export async function checkTokenPnL(discordClient: Client) {
           }
         });
 
-        // If PnL is >= 50%, send Discord alert
+        // If PnL is >= 50%, send alerts
         if (pnlPercentage >= 50) {
-          await sendPnLAlert(discordClient, {
+          console.log(`PnL is ${pnlPercentage.toFixed(2)}% - sending alerts to Discord and Telegram`);
+          
+          // Calculate profit in SOL (same for both Discord and Telegram)
+          const initialSolInvestment = 1.000;
+          const returnedSol = initialSolInvestment + (initialSolInvestment * (pnlPercentage / 100));
+          const solPrice = await getSolPrice();
+          const profitUsd = (returnedSol - initialSolInvestment) * solPrice;
+          
+          // Create PnL data object
+          const pnlData = {
             ...token,
             currentMarketCap: priceData.highestMarketCap,
             highestPriceTimestamp: priceData.timestamp ? new Date(priceData.timestamp * 1000).toISOString() : null,
             pnlPercentage
+          };
+          
+          // Generate the PnL image once for both platforms
+          const customImage = await createPnLImage({
+            pnlPercentage: pnlPercentage,
+            tokenSymbol: token.tokenSymbol || 'TOKEN',
+            initialMarketCap: token.initialMarketCap,
+            currentMarketCap: priceData.highestMarketCap,
+            initialSol: initialSolInvestment,
+            returnedSol
           });
+          
+          // Send Discord alert
+          await sendPnLAlert(discordClient, pnlData, customImage);
+          
+          // Send Telegram alert using the same PnL image
+          try {
+            console.log(`Sending PnL alert to Telegram for ${token.tokenAddress}`);
+            
+            // Check if telegramBot is available
+            if (telegramBot) {
+              // Get channel config from Telegram
+              const { getChannelConfig } = await import('../telegram/commands/toggleChannel');
+              const channelConfig = getChannelConfig();
+              
+              if (channelConfig.channelId && channelConfig.enabled) {
+                // Send PnL image to Telegram using the dedicated method
+                await telegramBot.sendPnLAlertWithImage(
+                  channelConfig.channelId,
+                  token.tokenAddress,
+                  token.tokenSymbol || 'TOKEN',
+                  pnlPercentage,
+                  customImage
+                );
+                console.log(`Successfully sent PnL alert to Telegram channel for ${token.tokenAddress}`);
+              } else {
+                console.log(`Telegram channel not enabled or configured, skipping PnL alert`);
+              }
+            } else {
+              console.log(`Telegram bot not available`);
+            }
+          } catch (telegramError) {
+            console.error(`Error sending PnL alert to Telegram:`, telegramError);
+          }
 
           // Mark as PnL alerted
           await prisma.tokenAlert.update({
@@ -357,17 +415,18 @@ export async function checkTokenPnL(discordClient: Client) {
             data: { pnlAlerted: true }
           });
         }
-
       } catch (error) {
         console.error(`Error processing PnL for ${token.tokenAddress}:`, error);
       }
     }
-
   } catch (error) {
     console.error('Error in checkTokenPnL:', error);
   }
 }
 
+/**
+ * Get the current price of SOL in USD
+ */
 async function getSolPrice(): Promise<number> {
   try {
     console.log('Attempting to fetch SOL price...');
@@ -406,142 +465,115 @@ async function createPnLImage(data: {
     const canvas = createCanvas(1200, 675);
     const ctx = canvas.getContext('2d');
 
-    // Create rich background with multiple gradients
-    // Base gradient
-    const baseGradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+    // Create dark purple-black background gradient - fullscreen
+    const baseGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
     baseGradient.addColorStop(0, '#1a0b2e');
-    baseGradient.addColorStop(0.5, '#2d1b4e');
-    baseGradient.addColorStop(1, '#3d2b6e');
+    baseGradient.addColorStop(1, '#0d0517');
     ctx.fillStyle = baseGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Add diagonal light beam effect
-    const beamGradient = ctx.createLinearGradient(
-      canvas.width, 0,
-      0, canvas.height
-    );
-    beamGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    beamGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0)');
-    beamGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = beamGradient;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Add subtle dot matrix pattern
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.025)';
-    for (let i = 0; i < canvas.width; i += 15) {
-      for (let j = 0; j < canvas.height; j += 15) {
+    // Draw diamond pattern overlay for subtle texture
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+    const gridSize = 30;
+    for (let i = 0; i < canvas.width; i += gridSize) {
+      for (let j = 0; j < canvas.height; j += gridSize) {
+        // Create a diamond pattern
         ctx.beginPath();
-        ctx.arc(i, j, 0.5, 0, Math.PI * 2);
+        ctx.moveTo(i, j - gridSize/2);
+        ctx.lineTo(i + gridSize/2, j);
+        ctx.lineTo(i, j + gridSize/2);
+        ctx.lineTo(i - gridSize/2, j);
+        ctx.closePath();
         ctx.fill();
       }
     }
 
-    // Add top-right corner glow
-    const cornerGlow = ctx.createRadialGradient(
-      canvas.width, 0,
-      0,
-      canvas.width - 100, 100,
-      400
+    // Add subtle glow effect
+    const glowGradient = ctx.createRadialGradient(
+      canvas.width * 0.3, canvas.height * 0.4, 0,
+      canvas.width * 0.3, canvas.height * 0.4, 600
     );
-    cornerGlow.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    cornerGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
-    ctx.fillStyle = cornerGlow;
+    glowGradient.addColorStop(0, 'rgba(145, 70, 255, 0.15)');
+    glowGradient.addColorStop(1, 'rgba(25, 10, 45, 0)');
+    ctx.fillStyle = glowGradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Draw token symbol with shadow
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
-    ctx.shadowBlur = 15;
+    // Left margin for all text elements
+    const leftMargin = 120;
+
+    // Draw token symbol - left aligned instead of centered
+    ctx.font = 'bold 70px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 100px Arial';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText('$' + data.tokenSymbol, 60, 50);
-    ctx.shadowBlur = 0;
-
-    // Calculate profit in USD
+    ctx.fillText('$' + data.tokenSymbol, leftMargin, 120);
+    
+    // Draw "CURRENT PROFIT" label - left aligned
+    ctx.font = '24px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('CURRENT PROFIT', leftMargin, 220);
+    
+    // Calculate profit value and format it
     const profitAmount = (data.returnedSol - data.initialSol) * await getSolPrice();
-
-    // Draw profit section with enhanced styling
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.font = '36px Arial';
-    ctx.fillText('CURRENT PROFIT', 60, 180);
-
-    // Draw profit amount with shadow
-    ctx.shadowColor = 'rgba(76, 175, 80, 0.3)';
-    ctx.shadowBlur = 15;
-    ctx.font = 'bold 110px Arial';
-    ctx.fillStyle = '#4CAF50';
-    ctx.fillText(`$${profitAmount.toLocaleString(undefined, {maximumFractionDigits: 0})}`, 60, 220);
-
-    // Draw percentage with glow effect
-    ctx.shadowColor = 'rgba(76, 175, 80, 0.4)';
-    ctx.font = 'bold 60px Arial';
-    ctx.fillText(`+${data.pnlPercentage.toFixed(2)}%`, 60, 340);
-    ctx.shadowBlur = 0;
-
-    // Add decorative line
-    const lineGradient = ctx.createLinearGradient(60, 0, canvas.width - 60, 0);
-    lineGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    lineGradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.2)');
-    lineGradient.addColorStop(1, 'rgba(255, 255, 255, 0.1)');
-    ctx.strokeStyle = lineGradient;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(60, 420);
-    ctx.lineTo(canvas.width - 60, 420);
-    ctx.stroke();
-
-    // Draw investment details with enhanced layout
-    const columns = [
-      { title: 'TOTAL BOUGHT', value: `${data.initialSol.toFixed(1)} SOL` },
-      { title: 'TOTAL HOLD', value: '0 SOL' },
-      { title: 'TOTAL SOLD', value: `${data.returnedSol.toFixed(1)} SOL` }
-    ];
-
-    columns.forEach((col, index) => {
-      const x = 60 + (index * (canvas.width - 120) / 3);
-      
-      // Draw column title
-      ctx.font = '32px Arial';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.textAlign = 'left';
-      ctx.fillText(col.title, x, 460);
-
-      // Draw value with shadow
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
-      ctx.shadowBlur = 10;
-      ctx.font = 'bold 44px Arial';
-      ctx.fillStyle = '#FFFFFF';
-      ctx.fillText(col.value, x, 510);
-      ctx.shadowBlur = 0;
-    });
-
-    // Add metallic chip card effect
-    const chipX = canvas.width - 180;
-    const chipY = canvas.height - 180;
-    const chipSize = 70;
+    const formattedProfit = profitAmount >= 0 
+      ? `$${Math.abs(Math.round(profitAmount))}` 
+      : `$-${Math.abs(Math.round(profitAmount))}`;
     
-    // Chip background
-    const chipGradient = ctx.createLinearGradient(chipX, chipY, chipX + chipSize, chipY + chipSize);
-    chipGradient.addColorStop(0, 'rgba(255, 255, 255, 0.1)');
-    chipGradient.addColorStop(1, 'rgba(255, 255, 255, 0.05)');
-    ctx.fillStyle = chipGradient;
-    ctx.fillRect(chipX, chipY, chipSize, chipSize);
+    // Draw profit amount - larger and left aligned
+    // Use green for positive, red for negative
+    ctx.font = 'bold 100px Arial'; // Bigger font size
+    ctx.fillStyle = profitAmount >= 0 ? '#4CAF50' : '#F44336';
+    ctx.fillText(formattedProfit, leftMargin, 250);
     
-    // Chip border
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(chipX, chipY, chipSize, chipSize);
-    ctx.strokeRect(chipX + 10, chipY + 10, chipSize - 20, chipSize - 20);
-
-    // Draw platform branding with enhanced style
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.3)';
-    ctx.shadowBlur = 10;
-    ctx.font = 'bold 48px Arial';
-    ctx.textAlign = 'right';
+    // Draw PNL percentage - left aligned
+    ctx.font = 'bold 40px Arial'; // Slightly bigger
+    ctx.fillStyle = profitAmount >= 0 ? '#4CAF50' : '#F44336';
+    ctx.fillText(`+${data.pnlPercentage.toFixed(2)}%`, leftMargin, 360);
+    
+    // Create section for bought/hold/sold values - spaced horizontally
+    const columnWidth = 300; // Width between columns
+    const labelY = 450;
+    const valueY = 490;
+    
+    // TOTAL BOUGHT - left aligned
+    ctx.font = '22px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('TOTAL BOUGHT', leftMargin, labelY);
+    ctx.font = 'bold 32px Arial';
     ctx.fillStyle = '#FFFFFF';
-    ctx.fillText('STROBE', canvas.width - 60, canvas.height - 60);
-
+    ctx.fillText(`${data.initialSol.toFixed(1)} SOL`, leftMargin, valueY);
+    
+    // TOTAL HOLD - in the middle
+    ctx.font = '22px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('TOTAL HOLD', leftMargin + columnWidth, labelY);
+    ctx.font = 'bold 32px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText('0 SOL', leftMargin + columnWidth, valueY);
+    
+    // TOTAL SOLD - on the right
+    ctx.font = '22px Arial';
+    ctx.fillStyle = '#9B9B9B';
+    ctx.fillText('TOTAL SOLD', leftMargin + 2*columnWidth, labelY);
+    ctx.font = 'bold 32px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText(`${data.returnedSol.toFixed(1)} SOL`, leftMargin + 2*columnWidth, valueY);
+    
+    // Draw "Powered by Moralis" text at bottom left
+    ctx.font = '20px Arial';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+    ctx.fillText('Powered by Moralis', leftMargin, canvas.height - 60);
+    
+    // Draw STROBE branding in bottom right
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 40px Arial';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillText('STROBE', canvas.width - 80, canvas.height - 60);
+    
+    // Reset text alignment for future drawing operations
+    ctx.textAlign = 'left';
+    
+    // Convert canvas to buffer
     return canvas.toBuffer('image/png');
   } catch (error) {
     console.error('Error creating PnL image:', error);
@@ -549,7 +581,7 @@ async function createPnLImage(data: {
   }
 }
 
-async function sendPnLAlert(discordClient: Client, data: any) {
+async function sendPnLAlert(discordClient: Client, data: any, customImage: Buffer) {
   try {
     const channel = discordClient.channels.cache.get(
       process.env.PNL_DISCORD_CHANNEL_ID!
@@ -573,29 +605,20 @@ async function sendPnLAlert(discordClient: Client, data: any) {
         tokenAddress: data.tokenAddress
     });
 
-    const customImage = await createPnLImage({
-      pnlPercentage: data.pnlPercentage,
-      tokenSymbol: data.tokenSymbol || 'TOKEN',
-      initialMarketCap: data.initialMarketCap,
-      currentMarketCap: data.currentMarketCap,
-      initialSol: initialSolInvestment,
-      returnedSol
-    });
-
     const embed = new EmbedBuilder()
       .setColor('#9B59B6')
       .setImage('attachment://pnl-background.png')
       .setDescription(`🔗 Contract: ${data.tokenAddress}`)
       .setFooter({ 
-        text: `Referral Code: ${data.tokenAddress.slice(0, 6)}` 
+        text: `Powered by Moralis` 
       });
 
     const row = new ActionRowBuilder<ButtonBuilder>()
       .addComponents(
         new ButtonBuilder()
-          .setLabel('Trade Now')
+          .setLabel('View on Birdeye')
           .setStyle(ButtonStyle.Link)
-          .setURL(`https://pump.fun/${data.tokenAddress}`)
+          .setURL(`https://birdeye.so/token/${data.tokenAddress}?chain=solana`)
       );
 
     await channel.send({ 
@@ -624,10 +647,23 @@ async function sendPnLAlert(discordClient: Client, data: any) {
 
 // Add this new function to manually trigger daily summary
 export async function triggerDailySummary(discordClient: Client) {
-  console.log('🔄 Manually triggering daily profit summary...');
+  console.log('🔄 Manually triggering daily profit summary and top calls report...');
   try {
+    // Send daily summary
     await sendDailySummaryAlert(discordClient);
     console.log('✅ Daily summary sent successfully');
+    
+    // Also send top calls report together with summary
+    try {
+      const { generateCustomTimeRangeReport } = await import('./dailyTopTokensService');
+      const { telegramBot } = await import('../telegram/telegramBot');
+      
+      console.log('🏆 Now sending top calls report...');
+      await generateCustomTimeRangeReport(discordClient, telegramBot);
+      console.log('✅ Top calls report sent successfully');
+    } catch (topCallsError) {
+      console.error('❌ Failed to send top calls report:', topCallsError);
+    }
   } catch (error) {
     console.error('❌ Failed to send daily summary:', error);
   }
@@ -644,26 +680,36 @@ export function startPeriodicChecks(discordClient: Client) {
     }
   }, 15 * 60 * 1000);
 
-  // Check for daily summary at 23:59:59 PM EST
+  // Check for daily summary and top calls at 12:00:00 AM EST
   setInterval(async () => {
     try {
       const now = new Date();
       const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
       
-      // Check if it's 23:59:59 PM EST
-      if (estTime.getHours() === 23 && estTime.getMinutes() === 59 && estTime.getSeconds() === 59) {
-        console.log('🕒 Time to post daily PNL summary!');
+      // Check if it's 12:00:00 AM EST (midnight)
+      if (estTime.getHours() === 0 && estTime.getMinutes() === 0 && estTime.getSeconds() === 0) {
+        console.log('🕒 Time to post daily summary and top calls report!');
+        
+        // Import the necessary functions
+        const { generateCustomTimeRangeReport } = await import('./dailyTopTokensService');
+        const { telegramBot } = await import('../telegram/telegramBot');
+        
+        // Run both reports together
+        console.log('📊 Running daily profit summary...');
         await sendDailySummaryAlert(discordClient);
+        
+        console.log('🏆 Running top calls report...');
+        await generateCustomTimeRangeReport(discordClient, telegramBot);
       }
     } catch (error) {
-      console.error('Error in daily summary check:', error);
+      console.error('Error in daily summary and top calls check:', error);
     }
   }, 1000); // Check every second for more precise timing
 
   console.log(`
   🔄 Started periodic checks:
   • PnL checks: Every 15 minutes
-  • Daily summary: Every day at 23:59:59 PM EST
+  • Daily summary + Top calls: Every day at 12:00:00 AM EST
   • Current EST time: ${new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })}
   `);
 }
@@ -1148,4 +1194,57 @@ ${details}`;
 // Function to test the daily summary
 export async function testDailySummary(discordClient: Client) {
   await sendDailySummaryAlert(discordClient);
+}
+
+// Add a new function to get top performing tokens
+export async function getTopPerformingTokens(limit = 10): Promise<any[]> {
+  try {
+    console.log(`📊 Fetching top ${limit} performing tokens...`);
+    
+    // Get tokens that have been checked and have PnL data
+    const tokens = await prisma.tokenAlert.findMany({
+      where: {
+        checked: true
+      },
+      orderBy: {
+        pnlPercentage: 'desc'
+      },
+      take: limit * 2 // Fetch more than needed to filter out invalid ones
+    });
+    
+    // Filter out tokens with missing data and calculate additional metrics
+    const topTokens = tokens
+      .filter(token => 
+        token.currentMarketCap !== null && 
+        token.initialMarketCap !== null &&
+        token.currentMarketCap > 0 &&
+        token.initialMarketCap > 0
+      )
+      .map(token => {
+        const initialMC = Number(token.initialMarketCap);
+        const currentMC = Number(token.currentMarketCap);
+        
+        // Calculate growth percentage
+        const growthPercentage = token.pnlPercentage || 
+          ((currentMC - initialMC) / initialMC) * 100;
+        
+        return {
+          tokenAddress: token.tokenAddress,
+          tokenName: token.tokenName || 'Unknown',
+          tokenSymbol: token.tokenSymbol || 'Unknown',
+          initialMarketCap: initialMC,
+          currentMarketCap: currentMC,
+          growthPercentage: growthPercentage,
+          alertTimestamp: token.alertTimestamp,
+          checkTimestamp: token.checkTimestamp
+        };
+      })
+      .sort((a, b) => b.growthPercentage - a.growthPercentage)
+      .slice(0, limit);
+    
+    return topTokens;
+  } catch (error) {
+    console.error('Error fetching top performing tokens:', error);
+    return [];
+  }
 } 

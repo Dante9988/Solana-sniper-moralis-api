@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { TokenDiscoveryEvent, TokenIntelligenceReport } from "../intelligence/types";
 import { processTokenDiscoveryEvent } from "../intelligence/orchestrator";
-import { PUMPSWAP_PROGRAM_ID, PUMP_FUN_RAYDIUM_MIGRATION } from "./pumpSwapService";
+import { PUMPSWAP_PROGRAM_ID, PUMP_FUN_RAYDIUM_MIGRATION } from "./pumpSwapDetection";
 
 export interface TokenIntelligenceDispatcherOptions {
   processEvent?: (event: TokenDiscoveryEvent) => Promise<TokenIntelligenceReport>;

@@ -12,6 +12,7 @@ import { fetchSniperData } from '../services/sniperDataService';
 import { getMoralisPrice, getMoralisSwaps } from '../services/moralisClient';
 import { storeTokenAlert } from '../services/tokenTrackingService';
 import { sniperooService, UserConfig, isWalletData } from '../services/sniperooService';
+import { registerCommands, setupCommandExecution } from './registerCommands';
 
 dotenv.config();
 
@@ -112,16 +113,18 @@ client.once('ready', async () => {
     console.log('Channel ID from env:', channelId);
     
     try {
-        // Comment out slash commands registration
-        /*
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_BOT_TOKEN || '');
-        await rest.put(
-            Routes.applicationCommands(client.user?.id || ''),
-            { body: commands },
-        );
-        */
+        // Register slash commands
+        const clientId = client.user?.id;
+        if (clientId) {
+            await registerCommands(clientId, process.env.DISCORD_BOT_TOKEN || '');
+            // Set up command execution handler
+            setupCommandExecution(client);
+            console.log('✅ Commands registered and handlers set up');
+        } else {
+            console.error('❌ Failed to get client ID for command registration');
+        }
         
-        // Keep only channel setup
+        // Keep channel setup
         if (channelId) {
             channel = client.channels.cache.get(channelId.replace(/"/g, '')) as TextChannel;
             if (channel) {
@@ -492,6 +495,15 @@ async function fetchTokenData(tokenMint: string): Promise<TokenData> {
     }
   }
 
+export interface TrenchBundleData {
+    ticker?: string;
+    bonded?: boolean;
+    totalBundles?: number;
+    holdingBundles?: number;
+    totalSolSpent?: number;
+    holdingPercentage?: number;
+}
+
 interface PendingBundleData {
     ticker?: string;
     bonded?: boolean;
@@ -501,6 +513,30 @@ interface PendingBundleData {
     holdingPercentage?: number;
 }
 
+export async function fetchTrenchData(tokenMint: string): Promise<TrenchBundleData> {
+    try {
+        const response = await axios.get(
+            `https://trench.bot/api/bundle/bundle_advanced/${tokenMint}`
+        );
+
+        // Count holding bundles (bundles with holding_amount > 0)
+        const holdingBundles = Object.values(response.data.bundles).filter(
+            (bundle: any) => bundle.holding_amount > 0
+        ).length;
+
+        return {
+            ticker: response.data.ticker,
+            bonded: response.data.bonded,
+            totalBundles: response.data.total_bundles,
+            holdingBundles: holdingBundles,
+            totalSolSpent: response.data.total_sol_spent,
+            holdingPercentage: response.data.total_holding_percentage
+        };
+    } catch (error) {
+        console.error('Error fetching Trench data:', error);
+        return {};
+    }
+}
 async function fetchPendingBundleData(_tokenMint: string): Promise<PendingBundleData> {
     return {};
 }
@@ -637,7 +673,7 @@ async function doubleCheckMarketCap(tokenMint: string, retryCount = 3): Promise<
     }
 }
 
-export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean) {
+export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean, prefetchedData?: any) {
     const metrics = {
         start: performance.now(),
         total: 0
@@ -648,8 +684,11 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
         return;
     }
 
-    // Check if this is a Pump.fun token
-    const isPumpToken = tokenMint.toLowerCase().endsWith('pump');
+    // Check if this is a Pump.fun token - use prefetched data if available
+    const isPumpToken = prefetchedData?.isPumpToken !== undefined 
+        ? prefetchedData.isPumpToken 
+        : tokenMint.toLowerCase().endsWith('pump');
+    
     console.log(`Token ${tokenMint} is ${isPumpToken ? 'a Pump.fun token' : 'not a Pump.fun token'}`);
     
     // Skip non-Pump.fun tokens
@@ -659,41 +698,80 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean)
     }
 
     try {
-        // Always double-check market cap first
-        console.log(`🔍 Verifying market cap before proceeding...`);
-        const verifiedMarketCap = await doubleCheckMarketCap(tokenMint);
+        // Variables to store data
+        let tokenData, bundleData, sniperData, marketCap, price;
+
+        // Use prefetched data if available, otherwise fetch new data
+        if (prefetchedData && prefetchedData.tokenData && prefetchedData.trenchData) {
+            console.log(`Using prefetched data for ${tokenMint}`);
+            tokenData = prefetchedData.tokenData;
+            bundleData = prefetchedData.trenchData;
+            sniperData = prefetchedData.sniperData;
+
+            // Use prefetched market cap if available, or use tokenData's marketCap
+            if (prefetchedData.marketCap !== undefined) {
+                console.log(`Using prefetched market cap: $${prefetchedData.marketCap.toLocaleString()}`);
+                marketCap = prefetchedData.marketCap;
+
+                // Skip market cap verification when we have prefetched data
+                console.log(`🔍 Skipping market cap verification for faster alerting`);
+            } else if (tokenData?.marketCap) {
+                console.log(`Using market cap from token data: $${tokenData.marketCap.toLocaleString()}`);
+                marketCap = tokenData.marketCap;
+            } else {
+                // Only verify market cap if we don't have it from prefetched data
+                console.log(`🔍 Verifying market cap before proceeding...`);
+                marketCap = await doubleCheckMarketCap(tokenMint);
+            }
+
+            // Get the latest price right before sending the alert
+            if (prefetchedData.price !== undefined) {
+                console.log(`Using prefetched price data for ${tokenMint}`);
+                price = prefetchedData.price;
+            } else {
+                console.log(`Fetching latest price for ${tokenMint} before sending alert...`);
+                price = await fetchLatestPrice(tokenMint);
+            }
+        } else {
+            // No prefetched data, fetch everything as usual
+            console.log(`🔍 Verifying market cap before proceeding...`);
+            marketCap = await doubleCheckMarketCap(tokenMint);
+
+            // If market cap is below minimum threshold, skip the alert
+            if (marketCap < MINIMUM_MARKET_CAP) {
+                console.log(`⚠️ Market cap ($${marketCap.toLocaleString()}) is below minimum threshold ($${MINIMUM_MARKET_CAP.toLocaleString()}). Skipping alert.`);
+                return;
+            }
+
+            // Fetch all necessary data in parallel, but handle failures independently
+            const [tokenDataResult, bundleResult, sniperDataResult] = await Promise.allSettled([
+                getTokenMarketData(tokenMint),
+                fetchPendingBundleData(tokenMint),
+                fetchSniperData(tokenMint)
+            ]);
+
+            // Safely extract data from results
+            tokenData = tokenDataResult.status === 'fulfilled' ? tokenDataResult.value : null;
+            bundleData = bundleResult.status === 'fulfilled' ? bundleResult.value : {
+                holdingBundles: 0,
+                totalBundles: 0,
+                holdingPercentage: 0,
+                totalSolSpent: null,
+                ticker: null
+            };
+            sniperData = sniperDataResult.status === 'fulfilled' ? sniperDataResult.value : null;
+
+            // Get the latest price right before sending the alert
+            console.log(`Fetching latest price for ${tokenMint} before sending alert...`);
+            price = await fetchLatestPrice(tokenMint);
+        }
 
         // If market cap is below minimum threshold, skip the alert
-        if (verifiedMarketCap < MINIMUM_MARKET_CAP) {
-            console.log(`⚠️ Market cap ($${verifiedMarketCap.toLocaleString()}) is below minimum threshold ($${MINIMUM_MARKET_CAP.toLocaleString()}). Skipping alert.`);
+        if (marketCap < MINIMUM_MARKET_CAP) {
+            console.log(`⚠️ Market cap ($${marketCap.toLocaleString()}) is below minimum threshold ($${MINIMUM_MARKET_CAP.toLocaleString()}). Skipping alert.`);
             return;
         }
 
-        // Fetch all necessary data in parallel, but handle failures independently
-        const [tokenDataResult, bundleResult, sniperDataResult] = await Promise.allSettled([
-            getTokenMarketData(tokenMint),
-            fetchPendingBundleData(tokenMint),
-            fetchSniperData(tokenMint)
-        ]);
-        
-        // Safely extract data from results
-        const tokenData = tokenDataResult.status === 'fulfilled' ? tokenDataResult.value : null;
-        const bundleData = bundleResult.status === 'fulfilled' ? bundleResult.value : {
-            holdingBundles: 0,
-            totalBundles: 0,
-            holdingPercentage: 0,
-            totalSolSpent: null,
-            ticker: null
-        };
-        const sniperData = sniperDataResult.status === 'fulfilled' ? sniperDataResult.value : null;
-        
-        // Get the latest price right before sending the alert
-        console.log(`Fetching latest price for ${tokenMint} before sending alert...`);
-        const price = await fetchLatestPrice(tokenMint);
-        
-        // Use the verified market cap
-        const marketCap = verifiedMarketCap;
-        
         console.log(`Latest verified data for ${tokenMint}:
         - Price: ${price}
         - Market Cap: $${marketCap.toLocaleString()}`);
