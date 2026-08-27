@@ -1,0 +1,295 @@
+# Phase 6 — Presentation Layer (read-only API + Telegram surface)
+
+Status: SPEC (not implemented)
+Depends on: Phase 1–3.1 (intelligence), Phase 4 (canonical assets), Phase 5A–5E (forensics)
+Companion docs: ARCHITECTURE.md §3, §5, §8, §14 · src/intelligence/README.md · src/forensics/README.md
+
+---
+
+## 0. Goal
+
+Expose the intelligence and forensics that already exist to humans, through one
+contract, consumed by three thin clients.
+
+    Prisma (TokenIntelligenceReport + Solana forensics tables)
+              │
+              ▼
+    src/presentation/  ← pure, deterministic, no I/O
+              │
+      ┌───────┼───────────────┐
+      ▼       ▼               ▼
+    HTTP    Telegram        Discord
+   (web)   (grammY)      (existing bots)
+
+Phase 6 adds NO new data sources, NO new analyzers, and NO execution paths.
+It is a projection of state that Phase 1–5 already persist.
+
+The product thesis: a user pastes a contract address before they buy, and gets
+back evidence — bundled supply percentage, wallet-cluster funding ancestry,
+wash-trade indicators — with the reasoning shown, not a number they must trust.
+
+---
+
+## 1. Non-negotiable boundaries
+
+These extend the Phase 5 fail-closed rules. A violation is a build failure, not
+a code-review nit.
+
+### 1.1 Import denylist
+
+`src/api/**`, `src/presentation/**` and `src/telegram/**` MUST NOT import,
+transitively or directly:
+
+- `src/transactions.ts`
+- `src/services/tradingService.ts`, `src/services/sniperooService.ts`
+- anything under `src/pumputils/**`
+- Jito / bundle-submission helpers
+- `src/tracker/**` writers
+- any Discord module that calls `client.login` at import time
+- any module that reads `PRIV_KEY_WALLET` or other key material
+
+Mirror the existing execution-boundary test from `src/assets/__tests__/` into
+`src/presentation/__tests__/executionBoundary.test.ts`. It walks the import
+graph from each Phase 6 entrypoint and fails on any denylisted module.
+
+### 1.2 Absence is never safety
+
+Carried forward from Phase 3.1 §7 and Phase 5.
+
+- A missing forensics run renders as `UNVERIFIED`, never as low risk.
+- A worker that returned `UNAVAILABLE` renders as `UNVERIFIED` for that signal.
+- Zero-valued percentages from absent data MUST NOT be emitted. Absent is a
+  distinct state from `0`.
+- No aggregate score may be computed unless every mandatory signal has a
+  non-`UNVERIFIED` status. Otherwise the headline verdict is `UNVERIFIED`.
+
+### 1.3 No advice
+
+`recommendation` stays `RESEARCH_ONLY` across every surface. Renderers MUST NOT
+emit buy/sell/entry/target/"safe to ape" language. Reuse the Phase 3 prohibited-
+language reject list from `anthropicSynthesisProvider.ts`; apply it to rendered
+output, not only to model output.
+
+### 1.4 Read-only transport
+
+The API performs Prisma reads and, for `POST /scan`, an idempotent job enqueue
+via the existing `forensicsJobService` / `tokenIntelligenceDispatch`. It never
+writes report content, never mutates eligibility, never signs anything.
+
+---
+
+## 2. `src/presentation/` — shared projection
+
+Pure functions. No network, no Prisma, no env reads. Takes already-loaded rows,
+returns a view. This is what makes Telegram, Discord and web agree.
+
+### 2.1 `riskView.ts`
+
+```ts
+type SignalStatus = 'CONFIRMED' | 'CLEAR' | 'UNVERIFIED';
+
+interface Signal {
+  key: 'BUNDLED_SUPPLY' | 'WALLET_CLUSTERING' | 'WASH_TRADE'
+     | 'MINT_AUTHORITY' | 'LP_STATUS' | 'DEV_HISTORY';
+  status: SignalStatus;
+  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+  headline: string;          // "62% of supply acquired in launch block"
+  evidence: EvidenceRef[];   // tx signatures, wallet addresses, slot numbers
+  measuredAt?: Date;
+  unverifiedReason?: string; // why, when status === 'UNVERIFIED'
+}
+
+interface RiskView {
+  mint: string;
+  verdict: 'EXCLUDED' | 'HIGH_RISK' | 'ELEVATED' | 'UNVERIFIED';
+  policyVersion: string;
+  signals: Signal[];
+  reportStatus: 'COMPLETE' | 'PARTIAL' | 'FAILED';
+  forensicsStatus: 'PENDING'|'RUNNING'|'COMPLETE'|'PARTIAL'|'FAILED'|'ABSENT';
+  synthesis?: { text: string; model: string; validated: boolean };
+  recommendation: 'RESEARCH_ONLY';
+  generatedAt: Date;
+}
+```
+
+`verdict` derivation, in strict order — first match wins:
+
+1. Phase 5A mandatory exclusion holds (`initialBundledAcquisitionPct >= 40` OR
+   `currentBundleWalletHoldingsPct >= 40`) → `EXCLUDED`.
+2. Any signal `CONFIRMED` at `CRITICAL` → `HIGH_RISK`.
+3. Any mandatory signal `UNVERIFIED` → `UNVERIFIED`.
+4. Any signal `CONFIRMED` at `HIGH`/`MEDIUM` → `ELEVATED`.
+5. Otherwise → `UNVERIFIED`. **There is deliberately no `CLEAR` verdict.**
+
+The absence of a clean verdict is a product decision, not an oversight. This
+system can prove a token is dangerous; it cannot prove one is safe, and must
+never imply it can.
+
+### 2.2 Renderers
+
+- `renderTelegram(view): string` — MarkdownV2, escaped. Hard 4096-char cap;
+  truncate the evidence list, never the verdict or the disclaimer.
+- `renderDiscord(view): EmbedBuilder` — colour from verdict; reuse existing
+  embed conventions in `src/discord/`.
+- `toApiJson(view): ApiRiskView` — versioned, stable field names.
+
+All three consume the same `RiskView`. Divergent formatting logic in a client
+is a bug.
+
+### 2.3 Evidence is mandatory in output
+
+Every `CONFIRMED` signal renders at least one verifiable reference — a
+transaction signature, a wallet address, a slot number — that the reader can
+check on a block explorer themselves. A claim without a link is not shipped.
+
+---
+
+## 3. `src/api/` — HTTP surface
+
+Express, mounted alongside the existing `METRICS_PORT` server or on its own
+`API_PORT`. Versioned under `/api/v1`.
+
+| Method | Path | Behaviour |
+|---|---|---|
+| `GET` | `/api/v1/tokens/:mint/report` | Latest report + evidence + errors + forensics linkage → `RiskView`. `404` if never analysed. |
+| `GET` | `/api/v1/tokens/:mint/forensics` | Phase 5 run detail: analyzers, wallet clusters, eligibility assessment. |
+| `POST` | `/api/v1/tokens/:mint/scan` | Idempotent enqueue. Returns `{ jobKey, status }`. Re-request with a live job returns the existing job. |
+| `GET` | `/api/v1/jobs/:jobKey` | Job status polling. |
+| `GET` | `/api/v1/health` | Liveness + DB reachability. |
+
+Rules:
+
+- `:mint` validated with `PublicKey` before any query. Reject early, 400.
+- Reuse the Phase 4 `assetResolver` so a future EVM surface needs no reshaping.
+- Rate limit per API key and per IP. Enqueue is the expensive path — cap it
+  independently and far lower than reads.
+- Auth: bearer key from `API_KEYS` (comma-separated) for `POST`; `GET` may be
+  public if you intend a public good, but rate-limited regardless.
+- Never return raw `rawPayload` blobs or internal error stack traces.
+
+---
+
+## 4. `src/telegram/` — bot client
+
+grammY. Long polling (no webhook, no public ingress, no TLS termination to
+manage). Its own process: `npm run telegram`.
+
+Do not add a second login of an existing token in a running process — see
+ARCHITECTURE.md §13.8. One Telegram process, one token.
+
+### 4.1 Commands
+
+| Input | Behaviour |
+|---|---|
+| `/start` | What this bot does, what it cannot do, the "no safe verdict" caveat. |
+| `/scan <mint>` | Fetch report. If absent → enqueue, reply with job status, edit the message in place when complete. |
+| bare base58 string | Treated as `/scan`. This is the main path — people paste addresses. |
+| `/status <mint>` | Current job/forensics status without enqueueing. |
+| `/explain <signal>` | Static text explaining what bundled supply / wallet clustering / wash trading mean and how they're measured. |
+
+### 4.2 Constraints
+
+- Never accepts, stores, or requests a private key, seed phrase, or wallet
+  connection. If a user sends something resembling one, discard it unlogged and
+  warn them to rotate it immediately.
+- Per-chat rate limit and a global enqueue budget.
+- No inline "buy" buttons, no referral links to trading bots, no affiliate
+  routing. The moment this bot monetises the click it stops being a defence.
+- Talks to the API over HTTP, or imports `src/presentation/` + Prisma reads
+  directly. It does not reimplement projection logic either way.
+
+---
+
+## 5. Configuration (names only — never commit values)
+
+Additive to the existing `.env`:
+
+```
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ALLOWED_CHAT_IDS=        # optional allowlist during testing
+API_PORT=
+API_KEYS=                          # comma-separated, for POST /scan
+API_PUBLIC_READS=                  # true|false
+PRESENTATION_RATE_LIMIT_PER_MIN=
+SCAN_ENQUEUE_LIMIT_PER_HOUR=
+```
+
+Existing `DATABASE_URL`, `HELIUS_*`, `ANTHROPIC_*` are reused unchanged. Phase 6
+adds no new upstream provider.
+
+---
+
+## 6. Files to create
+
+```
+src/presentation/
+  riskView.ts                    # projection types + verdict derivation
+  renderTelegram.ts
+  renderDiscord.ts
+  toApiJson.ts
+  __tests__/
+    riskView.test.ts             # verdict ordering, absence-never-safe
+    renderTelegram.test.ts       # MarkdownV2 escaping, 4096 cap
+    executionBoundary.test.ts    # import-graph denylist
+src/api/
+  server.ts
+  routes/tokens.ts
+  routes/jobs.ts
+  middleware/{auth,rateLimit,validateMint}.ts
+  __tests__/routes.test.ts       # supertest, Prisma mocked
+src/telegram/
+  bot.ts
+  handlers/{scan,status,explain,start}.ts
+  __tests__/handlers.test.ts
+```
+
+`package.json` scripts: `"api": "tsx src/api/server.ts"`,
+`"telegram": "tsx src/telegram/bot.ts"`.
+
+No Prisma migration required — Phase 6 reads existing tables.
+
+---
+
+## 7. Verification
+
+```bash
+npx tsc --noEmit
+npx vitest run src/presentation src/api src/telegram
+npm run test:intelligence                 # unchanged, must still pass
+npx prisma@6.5.0 validate
+
+git diff --stat -- prisma/                # expect: empty
+git diff --stat -- src/intelligence src/forensics   # expect: empty or additive-only
+```
+
+Manual acceptance:
+
+1. `npm run api`, then `GET /api/v1/tokens/<known-bundled-mint>/report` returns
+   `verdict: "EXCLUDED"` with the bundled percentage and its evidence refs.
+2. `GET` a mint with no forensics run → `verdict: "UNVERIFIED"`, and the response
+   contains no zero-valued percentages.
+3. `npm run telegram`, paste that same mint into the chat → the rendered message
+   matches the API's `RiskView` field for field.
+4. Grep the built output for denylisted imports: zero hits.
+5. Confirm `npm run dev` and `npm run pumpfun` behaviour is byte-identical to
+   pre-Phase-6. The listeners are untouched.
+
+---
+
+## 8. Explicitly out of scope
+
+- Chroma / RAG (Phase 7)
+- Trending history, macro/news, X ingestion
+- Any write path to tokens, wallets, or trades
+- Auto-posting intelligence to Discord channels (adjacent, but its own phase —
+  push semantics need their own rate/noise policy)
+- A `CLEAR` or "safe" verdict. Not out of scope by sequencing — out of scope
+  by design.
+
+---
+
+## 9. One-line truth
+
+**Phase 6 projects existing Phase 1–5 state through one deterministic presenter
+into HTTP, Telegram and Discord; it adds no data sources, no analyzers and no
+execution paths, and it never renders absent evidence as safety.**

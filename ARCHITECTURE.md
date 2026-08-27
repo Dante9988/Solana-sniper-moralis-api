@@ -79,7 +79,8 @@ Two layers share one codebase:
 | **3.1** | Moralis 2026 removals cleanup; remove trench.bot; bundle worker = UNAVAILABLE | Done |
 | **4** | Canonical chain/address identity and shared research/market observations | Done; not wired into runtime |
 | **5** | Deterministic Solana forensics (5A–5E) | Done |
-| **5+** | Chroma/RAG, notifications, presentation API | Not started |
+| **6** | Presentation layer: read-only HTTP API | Done |
+| **6+** | Chroma/RAG, notifications, Telegram/other chat surfaces | Not started |
 
 Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt` (historical prompts).
 
@@ -162,6 +163,26 @@ Phase 5 status
 
 For full Phase 5 requirements and the approved audit plan, see `phase5.txt`, `phase5b.txt`, `phase5c.txt`, `phase5d.txt`, and `phase5e.txt` at the repository root and `src/forensics/README.md`.
 
+### Phase 6 details
+
+Phase 6 exposes the intelligence and forensics that Phase 1–5 already persist to humans, through one deterministic contract consumed by an HTTP API (a Telegram bot was prototyped and then reverted — see git history — the presentation/API layers below remain). It adds no new data sources, no new analyzers, and no execution paths — it is a read-only projection of existing Prisma state.
+
+Primary artifacts:
+
+- `src/presentation/` — pure projection layer. No network, no Prisma, no env reads.
+  - `riskView.ts` — `RiskView`/`Signal` types and `buildRiskView()`; derives a verdict (`EXCLUDED` / `HIGH_RISK` / `ELEVATED` / `UNVERIFIED` — there is deliberately no `CLEAR` verdict) from already-loaded plain rows. `WASH_TRADE` and `DEV_HISTORY` signals are always `UNVERIFIED`: no analyzer for either exists yet, and absence is never rendered as safety.
+  - `renderDiscord.ts` — builds (never sends) a `discord.js` `EmbedBuilder`.
+  - `toApiJson.ts` — versioned, stable-field-name JSON projection.
+  - Both renderers re-screen output against the Phase 3 prohibited-language reject list (`anthropicSynthesisProvider.ts`'s exported `PROHIBITED_PATTERNS`), not just raw model output.
+  - `__tests__/executionBoundary.test.ts` — walks `src/presentation/` and `src/api/` source for denylisted imports (execution, wallet, tracker, live Discord login).
+- `src/services/riskViewLoader.ts` — the one place Prisma rows are loaded and mapped into `RiskViewInput`; also falls back to a standalone `SolanaForensicsRun` for a mint with no `TokenIntelligenceReport` (e.g. a token only ever manually scanned via `POST /scan`, never seen by the live listener) rather than reporting it as never-analysed.
+- `src/api/` — Express, its own `API_PORT` (not the listener's `METRICS_PORT`). `GET /api/v1/tokens/:mint/report`, `GET /api/v1/tokens/:mint/forensics`, `POST /api/v1/tokens/:mint/scan` (idempotent enqueue via the Phase 5D `forensicsJobService`), `GET /api/v1/jobs/:jobKey`, `GET /api/v1/health`. Bearer-key auth (`API_KEYS`) on `POST`, optionally public on `GET` (`API_PUBLIC_READS`); in-memory per-key/IP rate limiting. `createApiServer()` only ever listens behind `require.main === module`.
+
+Database: no migration — Phase 6 only reads existing Phase 1–5 tables.
+
+Verification: `npx tsc --noEmit`, `npx vitest run src/presentation src/api`, `npm run test:intelligence`, `npx prisma@6.5.0 validate`, plus grepping the compiled `dist/` output for denylisted imports (zero real hits — matches found are only inside comments/regex-literal source, not actual imports). `src/index.ts`, `src/server.ts`, `src/pumpfun-sniper.ts`, and `src/discord/**` are untouched by Phase 6.
+
+For full Phase 6 requirements, see `phase6` at the repository root.
 
 ---
 

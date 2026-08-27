@@ -85,7 +85,10 @@ function buildUserMessage(
 // Best-effort, defense-in-depth: the schema constrains shape, not phrasing.
 // Rejecting outright (rather than silently editing model text) avoids ever
 // presenting edited AI text as the model's own words.
-const PROHIBITED_PATTERNS: RegExp[] = [
+// Exported for reuse by src/presentation (phase6.txt §1.3): rendered output
+// across every Phase 6 surface is screened with this same reject list, not
+// only raw model output.
+export const PROHIBITED_PATTERNS: RegExp[] = [
   /\bbuy\s+(now|this|it|in)\b/i,
   /\bsell\s+(now|this|it)\b/i,
   /entry\s+price/i,
