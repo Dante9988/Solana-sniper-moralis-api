@@ -27,7 +27,7 @@
     "api:test": "ts-node src/test-api.ts",
     "websocket:test": "ts-node src/test-websocket.ts",
     "api:server": "ts-node src/api-server.ts",
-    "check:api": "ts-node src/check-api.ts"
+    "check:api": "ts-node src/check-api.ts",
     "test:intelligence": "vitest run src/intelligence",
     "forensics:worker": "ts-node src/forensics/scripts/forensicsWorkerMain.ts",
     "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts",
