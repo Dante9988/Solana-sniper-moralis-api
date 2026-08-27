@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTokenIntelligenceDispatcher, deriveTokenSource } from "../tokenIntelligenceDispatch";
-import { PUMPSWAP_PROGRAM_ID, PUMP_FUN_RAYDIUM_MIGRATION, PUMP_FUN_PROGRAM_ID } from "../pumpswapService";
+import { PUMPSWAP_PROGRAM_ID, PUMP_FUN_RAYDIUM_MIGRATION, PUMP_FUN_PROGRAM_ID } from "../pumpSwapDetection";
 import { TokenIntelligenceReport } from "../../intelligence/types";
 
 const emptyReport = {} as TokenIntelligenceReport;
