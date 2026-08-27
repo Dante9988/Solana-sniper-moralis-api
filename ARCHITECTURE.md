@@ -174,13 +174,13 @@ Primary artifacts:
   - `renderDiscord.ts` — builds (never sends) a `discord.js` `EmbedBuilder`.
   - `toApiJson.ts` — versioned, stable-field-name JSON projection.
   - Both renderers re-screen output against the Phase 3 prohibited-language reject list (`anthropicSynthesisProvider.ts`'s exported `PROHIBITED_PATTERNS`), not just raw model output.
-  - `__tests__/executionBoundary.test.ts` — walks `src/presentation/` and `src/api/` source for denylisted imports (execution, wallet, tracker, live Discord login).
+  - `__tests__/executionBoundary.test.ts` — walks `src/presentation/` and `src/researchApi/` source for denylisted imports (execution, wallet, tracker, live Discord login).
 - `src/services/riskViewLoader.ts` — the one place Prisma rows are loaded and mapped into `RiskViewInput`; also falls back to a standalone `SolanaForensicsRun` for a mint with no `TokenIntelligenceReport` (e.g. a token only ever manually scanned via `POST /scan`, never seen by the live listener) rather than reporting it as never-analysed.
-- `src/api/` — Express, its own `API_PORT` (not the listener's `METRICS_PORT`). `GET /api/v1/tokens/:mint/report`, `GET /api/v1/tokens/:mint/forensics`, `POST /api/v1/tokens/:mint/scan` (idempotent enqueue via the Phase 5D `forensicsJobService`), `GET /api/v1/jobs/:jobKey`, `GET /api/v1/health`. Bearer-key auth (`API_KEYS`) on `POST`, optionally public on `GET` (`API_PUBLIC_READS`); in-memory per-key/IP rate limiting. `createApiServer()` only ever listens behind `require.main === module`.
+- `src/researchApi/` — Express, its own `API_PORT` (not the listener's `METRICS_PORT`). `GET /api/v1/tokens/:mint/report`, `GET /api/v1/tokens/:mint/forensics`, `POST /api/v1/tokens/:mint/scan` (idempotent enqueue via the Phase 5D `forensicsJobService`), `GET /api/v1/jobs/:jobKey`, `GET /api/v1/health`. Bearer-key auth (`API_KEYS`) on `POST`, optionally public on `GET` (`API_PUBLIC_READS`); in-memory per-key/IP rate limiting. `createApiServer()` only ever listens behind `require.main === module`. Named `researchApi` rather than `api` because the `main2` branch (see PR #7) has its own unrelated `src/api/` (its trading/websocket server) — merging the two into one directory would have mixed execution-path code into this read-only layer's own execution-boundary scan.
 
 Database: no migration — Phase 6 only reads existing Phase 1–5 tables.
 
-Verification: `npx tsc --noEmit`, `npx vitest run src/presentation src/api`, `npm run test:intelligence`, `npx prisma@6.5.0 validate`, plus grepping the compiled `dist/` output for denylisted imports (zero real hits — matches found are only inside comments/regex-literal source, not actual imports). `src/index.ts`, `src/server.ts`, `src/pumpfun-sniper.ts`, and `src/discord/**` are untouched by Phase 6.
+Verification: `npx tsc --noEmit`, `npx vitest run src/presentation src/researchApi`, `npm run test:intelligence`, `npx prisma@6.5.0 validate`, plus grepping the compiled `dist/` output for denylisted imports (zero real hits — matches found are only inside comments/regex-literal source, not actual imports). `src/index.ts`, `src/server.ts`, `src/pumpfun-sniper.ts`, and `src/discord/**` are untouched by Phase 6.
 
 For full Phase 6 requirements, see `phase6` at the repository root.
 

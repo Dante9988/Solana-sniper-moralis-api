@@ -1,5 +1,5 @@
 /**
- * Phase 6 — Prisma-reading glue for `src/api/` (phase6.txt §4.2: "It does not
+ * Phase 6 — Prisma-reading glue for `src/researchApi/` (phase6.txt §4.2: "It does not
  * reimplement projection logic"). Loads plain rows and calls the pure
  * `src/presentation/riskView.ts` projection; the projection logic itself
  * lives only there.

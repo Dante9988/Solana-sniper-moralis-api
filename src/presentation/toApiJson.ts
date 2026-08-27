@@ -1,6 +1,6 @@
 /**
  * Phase 6 — versioned HTTP JSON projection (phase6.txt §2.2). Pure function,
- * stable field names; `src/api/routes/tokens.ts` returns this shape as-is.
+ * stable field names; `src/researchApi/routes/tokens.ts` returns this shape as-is.
  */
 
 import { RiskView } from "./riskView";

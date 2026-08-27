@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const ROOTS = ["src/presentation", "src/api"];
+const ROOTS = ["src/presentation", "src/researchApi"];
 
 function collectSourceFiles(dir: string): string[] {
   const files: string[] = [];

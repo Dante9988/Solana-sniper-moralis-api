@@ -20,7 +20,7 @@
     "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts",
     "forensics:integration-fixture": "ts-node src/forensics/scripts/forensicsIntegrationFixtureMain.ts",
     "x:smoke": "ts-node src/x/smoke.ts",
-    "api": "ts-node src/api/server.ts"
+    "api": "ts-node src/researchApi/server.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
