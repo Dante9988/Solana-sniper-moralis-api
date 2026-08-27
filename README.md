@@ -1,187 +1,300 @@
-# 🚀 Solana Advanced Trading Bot 🤖
+# 🎯 Solana Sniper and Token Intelligence Platform
 
-A sophisticated trading bot for the Solana blockchain that monitors multiple DEXs and platforms, featuring advanced token analysis, multi-platform support, and intelligent decision-making capabilities. 🎯
+An event-driven Solana listener with Discord alerts, legacy trading utilities, and a new read-only token-intelligence pipeline. The intelligence layer researches newly discovered tokens, persists normalized reports, and optionally uses Anthropic Claude to synthesize evidence into a constrained `RESEARCH_ONLY` assessment.
 
-## ⭐ Key Features
+The current intelligence implementation covers Phases 1–4:
 
-### 🔍 Multi-Platform Monitoring
-- **Raydium LP Detection** 📡
-  - Real-time monitoring of new liquidity pool creation
-- **Pump.fun Integration** 🎮 
-  - New token creation detection ⚡
-  - Market cap filtering (max 20k) 💰
-  - Bonding curve analysis 📈
-- **Cross-platform Analysis** 🌐
-  - Simultaneous monitoring across multiple DEXs
+- Event normalization and non-blocking listener dispatch
+- Deterministic metadata, market, social, and safety research
+- Prisma-backed report and evidence persistence
+- Anthropic structured-output synthesis with strict safety boundaries
+- Moralis API compatibility cleanup for the 2026 endpoint removals
+- Removal of trench.bot from runtime paths
+- Canonical Solana/Ethereum/BNB asset identity and durable research observations
 
-### 📊 Advanced Token Analysis
-- **Multi-Source Data Aggregation** 🔄
-  - Moralis API integration for enhanced token data 🔋
-  - Pump.fun native data analysis 📊
-  - Trench analytics integration 📉
-  - DexScreener market data 📈
+Later features such as Chroma/RAG, trending tracking, macro/news ingestion, X ingestion, live EVM providers, portfolios, and internal bundle/wallet-cluster forensics are not implemented.
 
-### 🛡️ Intelligent Security Features
-- **Multi-Layer Rug Protection** 🔒
-  - Primary: Rugcheck.xyz integration
-  - Secondary: SolSniffer fallback
-  - Tertiary: Custom analytics
-- **AI-Powered Analysis** 🧠
-  - Grok integration for token analysis 🤖
-  - Dead token detection ⚰️
-  - Market trend analysis 📊
-  - Smart risk assessment ⚖️
+## 🏗️ Current architecture
 
-### 💬 Discord Integration
-- **Dual Bot System** 🤖
-  - Raydium token alerts 🔔
-  - Pump.fun specific alerts 📢
-- **Rich Data Display** 📱
-  - Real-time market metrics 📊
-  - Token analytics 📈
-  - Risk assessments ⚠️
-  - Trading links integration 🔗
+```text
+Solana listener
+  -> TokenDiscoveryEvent
+  -> bounded, non-blocking dispatcher
+  -> deterministic researchers
+       metadata
+       market
+       safety
+       social
+       bundle/sniper (currently UNAVAILABLE)
+  -> Anthropic synthesis (optional)
+  -> TokenIntelligenceReport
+  -> Prisma persistence
+```
 
-### ⚡ Performance Features
-- **Fallback Systems** 🔄
-  - Multiple RPC node support 🌐
-  - API redundancy 🔁
-  - Automatic failover mechanisms 🔄
-- **Optimization** ⚡
-  - Concurrent transaction processing 🚀
-  - Rate limiting protection 🛑
-  - Memory optimization 💾
+The listener does not wait for intelligence processing. Dispatch is deduplicated, concurrency-bounded, timeout-isolated, and protected against synchronous errors and unhandled promise rejections.
 
-## 📋 Prerequisites
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the broader legacy application map and [src/intelligence/README.md](./src/intelligence/README.md) for intelligence-specific boundaries.
 
-- Node.js v18 or higher 📦
-- Yarn package manager 🧶
-- Solana wallet with SOL 💰
-- Required API keys 🔑
-  - Moralis API key
-  - Helius RPC endpoint
-  - Discord bot tokens
-  - Rugcheck.xyz API key (optional)
+The Phase 4 asset foundation is documented in [src/assets/README.md](./src/assets/README.md). It is intentionally not connected to an active listener or tracker yet.
+
+## 🧠 Token intelligence
+
+### 📡 Event model
+
+`TokenDiscoveryEvent` records:
+
+- Event ID, signature, and mint
+- Evidence-based source classification: `PUMPFUN`, `PUMPSWAP`, `MIGRATION`, or `UNKNOWN`
+- Discovery and receipt timestamps
+- Original listener payload
+
+Sources are never guessed. If the observed program cannot prove the event source, it is classified as `UNKNOWN`.
+
+### 🔬 Deterministic researchers
+
+The orchestrator isolates each researcher so one provider failure cannot crash the listener or discard other evidence.
+
+| Researcher | Current sources and behavior |
+|---|---|
+| Metadata | Moralis metadata, Pump.fun frontend metadata, and on-chain migration corroboration where applicable |
+| Market | Moralis price/metadata/swaps with Birdeye volume and liquidity fallback |
+| Safety | Read-only RugCheck with SolSniffer fallback; no imports from transaction or wallet code |
+| Social | Normalized public links already obtained through metadata research |
+| Bundle/sniper | Explicitly `UNAVAILABLE` with source `INTERNAL_FORENSICS_PENDING` and confidence `0` |
+
+Missing analysis is represented as unknown, never as zero-valued evidence of safety.
+
+### 🚦 Report status
+
+Every report has one processing status:
+
+- ✅ `COMPLETE`: all required research and configured synthesis completed without errors
+- ⚠️ `PARTIAL`: useful deterministic evidence exists, but a source or synthesis step was unavailable
+- ❌ `FAILED`: no usable deterministic research was produced
+
+An AI failure can downgrade `COMPLETE` to `PARTIAL`, but AI success can never upgrade a deterministically failed report.
+
+### 🤖 Anthropic synthesis
+
+Anthropic is the only runtime synthesis provider. The implementation uses the official TypeScript SDK and native Messages API with zero tools.
+
+The model receives normalized research fields only and returns:
+
+```ts
+{
+  narrative: string;
+  category: string | null;
+  riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | "UNKNOWN";
+  confidence: number;
+  positiveSignals: string[];
+  riskFactors: string[];
+  reasons: string[];
+  missingInformation: string[];
+  dataQualityWarnings: string[];
+  recommendation: "RESEARCH_ONLY";
+}
+```
+
+Controls include:
+
+- Anthropic Structured Outputs plus local Zod validation
+- Prompt-injection boundaries for token metadata, websites, socials, and other researched content
+- Local rejection of prohibited trading language
+- No buy/sell advice, targets, position sizing, holding periods, or profit predictions
+- No claims that a token is guaranteed safe, legitimate, or profitable
+- Bounded exponential retry for retryable rate limits and transient server errors only
+- Typed handling for authentication failures, timeouts, refusals, malformed output, schema errors, and prohibited content
+- Persistence of provider/model/schema versions, latency, token usage, completion time, validation status, and failure reason
+
+If Anthropic is unconfigured or fails, the deterministic report remains usable and the assessment safely falls back to `UNKNOWN` and `RESEARCH_ONLY`.
+
+## 🔌 Moralis compatibility
+
+The project uses the supported Solana gateway host:
+
+```text
+https://solana-gateway.moralis.io
+```
+
+Retained, validated endpoint families:
+
+- `GET /token/{network}/{address}/metadata`
+- `GET /token/{network}/{address}/price`
+- `GET /token/{network}/{address}/swaps`
+- `GET /token/{network}/{address}/pairs`
+- `GET /token/{network}/pairs/{pairAddress}/stats`
+
+The shared client enforces timeouts, maximum response size, Zod response validation, nullable-field handling, retrieval timestamps, and typed failure classification. Only `429` and retryable `5xx` responses are retried.
+
+Removed Moralis REST features are not called or silently replaced:
+
+- Holders, top holders, and historical holders
+- Pair sniper analysis
+- Legacy discovery and volume endpoints
+- Exchange new/bonding/graduated endpoints
+- Bonding-status endpoint
+- Solana Token Score endpoints and metadata `score`
+
+Unsupported evidence returns a typed `ENDPOINT_REMOVED` or `UNAVAILABLE` result. Moralis Data Feeds are intentionally not adopted in this phase.
+
+## 🔍 Bundle and sniper analysis
+
+trench.bot and the retired Moralis sniper endpoint have been removed from runtime paths. The general report contract remains available:
+
+- Status and source
+- Findings
+- Evidence
+- Confidence
+- Errors
+- Optional bundle/sniper percentages when future evidence supports them
+
+Until internal forensics is built, the worker returns `INTERNAL_FORENSICS_PENDING`, empty findings/evidence, confidence `0`, and no synthetic percentages. This makes the overall report `PARTIAL`.
+
+## 🪪 Canonical assets and observations
+
+Canonical asset identity is the chain ID plus normalized address. Solana public keys remain case-sensitive. EVM addresses normalize to lowercase and require an explicit Ethereum or BNB Smart Chain selection; a bare EVM address returns an ambiguous-chain result. Ticker and name never determine identity.
+
+PostgreSQL stores canonical research assets and idempotent observations. SQLite remains the legacy actual-position tracker. `POSITION` observations are reserved and cannot be persisted by the research store, so discoveries never become fake holdings.
+
+Phase 4 provides types, resolution, a pure `TokenDiscoveryEvent` adapter, provider-neutral market observations, and a controlled Prisma store. It adds no listener integration, polling scheduler, live Ethereum/BNB provider, or execution capability.
+
+## 🛡️ Safety boundary
+
+The intelligence layer is read-only. It must not import or access:
+
+- Wallets, private keys, or keypairs
+- Signing or transaction construction
+- Buying, selling, swaps, or execution services
+- Sniperoo
+- Holdings or PnL writers
+- Discord clients that connect at import time
+- Shell, filesystem, Prisma/database, RPC, or Discord tools through Anthropic
+
+The repository still contains legacy listener, Discord, wallet, tracker, and trading modules. Their presence does not grant the intelligence pipeline access to them. Automated execution should be treated as a separate danger zone and reviewed independently before use.
+
+## 🗄️ Persistence
+
+Prisma models store:
+
+- Normalized token, social, market, safety, and bundle/sniper fields
+- AI assessment and Anthropic request metadata
+- Processing status and timestamps
+- Evidence records grouped by category
+- Worker errors and fatality flags
+
+Reports are upserted by `eventId` so repeated persistence does not create duplicate reports.
+
+## 📋 Requirements
+
+- Node.js 18 or newer
+- npm
+- PostgreSQL for intelligence report persistence
+- Solana RPC/WSS configuration for listeners
+- Discord configuration for alerts
+- Moralis API key for supported market/metadata enrichment
+- Anthropic API key only when live AI synthesis is desired
 
 ## 🛠️ Installation
 
-1. Clone the repository:
 ```bash
-git clone [repository-url]
+git clone https://github.com/Dante9988/Solana-sniper-moralis-api.git
 cd Solana-sniper-moralis-api
-```
-
-2. Install dependencies:
-```bash
-yarn install
-```
-
-3. Configure environment variables:
-```bash
+npm install
 cp .env.example .env
-# Edit .env with your API keys and configuration ⚙️
+npx prisma generate
+npx prisma migrate deploy
 ```
 
-## 🎮 Usage
+Never commit `.env`, API keys, wallet keys, or credentials.
 
-### 🚀 Starting Different Components
+## 🔐 Environment configuration
+
+The committed `.env.example` contains names and non-secret defaults for Anthropic synthesis:
+
+```dotenv
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+ANTHROPIC_TIMEOUT_MS=15000
+ANTHROPIC_MAX_TOKENS=1024
+```
+
+Existing runtime components may also require these names, depending on which process is started:
+
+- `DATABASE_URL`
+- `MORALIS_API_KEY`
+- `HELIUS_HTTPS_URI`, `HELIUS_WSS_URI`, `HELIUS_HTTPS_URI_TX`
+- `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`
+- PnL and summary Discord channel IDs
+- Jupiter and DexScreener endpoint variables
+- Legacy wallet variables for explicitly enabled execution paths
+
+Do not place real values in `.env.example`.
+
+## ⚙️ Commands
 
 ```bash
-# Start Raydium Sniper 🎯
-yarn dev
+# Compile TypeScript
+npm run build
 
-# Start Pump.fun Sniper 🎮
-yarn pumpfun
+# Run every mocked test
+npx vitest run
 
-# Start Token Tracker 📊
-yarn tracker
+# Run only token-intelligence tests
+npm run test:intelligence
 
-# Start 15k Market Cap Monitor 💰
-yarn pumpfun15k
+# Validate the Prisma schema
+npx prisma@6.5.0 validate
 
-# Start Development Server 🖥️
-yarn server:dev
+# Start the primary listener
+npm run dev
+
+# Start the Pump.fun listener
+npm run pumpfun
+
+# Start token tracking
+npm run tracker
+
+# Start the 15k monitor
+npm run pumpfun15k
+
+# Start the development server
+npm run server:dev
 ```
 
-### ⚙️ Configuration
+All intelligence and provider tests mock network access. Tests do not call Moralis, Anthropic, RugCheck, SolSniffer, Pump.fun, or other live services.
 
-Edit `config.ts` to customize:
-- Transaction parameters 💱
-- Risk management settings 🛡️
-- Token filtering criteria 🔍
-- Discord notification preferences 🔔
-- RPC endpoints and API configurations 🌐
+## ✅ Verification status
 
-## 🔧 Advanced Configuration
+The latest Phase 4 verification covers:
 
-### 🎯 Token Filtering
-```typescript
-// Example configuration in config.ts
-export const tokenFilters = {
-  maxMarketCap: 20000, 💰
-  minLiquidity: 1000, 💧
-  excludeTokens: [...], ❌
-  // ... other filters
-};
-```
+- TypeScript production build passing
+- Canonical resolution, ambiguous EVM chains, observation validation, idempotent mocked persistence, and execution-boundary tests
+- Prisma 6.5 schema validation
+- No active trench.bot URL or client
+- No active removed Moralis endpoint calls
+- No temporary Anthropic smoke-test files or background listener processes
 
-### ⚖️ Risk Management
-```typescript
-export const riskConfig = {
-  rugCheckEnabled: true, 🛡️
-  fallbackServices: true, 🔄
-  maxSlippage: 1, 📊
-  // ... other settings
-};
-```
+Native bigint bindings may emit a warning during tests and fall back to their pure-JavaScript implementation.
 
-## 🔌 API Integration
+## 🚧 Known limitations and next work
 
-The bot integrates with multiple APIs:
-- Moralis API for token data 📊
-- Helius RPC for blockchain interaction ⛓️
-- Jupiter V6 for swap operations 💱
-- Rugcheck.xyz for security verification 🛡️
-- DexScreener for market data 📈
-- Pump.fun SDK for platform-specific operations 🎮
+- The Phase 4 asset store is not wired into listeners or the intelligence orchestrator yet.
+- Live Ethereum and BNB data providers are not implemented.
+- Internal bundle, sniper, developer, insider, and wallet-cluster forensics are pending.
+- Hard eligibility policy is pending; missing forensic evidence must prevent a future `ELIGIBLE` or safe conclusion.
+- Chroma/RAG, trending history, macro/news research, and X ingestion are not implemented.
+- Optional live provider smoke tests require explicit credentials and are not part of the mocked suite.
+- Some legacy analytics paths still use zero-valued presentation fallbacks; intelligence reports preserve unavailable evidence separately.
+- The broader repository includes legacy execution-capable code and should not be treated as safe for unattended trading without a separate audit.
 
-## 🔒 Security Features
+## ⚠️ Security and disclaimer
 
-- Multi-layer rug protection 🛡️
-- Transaction simulation before execution ⚡
-- Rate limiting and request throttling 🚦
-- Secure key management 🔑
-- Error handling and recovery 🔄
-- Automatic blacklisting of suspicious tokens ⛔
+This software is experimental and intended for research and educational use. Cryptocurrency and automated trading can result in total loss. A token-intelligence report is incomplete evidence, not financial advice or a guarantee of safety, legitimacy, or profitability. Verify all findings independently and keep execution disabled unless you have reviewed and accepted the risks.
 
-## 📊 Performance Monitoring
+## 📚 Resources
 
-- Real-time transaction metrics ⚡
-- API response time tracking ⏱️
-- Memory usage monitoring 💾
-- Error rate tracking 📉
-- Success rate analytics 📈
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting pull requests. 🌟
-
-## 📜 License
-
-This project is licensed under the MIT License - see the LICENSE file for details. ⚖️
-
-## ⚠️ Disclaimer
-
-This software is for educational purposes only. Trading cryptocurrencies carries significant risks. Always perform your own research (DYOR) before trading. The creators and contributors are not responsible for any financial losses. 💭
-
-## 🔗 Resources
-
-- [Helius Docs](https://docs.helius.dev) 📚
-- [Jupiter V6 API](https://station.jup.ag/docs/apis/swap-api) 🪐
-- [Pump.fun Documentation](https://docs.pump.fun) 🎮
-- [Moralis API Reference](https://docs.moralis.com/) 🔌
-- [Solana Documentation](https://docs.solana.com) ☀️
-
-## 💫 Support
-
-If you find this project helpful, please give it a star ⭐
+- [Anthropic API documentation](https://docs.anthropic.com/)
+- [Moralis Data API documentation](https://docs.moralis.com/)
+- [Helius documentation](https://docs.helius.dev/)
+- [Solana documentation](https://solana.com/docs)
+- [Prisma documentation](https://www.prisma.io/docs)

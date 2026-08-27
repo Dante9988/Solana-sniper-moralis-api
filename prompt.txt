@@ -1,0 +1,291 @@
+You are the lead engineer for an existing TypeScript/Node.js Solana token-monitoring system.
+
+Your task is to evolve the project into an event-driven token intelligence platform. We want to keep listening for migrated/graduated tokens and process them deeply—token name, metadata, socials, market data, creator history, holders, bundles/snipers, safety/rug signals, and AI reasoning.
+
+We are not building automatic trading. We are not changing wallets, private keys, or enabling buy/sell execution.
+
+## Project reality
+
+Current stack:
+
+* TypeScript / Node.js 18+
+* Solana Web3.js
+* Helius RPC/WSS and Geyser WSS
+* Prisma + PostgreSQL
+* SQLite holdings tracker
+* Discord.js v14
+* Express metrics endpoint
+* Moralis, DexScreener, RugCheck, SolSniffer, Jupiter
+* Existing Pump.fun and partial PumpSwap monitoring
+* Local Ollama models available:
+
+  * `glm-4.7-flash`
+  * `qwen2.5vl`
+  * `Devstral-Small-2-24B-Instruct-2512-GGUF`
+  * `gemma3:270m`
+
+Existing runtime paths:
+
+* `yarn pumpfun` → `src/pumpfun-sniper.ts`
+
+  * watches new Pump.fun mints
+* `yarn dev` → `src/index.ts`
+
+  * watches configured pool/migration events and sends Discord alerts
+* `src/services/pumpSwapService.ts`
+
+  * contains PumpSwap helper logic but is not properly integrated into the active listener
+
+Known facts:
+
+* Pump.fun program:
+  `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`
+* Actual PumpSwap AMM program:
+  `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`
+* Existing configuration has a listener labelled “pumpswap” that appears to subscribe to the Pump.fun program instead.
+* Existing downstream alert logic may ignore non-`pump` mints.
+* Trading must remain disabled/fail-closed.
+
+## Core objective
+
+Create a separate intelligence layer that receives a normalized token event from listeners and researches the token before creating an actionable intelligence record.
+
+Target flow:
+
+```text
+Pump.fun / PumpSwap / migration listener
+  → normalized TokenDiscoveryEvent
+  → token intelligence orchestrator
+  → deterministic metadata + market + safety research
+  → parallel specialized research tasks where useful
+  → AI synthesis with evidence
+  → PostgreSQL source-of-truth persistence
+  → Chroma semantic index for RAG
+  → later: notification channels and human review
+```
+
+The listeners are event sources only. They should not contain all analysis logic.
+
+## Agent architecture
+
+Create a service called `TokenIntelligenceOrchestrator`.
+
+It is the lead intelligence agent and may invoke focused worker modules/subagents only when needed:
+
+1. `metadata-researcher`
+
+   * Fetch on-chain mint data.
+   * Fetch name, symbol, URI, image, creator/deployer.
+   * Resolve Pump.fun and PumpSwap state.
+   * Extract website, X, Telegram, Discord and other socials.
+   * Identify missing, malformed, copied, or suspicious metadata.
+
+2. `market-researcher`
+
+   * Pull price, market cap/FDV, liquidity, volume, trades, pools and age.
+   * Use existing project services where possible.
+   * Store source timestamps and distinguish unavailable from verified values.
+
+3. `safety-researcher`
+
+   * Check mint authority, freeze authority, token standard, liquidity status, holder concentration, creator holdings, developer wallet history, RugCheck, SolSniffer and known risk flags.
+   * Never claim “safe”; return evidence, uncertainty, and risk factors.
+
+4. `bundle-sniper-researcher`
+
+   * Reuse existing sniper/bundle/trench services where available.
+   * Determine likely bundled buys, sniper share, related early wallets, creator-linked wallets, and concentration.
+   * Return raw evidence and confidence—not unsupported labels.
+
+5. `social-researcher`
+
+   * Evaluate extracted socials and links.
+   * Detect presence/absence, consistency between token metadata and public accounts, account age/verification where data is available, and obvious impersonation signals.
+   * Do not scrape restricted platforms or bypass access controls.
+
+6. `ai-synthesis-agent`
+
+   * Uses local Ollama through a provider abstraction.
+   * Receives only structured research outputs.
+   * Produces schema-validated JSON, never free-form text controlling execution.
+   * Explains the token’s narrative, evidence, risk factors, missing data, and confidence.
+   * Must not make a “buy” decision.
+
+Use deterministic analysis before AI. The LLM is for context synthesis, ambiguity detection, and explanation—not for deciding facts that can be validated through on-chain or API data.
+
+## Required canonical event
+
+Create an internal event shape similar to:
+
+```ts
+interface TokenDiscoveryEvent {
+  id: string;
+  source: "PUMPFUN" | "PUMPSWAP" | "MIGRATION";
+  signature: string;
+  mint: string;
+  poolAddress?: string;
+  discoveredAt: Date;
+  receivedAt: Date;
+  rawPayload: unknown;
+}
+```
+
+The intelligence result should be structured, evidence-based, and persistable:
+
+```ts
+interface TokenIntelligenceReport {
+  eventId: string;
+  mint: string;
+  token: {
+    name?: string;
+    symbol?: string;
+    imageUrl?: string;
+    metadataUri?: string;
+    creator?: string;
+    creationTime?: Date;
+  };
+  socials: {
+    website?: string;
+    twitter?: string;
+    telegram?: string;
+    discord?: string;
+    findings: string[];
+  };
+  market: {
+    price?: number;
+    marketCap?: number;
+    fdv?: number;
+    liquidity?: number;
+    volume24h?: number;
+    holders?: number;
+    pools: unknown[];
+    sources: unknown[];
+  };
+  safety: {
+    mintAuthority?: string;
+    freezeAuthority?: string;
+    creatorHoldingsPct?: number;
+    topHolderConcentrationPct?: number;
+    rugCheck?: unknown;
+    solSniffer?: unknown;
+    riskFactors: string[];
+    confidence: number;
+  };
+  bundlesAndSnipers: {
+    sniperPct?: number;
+    bundledPct?: number;
+    findings: string[];
+    evidence: unknown[];
+    confidence: number;
+  };
+  aiAssessment: {
+    narrative?: string;
+    category?: string;
+    riskLevel: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | "UNKNOWN";
+    confidence: number;
+    reasons: string[];
+    missingInformation: string[];
+    recommendation: "RESEARCH_ONLY";
+  };
+  processing: {
+    status: "COMPLETE" | "PARTIAL" | "FAILED";
+    errors: string[];
+    startedAt: Date;
+    completedAt?: Date;
+  };
+}
+```
+
+## RAG / Chroma requirement
+
+Use PostgreSQL as the source of truth.
+
+Add Chroma only as a semantic-search projection. Index:
+
+* normalized token report
+* token name/symbol/narrative
+* social findings
+* safety and bundle findings
+* AI assessment
+* source event ID, mint, source, timestamps, risk level and confidence as metadata
+
+This must allow future questions such as:
+
+* “Show tokens with a similar narrative to this one.”
+* “Have we seen this creator, website, Telegram, or wallet before?”
+* “Which migrations had high bundled-wallet risk?”
+* “What signals appeared before tokens that later performed well or rugged?”
+
+Do not allow an AI agent to write directly to PostgreSQL or Chroma. It must call controlled application services.
+
+## Security boundaries
+
+These are mandatory:
+
+* Do not enable or add automated buying, selling, swaps, signing, wallet funding, or private-key access.
+* Do not modify existing wallet files or print `.env` contents.
+* Do not make AI output sufficient to execute a transaction.
+* Add an explicit execution guard that always fails closed.
+* Preserve current simulation/disabled behavior.
+* Do not describe any token as guaranteed safe, legitimate, profitable, or a buy.
+* Record data source, timestamp, missing fields, errors, and confidence for every report.
+
+## Claude Code workflow
+
+Before editing:
+
+1. Inspect `package.json`, `src/`, Prisma schema, existing services, current config, tests and documentation.
+2. Use a read-only `repository-auditor` subagent to map the real listener paths and reusable services.
+3. Use a read-only `safety-reviewer` subagent to identify execution paths, wallet access, private-key usage and methods that must be isolated.
+4. Return a concise audit and exact file-by-file implementation plan.
+5. Wait for approval before edits.
+
+After approval, work in small phases:
+
+### Phase 1 — Intelligence foundation
+
+* Create normalized event types.
+* Create the orchestrator and worker interfaces.
+* Reuse current metadata/market/rug/bundle services where safe.
+* Add Prisma models/migration for reports, evidence, errors and processing status.
+* Add unit tests using synthetic token events.
+* Do not alter listener behavior yet.
+
+### Phase 2 — Listener integration
+
+* Integrate the intelligence orchestrator with the migrated-token/pool event path only after Phase 1 passes.
+* Keep existing alerts untouched initially.
+* Ensure the listener can publish an event without waiting indefinitely for research.
+* Guarantee idempotency by signature and mint.
+
+### Phase 3 — Chroma RAG
+
+* Add the Chroma client/indexer abstraction.
+* Index completed/partial reports.
+* Add filtered semantic search by mint, creator, source, risk level and time.
+* Add tests.
+
+### Phase 4 — Local AI synthesis
+
+* Add an Ollama provider abstraction.
+* Use `glm-4.7-flash` for structured synthesis.
+* Use `qwen2.5vl` only for metadata images/OCR when justified.
+* Validate output with Zod.
+* AI failure must leave the deterministic report usable.
+
+### Phase 5 — Presentation
+
+* Add a safe API endpoint/dashboard-ready read model.
+* Do not build notification logic unless explicitly asked later.
+
+## Deliverables
+
+At each phase report:
+
+* Changed files
+* Actual verification commands and results
+* What remains unverified
+* Any external API key or access blocker
+* Confirmation that trading remains impossible from this pipeline
+
+Start now with repository audit only. Do not edit files until you return the audit, reusable-service map, execution-risk map, and exact Phase 1 plan.

@@ -28,6 +28,11 @@
     "websocket:test": "ts-node src/test-websocket.ts",
     "api:server": "ts-node src/api-server.ts",
     "check:api": "ts-node src/check-api.ts"
+    "test:intelligence": "vitest run src/intelligence",
+    "forensics:worker": "ts-node src/forensics/scripts/forensicsWorkerMain.ts",
+    "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts",
+    "forensics:integration-fixture": "ts-node src/forensics/scripts/forensicsIntegrationFixtureMain.ts",
+    "x:smoke": "ts-node src/x/smoke.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
@@ -35,6 +40,7 @@
   "description": "",
   "devDependencies": {
     "@types/bn.js": "^5.1.6",
+    "@types/body-parser": "^1.19.6",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.17",
     "@types/luxon": "^3.4.2",
@@ -45,16 +51,21 @@
     "eslint": "^9.15.0",
     "globals": "^15.12.0",
     "nodemon": "^3.1.9",
+    "prisma": "^6.5.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2",
-    "typescript-eslint": "^8.16.0"
+    "typescript-eslint": "^8.16.0",
+    "vitest": "^2.1.9"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.120.0",
     "@coral-xyz/anchor": "^0.30.1",
+    "@coral-xyz/borsh": "^0.32.1",
     "@cryptoscan/pumpfun-sdk": "^1.3.1",
     "@metaplex-foundation/js": "^0.20.1",
     "@metaplex-foundation/mpl-token-metadata": "^3.2.1",
     "@metaplex-foundation/umi": "^0.9.1",
+    "@openai/codex": "^0.149.1",
     "@prisma/client": "^6.4.1",
     "@project-serum/anchor": "^0.26.0",
     "@pythnetwork/client": "^2.22.1",
@@ -96,6 +107,8 @@
     "swagger-ui-express": "^5.0.1",
     "tailwindcss": "^4.0.16",
     "telegraf": "^4.16.3",
-    "ws": "^8.18.1"
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.18.1",
+    "zod": "^4.4.3"
   }
 }

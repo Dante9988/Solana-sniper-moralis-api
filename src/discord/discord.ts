@@ -9,6 +9,7 @@ import { analyzeTokenWithGrok, TokenAnalysisData, updateDiscordWithGrokAnalysis 
 import { getRugCheckConfirmed } from '../transactions';
 import { getTokenMarketData, formatPrice, formatMarketCap, formatVolume, formatLiquidity } from '../services/tokenDataService';
 import { fetchSniperData } from '../services/sniperDataService';
+import { getMoralisPrice, getMoralisSwaps } from '../services/moralisClient';
 import { storeTokenAlert } from '../services/tokenTrackingService';
 import { sniperooService, UserConfig, isWalletData } from '../services/sniperooService';
 import { registerCommands, setupCommandExecution } from './registerCommands';
@@ -495,6 +496,7 @@ async function fetchTokenData(tokenMint: string): Promise<TokenData> {
   }
 
 export interface TrenchBundleData {
+interface PendingBundleData {
     ticker?: string;
     bonded?: boolean;
     totalBundles?: number;
@@ -526,6 +528,9 @@ export async function fetchTrenchData(tokenMint: string): Promise<TrenchBundleDa
         console.error('Error fetching Trench data:', error);
         return {};
     }
+}
+async function fetchPendingBundleData(_tokenMint: string): Promise<PendingBundleData> {
+    return {};
 }
 
 async function calculateMarketCap(tokenMint: string): Promise<number> {
@@ -591,23 +596,14 @@ async function fetchLatestPrice(tokenMint: string, retryCount = 3): Promise<numb
         await sleep(RETRY_DELAY);
       }
       
-      const response = await axios.get(
-        `https://solana-gateway.moralis.io/token/mainnet/${tokenMint}/price`,
-        {
-          headers: {
-            'accept': 'application/json',
-            'X-API-Key': process.env.MORALIS_API_KEY || ''
-          },
-          timeout: 10000 // 10 seconds timeout
-        }
-      );
+      const response = await getMoralisPrice(tokenMint);
       
       // Check if we got valid price data
-      if (response.data && response.data.usdPrice && response.data.usdPrice > 0) {
+      if (response.status === 'AVAILABLE' && response.data.usdPrice && response.data.usdPrice > 0) {
         console.log(`Successfully fetched latest price data for ${tokenMint}: $${response.data.usdPrice}`);
         return response.data.usdPrice;
       } else {
-        console.warn(`Received invalid latest price data for ${tokenMint}: ${JSON.stringify(response.data)}`);
+        console.warn(`Latest Moralis price is unavailable for ${tokenMint}`);
         // Treat this as an error and retry
         throw new Error('Invalid latest price data received');
       }
@@ -767,14 +763,39 @@ export async function sendTokenAlert(tokenMint: string, rugCheckPassed: boolean,
             console.log(`⚠️ Market cap ($${marketCap.toLocaleString()}) is below minimum threshold ($${MINIMUM_MARKET_CAP.toLocaleString()}). Skipping alert.`);
             return;
         }
+
+        // Fetch all necessary data in parallel, but handle failures independently
+        const [tokenDataResult, bundleResult, sniperDataResult] = await Promise.allSettled([
+            getTokenMarketData(tokenMint),
+            fetchPendingBundleData(tokenMint),
+            fetchSniperData(tokenMint)
+        ]);
+        
+        // Safely extract data from results
+        const tokenData = tokenDataResult.status === 'fulfilled' ? tokenDataResult.value : null;
+        const bundleData = bundleResult.status === 'fulfilled' ? bundleResult.value : {
+            holdingBundles: 0,
+            totalBundles: 0,
+            holdingPercentage: 0,
+            totalSolSpent: null,
+            ticker: null
+        };
+        const sniperData = sniperDataResult.status === 'fulfilled' ? sniperDataResult.value : null;
+        
+        // Get the latest price right before sending the alert
+        console.log(`Fetching latest price for ${tokenMint} before sending alert...`);
+        const price = await fetchLatestPrice(tokenMint);
+        
+        // Use the verified market cap
+        const marketCap = verifiedMarketCap;
         
         console.log(`Latest verified data for ${tokenMint}:
         - Price: ${price}
         - Market Cap: $${marketCap.toLocaleString()}`);
         
         // Get token name and ticker from Moralis data if available
-        const tokenName = tokenData?.metadata?.name || trenchData.ticker?.toUpperCase() || 'UNKNOWN';
-        const tokenSymbol = tokenData?.metadata?.symbol || trenchData.ticker?.toUpperCase() || 'UNKNOWN';
+        const tokenName = tokenData?.metadata?.name || bundleData.ticker?.toUpperCase() || 'UNKNOWN';
+        const tokenSymbol = tokenData?.metadata?.symbol || bundleData.ticker?.toUpperCase() || 'UNKNOWN';
         const tokenLogo = tokenData?.metadata?.logo || null;
         const moralisLink = tokenData?.metadata?.links?.moralis || null;
         
@@ -865,9 +886,9 @@ Token: ${tokenMint}
 
 **🎯 Quick Stats**
 ━━━━━━━━━━━━━━━━━━━━━━
-📦 **Bundles:** ${trenchData.holdingBundles || '0'}/${trenchData.totalBundles || '0'}
-📦 **Percentage:** ${trenchData.holdingPercentage || '0'}%
-💵 **SOL Spent:** ${trenchData.totalSolSpent ? `◎${trenchData.totalSolSpent}` : 'Unknown'}
+📦 **Bundles:** ${bundleData.holdingBundles || '0'}/${bundleData.totalBundles || '0'}
+📦 **Percentage:** ${bundleData.holdingPercentage || '0'}%
+💵 **SOL Spent:** ${bundleData.totalSolSpent ? `◎${bundleData.totalSolSpent}` : 'Unknown'}
 🛡️ **Security:** ${rugCheckPassed ? '✅ PASSED' : '⚠️ CAUTION'}
 ${sniperSection}
 > 💡 *DYOR - Trade at your own risk*`,
@@ -892,7 +913,7 @@ ${sniperSection}
                 tokenName: tokenData?.metadata?.name || undefined,
                 initialMarketCap: marketCap, // Use verified market cap
                 initialPrice: price,
-                bundlePercentage: trenchData.holdingPercentage || undefined
+                bundlePercentage: bundleData.holdingPercentage || undefined
             });
         }
 
@@ -1164,18 +1185,9 @@ async function getTokenSupplyAndDecimals(mintAddress: string) {
 // Helper function to fetch swap data
 async function fetchSwapData(tokenMint: string): Promise<any> {
     try {
-        const response = await axios.get(
-            `https://solana-gateway.moralis.io/token/mainnet/${tokenMint}/swaps?limit=50`,
-            {
-                headers: {
-                    'accept': 'application/json',
-                    'X-API-Key': process.env.MORALIS_API_KEY || ''
-                },
-                timeout: 5000
-            }
-        );
-        
-        const swaps = response.data.result || [];
+        const response = await getMoralisSwaps(tokenMint, 50);
+        if (response.status === 'UNAVAILABLE') return null;
+        const swaps = response.data.result;
         
         if (swaps.length === 0) {
             return null;
@@ -1201,11 +1213,11 @@ async function fetchSwapData(tokenMint: string): Promise<any> {
         let largestSwap = 0;
         const uniqueWallets = new Set();
         
-        swaps.forEach((swap: SwapData) => {
+        swaps.forEach((swap) => {
             // Determine if it's a buy or sell
-            if (swap.bought && swap.bought.address.toLowerCase() === tokenMint.toLowerCase()) {
+            if (swap.bought?.address?.toLowerCase() === tokenMint.toLowerCase()) {
                 buySwaps++;
-            } else if (swap.sold && swap.sold.address.toLowerCase() === tokenMint.toLowerCase()) {
+            } else if (swap.sold?.address?.toLowerCase() === tokenMint.toLowerCase()) {
                 sellSwaps++;
             }
             
@@ -1266,7 +1278,7 @@ ${['Counting paper hands...', 'Measuring degen energy...', 'Calculating ape inde
         // Fetch all data in parallel
         const [
             tokenData, 
-            trenchData, 
+            bundleData,
             isBonded, 
             rugCheckPassed, 
             volumeLiquidity,
@@ -1275,7 +1287,7 @@ ${['Counting paper hands...', 'Measuring degen energy...', 'Calculating ape inde
             latestPrice
         ] = await Promise.all([
             fetchTokenData(tokenMint),
-            fetchTrenchData(tokenMint),
+            fetchPendingBundleData(tokenMint),
             checkBondingCurveStatus(tokenMint),
             getRugCheckConfirmed(tokenMint),
             getTokenVolumeAndLiquidity(tokenMint),
@@ -1320,16 +1332,16 @@ ${['Counting paper hands...', 'Measuring degen energy...', 'Calculating ape inde
         
         const analysisData: TokenAnalysisData = {
             tokenMint,
-            ticker: trenchData.ticker?.toUpperCase() || tokenMint.slice(0, 4),
+            ticker: bundleData.ticker?.toUpperCase() || tokenMint.slice(0, 4),
             marketCap: formattedMarketCap,
             currentPrice,
             initialPrice: priceHistory.items[0]?.value || 0,
             liquidity: volumeLiquidity.liquidity || '0',
             volume24h: volumeLiquidity.volume24h || '0',
-            totalBundles: trenchData.totalBundles || 0,
-            holdingBundles: trenchData.holdingBundles || 0,
-            totalSolSpent: trenchData.totalSolSpent?.toString() || '0',
-            holdingPercentage: trenchData.holdingPercentage?.toString() || '0',
+            totalBundles: bundleData.totalBundles || 0,
+            holdingBundles: bundleData.holdingBundles || 0,
+            totalSolSpent: bundleData.totalSolSpent?.toString() || '0',
+            holdingPercentage: bundleData.holdingPercentage?.toString() || '0',
             isBonded,
             rugCheckPassed,
             priceHistory: priceHistory.items || [],
@@ -1346,7 +1358,7 @@ ${['Counting paper hands...', 'Measuring degen energy...', 'Calculating ape inde
                 color: 0xFFA500, // Orange for processing
                 title: '🧠 STROBE AI - DEEP ANALYSIS IN PROGRESS',
                 description: `
-**Analyzing ${trenchData.ticker || tokenMint.slice(0, 6)}...**
+**Analyzing ${bundleData.ticker || tokenMint.slice(0, 6)}...**
 
 💰 Market Cap: ${formattedMarketCap}
 💧 Liquidity: ${formatNumber(volumeLiquidity.liquidity || 'Unknown')}
@@ -1388,10 +1400,10 @@ ${['Counting paper hands...', 'Measuring degen energy...', 'Calculating ape inde
             const randomMeme = deadTokenMemes[Math.floor(Math.random() * deadTokenMemes.length)];
             
             formattedAnalysis = `**Token Data:**
-${trenchData.ticker} (${tokenMint})
+${bundleData.ticker} (${tokenMint})
 💰 **Market Cap:** ${formattedMarketCap}
 💧 **Liquidity:** ${formatNumber(volumeLiquidity.liquidity || 'Unknown')}
-👨‍💻 **Dev Stats:** ${trenchData.holdingBundles}/${trenchData.totalBundles} bundles, ${formatNumber(trenchData.totalSolSpent)} SOL spent
+👨‍💻 **Dev Stats:** ${bundleData.holdingBundles}/${bundleData.totalBundles} bundles, ${formatNumber(bundleData.totalSolSpent)} SOL spent
 🔒 **Security:** ${rugCheckPassed ? 'PASSED' : 'FAILED'}, Bonded: ${isBonded ? 'Yes' : 'No'}
 
 **💀 DEAD TOKEN ALERT**
@@ -1428,10 +1440,10 @@ ${analysisSummary}
             const randomMeme = activeTokenMemes[Math.floor(Math.random() * activeTokenMemes.length)];
             
             formattedAnalysis = `**Token Data:**
-${trenchData.ticker} (${tokenMint})
+${bundleData.ticker} (${tokenMint})
 💰 **Market Cap:** ${formattedMarketCap}
 💧 **Liquidity:** ${formatNumber(volumeLiquidity.liquidity || 'Unknown')}
-👨‍💻 **Dev Stats:** ${trenchData.holdingBundles}/${trenchData.totalBundles} bundles, ${formatNumber(trenchData.totalSolSpent)} SOL spent
+👨‍💻 **Dev Stats:** ${bundleData.holdingBundles}/${bundleData.totalBundles} bundles, ${formatNumber(bundleData.totalSolSpent)} SOL spent
 🔒 **Security:** ${rugCheckPassed ? '✅ PASSED' : '⚠️ FAILED'}, Bonded: ${isBonded ? 'Yes' : 'No'}
 
 **📈 MARKET_CAP_LEVELS**

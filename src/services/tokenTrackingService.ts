@@ -2,6 +2,7 @@ import { PrismaClient, TokenAlert } from '@prisma/client';
 import { getTokenMarketData } from './tokenDataService';
 import { Client, TextChannel, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import axios from 'axios';
+import { getMoralisPrice, getMoralisSwaps } from './moralisClient';
 import path from 'path';
 import { createCanvas, loadImage } from 'canvas';
 import dotenv from 'dotenv';
@@ -62,40 +63,21 @@ async function getHighestMarketCap(tokenAddress: string): Promise<{
     
     // Keep fetching pages until we find migration point
     while (!foundMigrationPoint) {
-      const queryParams: string = new URLSearchParams({
-        order: 'DESC', // Newest first
-        limit: limit.toString(),
-        ...(nextCursor && { cursor: nextCursor })
-      }).toString();
-
-      console.log(`Making request with params: ${queryParams}`);
-
-      let response: any;
-      try {
-        response = await axios.get(
-          `https://solana-gateway.moralis.io/token/mainnet/${tokenAddress}/swaps?${queryParams}`,
-        {
-          headers: {
-            'accept': 'application/json',
-            'X-API-Key': process.env.MORALIS_API_KEY || ''
-          },
-          timeout: 10000
-        }
-      )
-    } catch (error) {
-      console.error('Error fetching swaps:', error);
-      break;
-    }
+      const response = await getMoralisSwaps(tokenAddress, limit, nextCursor);
+      if (response.status === 'UNAVAILABLE') break;
 
       if (!response.data.result || response.data.result.length === 0) {
         console.log('No more swaps found');
         break;
       }
 
-      const swaps = response.data.result;
+      const swaps = response.data.result as unknown as SwapData[];
       
       // Find the last (oldest) Pump.fun swap in this batch
-      const lastPumpFunIndex = swaps.findLastIndex((swap: SwapData) => swap.exchangeName === 'Pump.Fun');
+      let lastPumpFunIndex = -1;
+      for (let index = swaps.length - 1; index >= 0; index -= 1) {
+        if (swaps[index].exchangeName === 'Pump.Fun') { lastPumpFunIndex = index; break; }
+      }
       
       if (lastPumpFunIndex !== -1) {
         console.log('Found last Pump.fun swap in this batch - collecting newer Raydium swaps');
@@ -113,7 +95,7 @@ async function getHighestMarketCap(tokenAddress: string): Promise<{
       }
 
       // Get cursor for next page if needed
-      nextCursor = response.data.cursor;
+      nextCursor = response.data.cursor ?? undefined;
       
       // Stop if we found migration point or no more pages
       if (foundMigrationPoint || !nextCursor) {
@@ -455,6 +437,12 @@ async function getSolPrice(): Promise<number> {
     if (response.data && response.data.solana && response.data.solana.usd) {
       console.log(`Current SOL price: $${response.data.solana.usd}`);
       return response.data.solana.usd;
+    console.log('Attempting to fetch SOL price...');
+    const response = await getMoralisPrice('So11111111111111111111111111111111111111112');
+
+    if (response.status === 'AVAILABLE' && response.data.usdPrice) {
+      console.log(`SOL price fetched successfully: $${response.data.usdPrice}`);
+      return response.data.usdPrice;
     }
     
     // Fallback to a reasonable default if API fails
@@ -1270,4 +1258,3 @@ export async function getTopPerformingTokens(limit = 10): Promise<any[]> {
     return [];
   }
 } 
-

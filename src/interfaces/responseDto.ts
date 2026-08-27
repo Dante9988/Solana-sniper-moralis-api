@@ -76,7 +76,7 @@ export interface TokenSafetyCheck {
   };
 }
 
-export interface TrenchBundleData {
+export interface BundleForensicsData {
     ticker?: string;
     bonded?: boolean;
     totalBundles?: number;

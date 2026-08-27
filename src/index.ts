@@ -104,6 +104,7 @@ async function doubleCheckMarketCap(tokenMint: string, retryCount = 1): Promise<
         return 0;
     }
 }
+import { dispatchTokenIntelligence } from "./services/tokenIntelligenceDispatch";
 
 const audioPlayer = player({});
 
@@ -683,17 +684,18 @@ async function websocketHandler(): Promise<void> {
         }
       }
 
-      // Check for pool creation instructions from any enabled pool
-      const liquidityPoolInstructions = config.liquidity_pool
+      // Check for pool creation instructions from any enabled pool, keeping
+      // a reference to which pool matched (needed to classify the
+      // intelligence event's source below without changing this filter's
+      // existing behavior).
+      const matchedPool = config.liquidity_pool
         .filter(pool => pool.enabled)
-        .map(pool => pool.instruction);
-      
-      const containsCreate = logs.some((log: string) => 
-        typeof log === "string" && 
-        liquidityPoolInstructions.some(instruction => instruction && log.includes(instruction))
-      );
+        .find(pool =>
+          typeof pool.instruction === "string" &&
+          logs.some((log: string) => typeof log === "string" && log.includes(pool.instruction as string))
+        );
 
-      if (!containsCreate) return;
+      if (!matchedPool) return;
 
       console.log(`Detected pool creation/migration transaction: ${signature}`);
       console.log(`Solscan: https://solscan.io/tx/${signature}`);
@@ -708,6 +710,14 @@ async function websocketHandler(): Promise<void> {
       console.log("🔎 Detected new pool initialization");
       console.log(`Token Mint: ${tokenData.tokenMint}`);
       console.log(`Transaction: https://solscan.io/tx/${signature}`);
+
+      // Non-blocking: dispatch to the token intelligence pipeline alongside
+      // (not instead of) the existing alert/trading flow below. Does not
+      // await, does not share the activeTransactions gate, and cannot throw
+      // back into this handler.
+      if (tokenData.tokenMint) {
+        dispatchTokenIntelligence(signature, tokenData.tokenMint, matchedPool.program, parsedData?.params?.result?.value);
+      }
 
       // Verify if we have reached the max concurrent transactions
       if (activeTransactions >= MAX_CONCURRENT) {
