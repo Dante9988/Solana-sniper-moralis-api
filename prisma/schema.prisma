@@ -94,6 +94,8 @@ model UserPreference {
   pumpSwapEnabled Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
 // --- Token Intelligence layer (read-only research/reporting; no execution) ---
 
 model TokenIntelligenceReport {

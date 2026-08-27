@@ -1,7 +1,7 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getTokenMarketData } from "../../services/tokenDataService";
 import { fetchPumpFunFrontendData } from "../../services/pumpFunSocialClient";
-import { verifyPumpFunMigration } from "../../services/pumpSwapService";
+import { verifyPumpFunMigration } from "../../services/pumpswapService";
 import { TokenDiscoveryEvent, TokenIntelligenceReport, WorkerResult } from "../types";
 
 type MetadataResult = TokenIntelligenceReport["token"];

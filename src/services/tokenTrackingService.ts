@@ -429,14 +429,6 @@ export async function checkTokenPnL(discordClient: Client) {
  */
 async function getSolPrice(): Promise<number> {
   try {
-    const response = await axios.get(
-      'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
-      { timeout: 5000 }
-    );
-    
-    if (response.data && response.data.solana && response.data.solana.usd) {
-      console.log(`Current SOL price: $${response.data.solana.usd}`);
-      return response.data.solana.usd;
     console.log('Attempting to fetch SOL price...');
     const response = await getMoralisPrice('So11111111111111111111111111111111111111112');
 
@@ -444,13 +436,11 @@ async function getSolPrice(): Promise<number> {
       console.log(`SOL price fetched successfully: $${response.data.usdPrice}`);
       return response.data.usdPrice;
     }
-    
-    // Fallback to a reasonable default if API fails
-    console.warn('Could not get SOL price from CoinGecko, using fallback price');
-    return 170; // Default fallback price
+
+    throw new Error('Invalid SOL price data received');
   } catch (error) {
     console.error('Error fetching SOL price:', error);
-    return 170; // Default fallback price
+    return 240; // Fallback price if API fails
   }
 }
 
