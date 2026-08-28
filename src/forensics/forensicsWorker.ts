@@ -26,6 +26,11 @@ import { RequestBudget, createRequestBudget } from "./requestBudget";
 import { ForensicsWorkerConfig } from "./forensicsWorkerConfig";
 import { AnalysisLevel, LaunchInfo } from "./types";
 
+export type JobLifecycleEvent =
+  | { type: "started"; job: ClaimedForensicsJob }
+  | { type: "completed"; job: ClaimedForensicsJob; status: "COMPLETE" | "PARTIAL" }
+  | { type: "failed"; job: ClaimedForensicsJob; reason: string };
+
 export interface ForensicsWorkerLogger {
   info: (message: string) => void;
   warn: (message: string) => void;
@@ -54,6 +59,16 @@ export interface ForensicsWorkerDependencies {
   /** Periodic sweep for previously-unreconciled runs. Only scheduled if provided. */
   reconciliationSweep?: () => Promise<void>;
   reconciliationSweepMs?: number;
+  /**
+   * Phase 7B.2 (phase7b2.txt §6): invoked after a job's status transition
+   * has already committed to the database — never before, never instead of.
+   * Wired only from the worker entrypoint script (never from an import) to
+   * publish onto the realtime event bus, so a separate API/WebSocket
+   * process can relay it to subscribed clients. A failure here is logged
+   * and swallowed by the caller-supplied callback's own error handling;
+   * this class does not retry or fail the job over it.
+   */
+  onJobLifecycleEvent?: (event: JobLifecycleEvent) => Promise<void>;
 }
 
 async function interruptibleSleep(ms: number, isStopping: () => boolean): Promise<void> {
@@ -132,6 +147,12 @@ export class ForensicsWorker {
         continue;
       }
 
+      if (this.deps.onJobLifecycleEvent) {
+        await this.deps.onJobLifecycleEvent({ type: "started", job: claimed }).catch((err) => {
+          this.logger.warn(`forensics worker ${slotWorkerId}: lifecycle event (started) failed for job ${claimed!.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
       await this.processJob(claimed, slotWorkerId);
     }
   }
@@ -181,6 +202,12 @@ export class ForensicsWorker {
       await completeForensicsJob(this.deps.db, job.id, workerId, jobStatus);
       this.logger.info(`forensics job ${job.id} (${job.mint}) -> ${jobStatus} (run ${runId})`);
 
+      if (this.deps.onJobLifecycleEvent) {
+        await this.deps.onJobLifecycleEvent({ type: "completed", job, status: jobStatus }).catch((err) => {
+          this.logger.warn(`forensics worker ${workerId}: lifecycle event (completed) failed for job ${job.id}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
+
       // Forensic persistence above has already succeeded independently of
       // this — a reconciliation failure here must never mark the job/run
       // failed (phase5e.txt §9).
@@ -204,6 +231,18 @@ export class ForensicsWorker {
     try {
       if (permanent || job.attemptCount >= job.maxAttempts) {
         await failForensicsJob(this.deps.db, job.id, workerId, permanent ? "VALIDATION_ERROR" : "RETRIES_EXHAUSTED", message);
+        // Only a genuinely terminal failure is a "scan.failed" event
+        // (phase7b2.txt §5 "do not emit artificial progress ... only emit
+        // states the backend genuinely knows") — a retry just requeues the
+        // same job for another attempt, so subscribers should keep waiting,
+        // not see a false failure.
+        if (this.deps.onJobLifecycleEvent) {
+          await this.deps.onJobLifecycleEvent({ type: "failed", job, reason: message }).catch((lifecycleErr) => {
+            this.logger.warn(
+              `forensics worker ${workerId}: lifecycle event (failed) failed for job ${job.id}: ${lifecycleErr instanceof Error ? lifecycleErr.message : String(lifecycleErr)}`
+            );
+          });
+        }
       } else {
         const backoff = computeBackoffMs(job.attemptCount, this.deps.config.baseBackoffMs);
         await retryForensicsJob(this.deps.db, job.id, workerId, "WORKER_ERROR", message, backoff);

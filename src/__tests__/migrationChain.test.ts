@@ -97,12 +97,66 @@ describe('the UserPreference table has a migration matching schema.prisma (phase
     expect(sql).not.toMatch(/DROP COLUMN/);
   });
 
-  it('sorts after every migration that currently exists before it', () => {
+  it('sorts after init and the wallet_pk_optional migration (later phases may add more migrations after this one)', () => {
     const migrationDirs = readdirSync('prisma/migrations', { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => entry.name)
       .sort();
-    expect(migrationDirs[migrationDirs.length - 1]).toBe('20260828071721_add_user_preference');
+    const userPrefIndex = migrationDirs.indexOf('20260828071721_add_user_preference');
+    expect(userPrefIndex).toBeGreaterThan(migrationDirs.indexOf('20250324020906_init'));
+    expect(userPrefIndex).toBeGreaterThan(migrationDirs.indexOf('20260827010000_wallet_pk_optional'));
+  });
+});
+
+describe('wallet-verification and scan-ownership migration matches schema.prisma (phase7b2.txt §2/§3)', () => {
+  const MIGRATION_PATH = 'prisma/migrations/20260828082913_add_wallet_verification_and_scan_ownership/migration.sql';
+
+  it('the migration file exists and creates all three new tables', () => {
+    expect(existsSync(MIGRATION_PATH)).toBe(true);
+    const sql = readFileSync(MIGRATION_PATH, 'utf8');
+    expect(sql).toMatch(/CREATE TABLE "WalletChallenge"/);
+    expect(sql).toMatch(/CREATE TABLE "VerifiedWallet"/);
+    expect(sql).toMatch(/CREATE TABLE "UserScanRequest"/);
+  });
+
+  it('WalletChallenge stores a challengeHash, never a raw reusable challenge id column', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf8');
+    expect(sql).toMatch(/"challengeHash" TEXT NOT NULL/);
+    expect(sql).toMatch(/CREATE UNIQUE INDEX "WalletChallenge_challengeHash_key"/);
+    expect(sql).not.toMatch(/"challengeId"/);
+  });
+
+  it('VerifiedWallet enforces one verified owner per (network, address) — prevents cross-account claims at the DB level too', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf8');
+    expect(sql).toMatch(/CREATE UNIQUE INDEX "VerifiedWallet_network_address_key" ON "VerifiedWallet"\("network", "address"\)/);
+  });
+
+  it('VerifiedWallet has no secret-key-shaped column of any kind', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf8');
+    const verifiedWalletBlock = sql.slice(sql.indexOf('CREATE TABLE "VerifiedWallet"'), sql.indexOf('CREATE TABLE "UserScanRequest"'));
+    expect(verifiedWalletBlock).not.toMatch(/privateKey|secretKey|walletPk|seedPhrase|mnemonic/i);
+  });
+
+  it('UserScanRequest is unique per (userId, jobKey) — idempotent re-requests, not duplicate rows', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf8');
+    expect(sql).toMatch(/CREATE UNIQUE INDEX "UserScanRequest_userId_jobKey_key" ON "UserScanRequest"\("userId", "jobKey"\)/);
+  });
+
+  it('is purely additive (no ALTER/DROP of any other table)', () => {
+    const sql = readFileSync(MIGRATION_PATH, 'utf8');
+    expect(sql).not.toMatch(/ALTER TABLE/);
+    expect(sql).not.toMatch(/DROP TABLE/);
+    expect(sql).not.toMatch(/DROP COLUMN/);
+  });
+
+  it('sorts after the UserPreference migration', () => {
+    const migrationDirs = readdirSync('prisma/migrations', { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(migrationDirs.indexOf('20260828082913_add_wallet_verification_and_scan_ownership')).toBeGreaterThan(
+      migrationDirs.indexOf('20260828071721_add_user_preference')
+    );
   });
 });
 

@@ -22,17 +22,32 @@ import { createDocsRouter } from "./routes/docs";
 import { createHealthRouter } from "./routes/health";
 import { createJobsRouter } from "./routes/jobs";
 import { createMeRouter } from "./routes/me";
+import { createRealtimeTicketsRouter } from "./routes/realtimeTickets";
 import { createTokensRouter } from "./routes/tokens";
+import { createWalletsRouter } from "./routes/wallets";
 import { logger } from "./lib/logger";
+import { createEventBus, EventBus } from "./realtime/eventBus";
+import { attachRealtimeServer } from "./realtime/websocketServer";
+import { createTicketStore, TicketStore } from "./realtime/ticketStore";
 
 export interface CreateApiServerOverrides {
   /** Test-only: inject local JWKS/key material instead of fetching Supabase's real endpoint. Never set outside tests. */
   supabaseVerifierOverrides?: SupabaseVerifierOverrides;
 }
 
+/** Everything `main()` needs to also attach the WebSocket server, stashed on `app.locals` rather than changing `createApiServer`'s return type (kept `Express` for backward compatibility with existing supertest-based tests). */
+interface RealtimeLocals {
+  eventBus: EventBus;
+  ticketStore: TicketStore;
+}
+
 export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: CreateApiServerOverrides = {}): Express {
   const app = express();
   const deps: AuthenticateDeps = { supabaseVerifier: buildSupabaseVerifier(config, overrides.supabaseVerifierOverrides) };
+  const eventBus = createEventBus(config.realtime);
+  const ticketStore = createTicketStore(config.realtime);
+  (app.locals as RealtimeLocals).eventBus = eventBus;
+  (app.locals as RealtimeLocals).ticketStore = ticketStore;
 
   app.use(requestId);
   app.use(createCorsMiddleware(config.cors));
@@ -45,9 +60,11 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
 
   app.use("/api/v1", createHealthRouter(db));
   app.use("/api/v1", createDocsRouter());
-  app.use("/api/v1", createMeRouter(deps));
-  app.use("/api/v1/tokens", createTokensRouter(db, config, deps));
+  app.use("/api/v1", createMeRouter(db, deps));
+  app.use("/api/v1/tokens", createTokensRouter(db, config, deps, eventBus));
   app.use("/api/v1/jobs", createJobsRouter(db, config, deps));
+  app.use("/api/v1/wallets", createWalletsRouter(db, config, deps));
+  app.use("/api/v1/realtime", createRealtimeTicketsRouter(config, deps, ticketStore));
 
   app.use((req, res) => {
     sendError(res, "NOT_FOUND", "no such route", req.requestId);
@@ -68,19 +85,27 @@ function main(): void {
   const config = loadApiConfig();
   const db = new PrismaClient();
   const app = createApiServer(db, config);
+  const { eventBus, ticketStore } = app.locals as RealtimeLocals;
 
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port, publicReads: config.publicReads }, "[api] listening");
   });
+
+  const realtime = attachRealtimeServer(server, config, { db, ticketStore, eventBus });
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, "[api] received signal, shutting down gracefully");
-    server.close(() => {
-      db.$disconnect().finally(() => process.exit(0));
-    });
+    realtime
+      .close()
+      .catch((err) => logger.error({ err: err instanceof Error ? err.message : String(err) }, "[api] realtime shutdown error"))
+      .finally(() => {
+        server.close(() => {
+          db.$disconnect().finally(() => process.exit(0));
+        });
+      });
   };
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));

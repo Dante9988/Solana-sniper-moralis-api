@@ -14,13 +14,16 @@ import { computeJobKey, enqueueSolanaForensicsJob } from "../../forensics/forens
 import { FORENSICS_POLICY_VERSION } from "../../forensics/thresholds";
 import { toApiJson } from "../../presentation/toApiJson";
 import { loadRiskViewForMint } from "../../services/riskViewLoader";
+import { recordScanRequest } from "../../services/scanOwnershipService";
 import { ApiConfig } from "../config";
 import { AuthenticateDeps, createAuthenticate, createAuthenticateUnlessPublicReads } from "../middleware/authenticate";
 import { sendError } from "../contracts/errors";
 import { createRateLimiter, createRateLimiterStore, rateLimitKey } from "../middleware/rateLimit";
 import { validateMint } from "../middleware/validateMint";
+import { EventBus } from "../realtime/eventBus";
+import { publishJobEvent } from "../realtime/eventPublisher";
 
-export function createTokensRouter(db: PrismaClient, config: ApiConfig, deps: AuthenticateDeps): Router {
+export function createTokensRouter(db: PrismaClient, config: ApiConfig, deps: AuthenticateDeps, eventBus: EventBus): Router {
   const router = Router();
   const readAuth = createAuthenticateUnlessPublicReads(config, deps);
   const scanAuth = createAuthenticate(config, deps);
@@ -118,6 +121,21 @@ export function createTokensRouter(db: PrismaClient, config: ApiConfig, deps: Au
         analysisLevel: "FAST",
         policyVersion: FORENSICS_POLICY_VERSION,
       });
+
+      // Record who asked, regardless of whether this call created the job or
+      // joined an already-deduplicated one (phase7b2.txt §3) — an internal
+      // API-key caller has no Supabase user id to scope this to, and keeps
+      // its existing unscoped access via the auth check in jobs.ts instead.
+      if (req.auth?.type === "supabase") {
+        await recordScanRequest(db, { userId: req.auth.userId, mint, jobKey });
+      }
+
+      // Emitted only after the enqueue itself has genuinely succeeded
+      // (phase7b2.txt §6 "emit events only after the relevant authoritative
+      // state change succeeds") — including on the idempotent-repeat path,
+      // since a second subscriber to the same job still needs to see it.
+      await publishJobEvent(eventBus, "scan.accepted", { jobKey, mint, status: result.status });
+
       // 202 for a freshly queued job, 200 for an idempotent hit on one
       // already in flight/complete — both return the same jobKey either way.
       res.status(result.created ? 202 : 200).json({ jobKey, status: result.status });

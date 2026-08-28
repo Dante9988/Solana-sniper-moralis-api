@@ -82,6 +82,19 @@ export interface RateLimitConfig {
   readonly redisUrl?: string;
 }
 
+export type RealtimeBackend = "memory" | "redis";
+
+export interface RealtimeConfig {
+  /** Backs both the event bus (job lifecycle pub/sub) and the WebSocket ticket store — both need to work across API/worker processes, so they share one backend choice. */
+  readonly backend: RealtimeBackend;
+  readonly redisUrl?: string;
+  readonly ticketTtlMs: number;
+  readonly maxMessageBytes: number;
+  readonly maxSubscriptionsPerConnection: number;
+  readonly maxConnectionsPerUser: number;
+  readonly idleTimeoutMs: number;
+}
+
 export interface ApiConfig {
   readonly port: number;
   readonly apiKeys: ReadonlySet<string>;
@@ -91,6 +104,7 @@ export interface ApiConfig {
   readonly supabase: SupabaseAuthConfig | null;
   readonly cors: CorsConfig;
   readonly rateLimit: RateLimitConfig;
+  readonly realtime: RealtimeConfig;
 }
 
 const DEFAULT_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:19006", "http://localhost:8081"];
@@ -164,6 +178,41 @@ function loadRateLimitConfig(env: NodeJS.ProcessEnv): RateLimitConfig {
   return Object.freeze({ backend, redisUrl });
 }
 
+function loadRealtimeConfig(env: NodeJS.ProcessEnv): RealtimeConfig {
+  const isProduction = env.NODE_ENV === "production";
+  const raw = env.REALTIME_BACKEND?.trim().toLowerCase();
+
+  if (isProduction && !raw) {
+    // Same fail-closed rule as RATE_LIMIT_BACKEND (phase7b1.txt §9,
+    // phase7b2.txt §6) — an in-memory event bus/ticket store only works
+    // within one process; production must say so explicitly rather than
+    // silently losing events/tickets across instances.
+    throw new ApiConfigError(
+      'REALTIME_BACKEND must be explicitly set to "memory" or "redis" in production (NODE_ENV=production) — the event bus and WebSocket ticket store both need to work across processes, which an in-memory default cannot do.'
+    );
+  }
+
+  const backend: RealtimeBackend = raw === "redis" ? "redis" : "memory";
+  if (raw !== undefined && raw !== "memory" && raw !== "redis") {
+    throw new ApiConfigError(`REALTIME_BACKEND must be "memory" or "redis", got ${JSON.stringify(env.REALTIME_BACKEND)}`);
+  }
+
+  const redisUrl = env.REDIS_URL?.trim() || undefined;
+  if (backend === "redis" && !redisUrl) {
+    throw new ApiConfigError("REALTIME_BACKEND=redis requires REDIS_URL to be set — refusing to start without it.");
+  }
+
+  return Object.freeze({
+    backend,
+    redisUrl,
+    ticketTtlMs: parsePositiveInt(env, "WS_TICKET_TTL_MS", 45_000),
+    maxMessageBytes: parsePositiveInt(env, "WS_MAX_MESSAGE_BYTES", 8_192),
+    maxSubscriptionsPerConnection: parsePositiveInt(env, "WS_MAX_SUBSCRIPTIONS_PER_CONNECTION", 20),
+    maxConnectionsPerUser: parsePositiveInt(env, "WS_MAX_CONNECTIONS_PER_USER", 5),
+    idleTimeoutMs: parsePositiveInt(env, "WS_IDLE_TIMEOUT_MS", 60_000),
+  });
+}
+
 export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   return Object.freeze({
     port: parsePositiveInt(env, "API_PORT", 8787),
@@ -174,5 +223,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     supabase: loadSupabaseConfig(env),
     cors: loadCorsConfig(env),
     rateLimit: loadRateLimitConfig(env),
+    realtime: loadRealtimeConfig(env),
   });
 }

@@ -8,12 +8,15 @@
 
 import { randomUUID } from "node:crypto";
 import { prisma } from "../../services/prismaClient";
-import { ForensicsWorker, ForensicsWorkerLogger } from "../forensicsWorker";
+import { ForensicsWorker, ForensicsWorkerLogger, JobLifecycleEvent } from "../forensicsWorker";
 import { loadForensicsWorkerConfig } from "../forensicsWorkerConfig";
 import { SolanaForensicsClient } from "../solanaForensicsClient";
 import { resolveHeliusRpcUrl } from "../forensicsConfig";
 import { isForensicsReconciliationEnabled } from "../forensicsIntegrationConfig";
 import { reconcileForensicsRun, reconcilePendingForensicsRuns } from "../../services/forensicsIntelligenceReconciliation";
+import { loadApiConfig } from "../../researchApi/config";
+import { createEventBus } from "../../researchApi/realtime/eventBus";
+import { publishJobEvent } from "../../researchApi/realtime/eventPublisher";
 
 const logger: ForensicsWorkerLogger = {
   info: (message) => console.log(`[forensics:worker] ${message}`),
@@ -34,6 +37,25 @@ async function main(): Promise<void> {
   const rpcUrl = resolveHeliusRpcUrl();
   const reconciliationEnabled = isForensicsReconciliationEnabled();
 
+  // Phase 7B.2 (phase7b2.txt §6): this worker runs in its own process,
+  // separate from the API/WebSocket process — publishing here and
+  // subscribing there only actually reaches across processes when
+  // REALTIME_BACKEND=redis (see ARCHITECTURE.md §18). In-memory publishes
+  // here are simply never seen by another process's subscribers, same as
+  // any other in-memory-backend limitation in this codebase.
+  const realtimeConfig = loadApiConfig().realtime;
+  const eventBus = createEventBus(realtimeConfig);
+  const onJobLifecycleEvent = async (event: JobLifecycleEvent): Promise<void> => {
+    const { jobKey, mint } = event.job;
+    if (event.type === "started") {
+      await publishJobEvent(eventBus, "scan.started", { jobKey, mint });
+    } else if (event.type === "completed") {
+      await publishJobEvent(eventBus, "scan.completed", { jobKey, mint, status: event.status });
+    } else {
+      await publishJobEvent(eventBus, "scan.failed", { jobKey, mint, reason: event.reason });
+    }
+  };
+
   const worker = new ForensicsWorker({
     db: prisma,
     workerId,
@@ -45,6 +67,7 @@ async function main(): Promise<void> {
     // explicitly enabled — never from an import or the listener (phase5e.txt §9).
     onRunPersisted: reconciliationEnabled ? (runId) => reconcileForensicsRun(prisma, runId).then(() => undefined) : undefined,
     reconciliationSweep: reconciliationEnabled ? () => reconcilePendingForensicsRuns(prisma).then(() => undefined) : undefined,
+    onJobLifecycleEvent,
   });
 
   let shuttingDown = false;
