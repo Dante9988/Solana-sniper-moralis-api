@@ -4,7 +4,7 @@
 > Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
 **Snapshot date:** 2026-08-27
-**Latest commits:** `10668e0` (Merge PR #7 `main2` → `master`), `ed1ccd3` (rename `src/api` → `src/researchApi` to resolve a directory collision with `main2`), `516fed2` (Phase 6), `8ad67a4` (Phase X)
+**Latest commits:** `4ee49ca` (Phase 7A: non-custodial trading, authenticated API, allowlisted commands — this document's §8), `10668e0` (Merge PR #7 `main2` → `master`, the commit that introduced the custodial trading paths §8 then removed), `ed1ccd3` (rename `src/api` → `src/researchApi` to resolve a directory collision with `main2`), `516fed2` (Phase 6), `8ad67a4` (Phase X)
 
 **Stack:** TypeScript / Node 18+ (CI runs Node 20), Solana Web3.js, Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
