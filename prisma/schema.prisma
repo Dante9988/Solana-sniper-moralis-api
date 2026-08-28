@@ -93,8 +93,13 @@ model WalletBalance {
 }
 
 model UserPreference {
-  id              String   @id @default(uuid())
-  userId          String   @unique
+  id     String @id @default(uuid())
+  userId String @unique
+  /// A Telegram DM ALERT/NOTIFICATION opt-in only (see src/telegram/commands/togglePumpSwap.ts
+  /// and src/telegram/alerts.ts). Despite the name, this never gates trade execution — no
+  /// execution code path reads it. Real PumpSwap AMM swap execution is not implemented
+  /// anywhere in this codebase (ARCHITECTURE.md §8.2); defaulting this to true only means a
+  /// new user receives Pump.fun token alert DMs by default, not that any trading is enabled.
   pumpSwapEnabled Boolean  @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

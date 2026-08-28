@@ -1,9 +1,11 @@
 /**
- * Phase 6 — `/api/v1/tokens/:mint/*` routes (phase6.txt §3).
+ * Phase 6/7B.1 — `/api/v1/tokens/:mint/*` routes (phase6.txt §3, phase7b1.txt §6).
  *
  * Pure Prisma reads (via `src/services/riskViewLoader.ts`), plus one
- * idempotent job enqueue on `POST /scan`. Never writes report content, never
- * mutates eligibility, never signs anything.
+ * idempotent job enqueue on `POST /scans`. Never writes report content,
+ * never mutates eligibility, never signs anything. All persistence and
+ * intelligence logic is reused from existing services — nothing is
+ * duplicated in these handlers.
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -13,26 +15,29 @@ import { FORENSICS_POLICY_VERSION } from "../../forensics/thresholds";
 import { toApiJson } from "../../presentation/toApiJson";
 import { loadRiskViewForMint } from "../../services/riskViewLoader";
 import { ApiConfig } from "../config";
-import { requireApiKey, requireApiKeyUnlessPublicReads } from "../middleware/auth";
-import { createRateLimiter, rateLimitKey } from "../middleware/rateLimit";
+import { AuthenticateDeps, createAuthenticate, createAuthenticateUnlessPublicReads } from "../middleware/authenticate";
+import { sendError } from "../contracts/errors";
+import { createRateLimiter, createRateLimiterStore, rateLimitKey } from "../middleware/rateLimit";
 import { validateMint } from "../middleware/validateMint";
 
-export function createTokensRouter(db: PrismaClient, config: ApiConfig): Router {
+export function createTokensRouter(db: PrismaClient, config: ApiConfig, deps: AuthenticateDeps): Router {
   const router = Router();
-  const readAuth = requireApiKeyUnlessPublicReads(config);
-  const scanAuth = requireApiKey(config);
-  const readLimiter = createRateLimiter({ windowMs: 60_000, max: config.rateLimitPerMinute, keyFn: rateLimitKey });
+  const readAuth = createAuthenticateUnlessPublicReads(config, deps);
+  const scanAuth = createAuthenticate(config, deps);
+  const store = createRateLimiterStore(config.rateLimit);
+  const readLimiter = createRateLimiter({ windowMs: 60_000, max: config.rateLimitPerMinute, keyFn: rateLimitKey, store });
   const scanLimiter = createRateLimiter({
     windowMs: 60 * 60_000,
     max: config.scanEnqueueLimitPerHour,
     keyFn: rateLimitKey,
+    store,
   });
 
   router.get("/:mint/report", readAuth, readLimiter, validateMint, async (req, res, next) => {
     try {
       const view = await loadRiskViewForMint(db, req.normalizedMint!);
       if (!view) {
-        res.status(404).json({ error: "token has never been analysed" });
+        sendError(res, "NOT_FOUND", "token has never been analysed", req.requestId);
         return;
       }
       res.json(toApiJson(view));
@@ -53,7 +58,7 @@ export function createTokensRouter(db: PrismaClient, config: ApiConfig): Router 
         },
       });
       if (!run) {
-        res.status(404).json({ error: "no forensics run for this token" });
+        sendError(res, "NOT_FOUND", "no forensics run for this token", req.requestId);
         return;
       }
       res.json({
@@ -94,7 +99,9 @@ export function createTokensRouter(db: PrismaClient, config: ApiConfig): Router 
     }
   });
 
-  router.post("/:mint/scan", scanAuth, scanLimiter, validateMint, async (req, res, next) => {
+  // Renamed from /scan (Phase 6) to /scans (phase7b1.txt §6/§4) — POST
+  // .../scans creates (or idempotently returns) one scan resource.
+  router.post("/:mint/scans", scanAuth, scanLimiter, validateMint, async (req, res, next) => {
     try {
       const mint = req.normalizedMint!;
       const eventId = `api-scan:${mint}`;
@@ -111,7 +118,9 @@ export function createTokensRouter(db: PrismaClient, config: ApiConfig): Router 
         analysisLevel: "FAST",
         policyVersion: FORENSICS_POLICY_VERSION,
       });
-      res.json({ jobKey, status: result.status });
+      // 202 for a freshly queued job, 200 for an idempotent hit on one
+      // already in flight/complete — both return the same jobKey either way.
+      res.status(result.created ? 202 : 200).json({ jobKey, status: result.status });
     } catch (err) {
       next(err);
     }
