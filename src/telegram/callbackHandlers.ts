@@ -57,13 +57,13 @@ export function registerCallbackHandlers(bot: any): void {
     
     switch (action) {
       case 'create':
-        return await ctx.scene.enter('create_wallet_scene');
+        return await ctx.scene.enter('connect_wallet_scene');
       case 'create_init':
-        return await ctx.scene.enter('create_wallet_scene');
+        return await ctx.scene.enter('connect_wallet_scene');
       case 'import':
-        return await ctx.scene.enter('import_wallet_scene');
+        return await ctx.scene.enter('connect_wallet_scene');
       case 'import_init':
-        return await ctx.scene.enter('import_wallet_scene');
+        return await ctx.scene.enter('connect_wallet_scene');
       case 'balance':
         return await handleWalletBalance(ctx);
       case 'list':
@@ -306,11 +306,11 @@ export function registerCallbackHandlers(bot: any): void {
 
   // Add new wallet-related callback handlers
   bot.action(/^wallet:create_init$/, async (ctx: MatchContext) => {
-    await ctx.scene.enter('create_wallet_scene');
+    await ctx.scene.enter('connect_wallet_scene');
   });
 
   bot.action(/^wallet:import_init$/, async (ctx: MatchContext) => {
-    await ctx.scene.enter('import_wallet_scene');
+    await ctx.scene.enter('connect_wallet_scene');
   });
 
   bot.action(/^wallet:change_default$/, async (ctx: MatchContext) => {
@@ -496,151 +496,28 @@ export function registerCallbackHandlers(bot: any): void {
     }
   });
 
+  // This bot never generates, imports, or stores a private key — there is
+  // nothing to export. Kept as a single explanatory handler so the old
+  // "Export Private Key" button (still shown in some menus) doesn't dead-end.
   bot.action(/^wallet:export_init$/, async (ctx: MatchContext) => {
-    const userId = ctx.from?.id.toString();
-    if (!userId) {
-      await ctx.reply('❌ Failed to identify user.');
-      return;
-    }
-    
-    const wallets = await jupiterService.getAllWallets(userId);
-    
-    if (!wallets || wallets.length === 0) {
-      await ctx.reply('You need at least one wallet to export.');
-      return;
-    }
-    
-    const buttons = wallets.map((wallet, index) => 
-      Markup.button.callback(
-        `${wallet.name || `Wallet ${index + 1}`}`, 
-        `wallet:export_confirm:${wallet.id}`
-      )
-    );
-    
-    // Create rows with 2 buttons per row
-    const rows = [];
-    for (let i = 0; i < buttons.length; i += 2) {
-      rows.push(buttons.slice(i, i + 2));
-    }
-    
-    // Add back button
-    rows.push([Markup.button.callback('⬅️ Back', 'wallet:list')]);
-    
     await ctx.reply(
-      '🔑 <b>Export Private Key</b>\n\n' +
-      '⚠️ <b>WARNING:</b> Your private key gives full access to your wallet!\n' +
-      'Never share it with anyone and only export in a secure environment.\n\n' +
-      'Select which wallet to export:',
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard(rows)
-      }
+      '🔒 <b>Nothing to export</b>\n\n' +
+      'This bot never generates, imports, or stores your private key — it never had one to begin with. ' +
+      'Every trade is signed in your own wallet app.',
+      { parse_mode: 'HTML' }
     );
   });
 
-  bot.action(/^wallet:export_confirm:(.+)$/, async (ctx: MatchContext) => {
-    const walletId = ctx.match[1];
-    
-    await ctx.reply(
-      '🔑 <b>Export Private Key Confirmation</b>\n\n' +
-      '⚠️ <b>SECURITY WARNING:</b>\n' +
-      '- Your private key gives FULL ACCESS to your funds\n' +
-      '- Never share it with ANYONE\n' +
-      '- Make sure you are in a SECURE environment\n' +
-      '- The key will be sent as a message which could be at risk\n\n' +
-      'Are you sure you want to proceed?',
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback('✅ Yes, Export Key', `wallet:export_final:${walletId}`),
-            Markup.button.callback('❌ No, Cancel', 'wallet:list')
-          ]
-        ])
-      }
-    );
-  });
-
-  bot.action(/^wallet:export_final:(.+)$/, async (ctx: MatchContext) => {
-    const walletId = ctx.match[1];
-    const userId = ctx.from?.id.toString();
-    
-    if (!userId) {
-      await ctx.reply('❌ Failed to identify user.');
-      return;
-    }
-    
-    try {
-      const privateKey = await jupiterService.getWalletPrivateKey(userId, walletId);
-      
-      // Send private key in a separate message that can be deleted
-      await ctx.reply(
-        '🔑 <b>Your Private Key:</b>\n\n' +
-        `<code>${privateKey}</code>\n\n` +
-        '⚠️ DELETE THIS MESSAGE after saving the key somewhere safe!',
-        { parse_mode: 'HTML' }
-      );
-      
-      await ctx.reply(
-        '⚠️ <b>IMPORTANT SECURITY NOTICE</b> ⚠️\n\n' +
-        'Please delete the previous message containing your private key once you have saved it securely.\n\n' +
-        'Remember to NEVER share your private key with anyone!',
-        {
-          parse_mode: 'HTML',
-          ...Markup.inlineKeyboard([
-            [Markup.button.callback('⬅️ Back to Wallet List', 'wallet:list')]
-          ])
-        }
-      );
-    } catch (error) {
-      console.error('Error exporting private key:', error);
-      await ctx.reply('❌ Failed to export private key.');
-    }
-  });
-
+  // Non-custodial: funds are never held by this bot, so there is nothing to
+  // withdraw. Kept as a single explanatory handler for the same reason as
+  // wallet:export_init above.
   bot.action(/^wallet:withdraw_init$/, async (ctx: MatchContext) => {
-    const userId = ctx.from?.id.toString();
-    if (!userId) {
-      await ctx.reply('❌ Failed to identify user.');
-      return;
-    }
-    
-    const wallets = await jupiterService.getAllWallets(userId);
-    
-    if (!wallets || wallets.length === 0) {
-      await ctx.reply('You need at least one wallet to withdraw from.');
-      return;
-    }
-    
-    const buttons = wallets.map((wallet, index) => 
-      Markup.button.callback(
-        `${wallet.name || `Wallet ${index + 1}`}`, 
-        `wallet:withdraw_select:${wallet.id}`
-      )
-    );
-    
-    // Create rows with 2 buttons per row
-    const rows = [];
-    for (let i = 0; i < buttons.length; i += 2) {
-      rows.push(buttons.slice(i, i + 2));
-    }
-    
-    // Add back button
-    rows.push([Markup.button.callback('⬅️ Back', 'wallet:list')]);
-    
     await ctx.reply(
-      '💸 <b>Withdraw Funds</b>\n\n' +
-      'Select which wallet you want to withdraw from:',
-      {
-        parse_mode: 'HTML',
-        ...Markup.inlineKeyboard(rows)
-      }
+      '🔒 <b>Nothing to withdraw</b>\n\n' +
+      'This bot never custodies funds — your SOL and tokens stay in your own wallet at all times. ' +
+      'Use your wallet app directly to move funds.',
+      { parse_mode: 'HTML' }
     );
-  });
-
-  bot.action(/^wallet:withdraw_select:(.+)$/, async (ctx: MatchContext) => {
-    const walletId = ctx.match[1];
-    await ctx.scene.enter('withdraw_scene', { walletId });
   });
 
   // Add these direct handler methods

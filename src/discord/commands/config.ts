@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, InteractionEditReplyOptions } from 'discord.js';
-import { sniperooService, UserConfig } from '../../services/sniperooService';
+import { jupiterService } from '../../services/jupiterService';
+import { UserConfig } from '@prisma/client';
 
 export const data = new SlashCommandBuilder()
     .setName('config')
@@ -64,14 +65,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 buyAmount: 0 // This will be set by the default value in the database
             };
 
-            const success = await sniperooService.updateUserConfig(interaction.user.id, configUpdate);
+            const success = await jupiterService.updateUserConfig(interaction.user.id, configUpdate);
 
             if (!success) {
                 await interaction.editReply('Failed to update configuration. Please try again.');
                 return;
             }
 
-            const config = await sniperooService.getUserConfig(interaction.user.id);
+            const config = await jupiterService.getUserConfig(interaction.user.id);
             if (!config) {
                 await interaction.editReply('Failed to retrieve updated configuration. Please try again.');
                 return;
@@ -81,7 +82,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                 content: `✅ Configuration updated successfully!\n\nAuto Buy: ${config.autoBuy ? '✅' : '❌'}\nAuto Sell: ${config.autoSell ? '✅' : '❌'}\nTake Profit: ${config.takeProfit}%\nStop Loss: ${config.stopLoss}%`
             });
         } else if (subcommand === 'view') {
-            const config = await sniperooService.getUserConfig(interaction.user.id);
+            const config = await jupiterService.getUserConfig(interaction.user.id);
             if (!config) {
                 await interaction.editReply('No configuration found. Use `/config set` to configure your settings.');
                 return;

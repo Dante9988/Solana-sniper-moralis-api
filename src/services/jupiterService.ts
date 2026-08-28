@@ -1,153 +1,100 @@
-import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
-import { PrismaClient, Wallet, UserConfig, WalletTransaction } from '@prisma/client';
-import { config } from '../config';
-import bs58 from 'bs58';
+import { PrismaClient, Wallet, UserConfig } from '@prisma/client';
 
 // Jupiter API endpoints
 const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
 const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
 
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+
+// Trading-preference defaults. Previously read from config.sniperoo, which
+// was removed with sniperooService (this project never stores a private key
+// for this service to sign with, so there is no custodial config left to
+// couple these to).
+const DEFAULT_BUY_AMOUNT_SOL = 0.1;
+const DEFAULT_TAKE_PROFIT_PCT = 50;
+const DEFAULT_STOP_LOSS_PCT = 15;
+const DEFAULT_AUTO_SELL = false;
+
 // Database client
 const prisma = new PrismaClient();
 
-export interface WalletData {
-  userId: string;
-  walletAddress: string;
-  walletPk: string;
-  createdAt?: Date;
-}
-
-export interface BuyResult {
-  success: boolean;
-  txId?: string;
-  error?: string;
-}
-
-export interface SellResult {
-  success: boolean;
-  txId?: string;
-  error?: string;
+export interface BuiltSwapTransaction {
+  /** Base64-encoded, UNSIGNED (or Jupiter-fee-account-partially-signed) transaction. The caller's own wallet signs this — this service never holds or sees a private key. */
+  transactionBase64: string;
+  quote: {
+    inAmount: string;
+    outAmount: string;
+    outputDecimals: number;
+    price?: number;
+  };
 }
 
 interface UserPreferences {
   useJito: boolean;
 }
 
+/**
+ * Non-custodial Jupiter integration. Every method that builds a transaction
+ * takes the owner's PUBLIC key as a plain string and returns an unsigned
+ * transaction for that owner to sign in their own wallet — this class never
+ * generates, imports, stores, or signs with a private key (see
+ * ARCHITECTURE.md §8 for why the previous custodial version was removed).
+ */
 export class JupiterService {
   private connection: Connection;
-  
+
   constructor() {
-    // Use RPC_ENDPOINT environment variable
     this.connection = new Connection(process.env.RPC_ENDPOINT || process.env.HELIUS_HTTPS_URI || 'https://api.mainnet-beta.solana.com');
   }
-  
+
   /**
-   * Create a new wallet for a user
+   * Record that a user's wallet is this PUBLIC address — never a private
+   * key. Used only so read-only features (balance, positions, buy-amount
+   * defaults) know which address to look up; it is never required to build
+   * or approve a swap, since the Solana Pay flow (`solanaPayService.ts`)
+   * asks the connecting wallet for its own address at sign time.
    */
-  async createWallet(userId: string, name: string): Promise<WalletData | { error: string }> {
+  async connectWallet(userId: string, publicAddress: string): Promise<Wallet | { error: string }> {
+    let parsed: PublicKey;
     try {
-      // Generate a new Solana keypair
-      const keypair = Keypair.generate();
-      const walletAddress = keypair.publicKey.toString();
-      const walletPk = bs58.encode(keypair.secretKey);
-      
-      // Store in database
-      await prisma.wallet.create({
-        data: {
-          userId,
-          walletAddress,
-          walletPk,
-          createdAt: new Date()
-        }
-      });
-      
-      // Create default config if none exists
-      await this.createDefaultConfigIfNeeded(userId);
-      
-      return {
-        userId,
-        walletAddress,
-        walletPk,
-        createdAt: new Date()
-      };
-    } catch (error) {
-      console.error('Error creating wallet:', error);
-      return {
-        error: 'Failed to create wallet. Please try again.'
-      };
+      parsed = new PublicKey(publicAddress.trim());
+    } catch {
+      return { error: 'That does not look like a valid Solana wallet address.' };
+    }
+
+    const walletAddress = parsed.toBase58();
+    const wallet = await prisma.wallet.upsert({
+      where: { userId },
+      update: { walletAddress },
+      create: { userId, walletAddress, createdAt: new Date() },
+    });
+
+    await this.createDefaultConfigIfNeeded(userId);
+    return wallet;
+  }
+
+  /** Forgets the connected public address. There is nothing to "revoke" beyond this — the bot never held signing authority over it. */
+  async disconnectWallet(userId: string): Promise<boolean> {
+    try {
+      await prisma.wallet.delete({ where: { userId } });
+      return true;
+    } catch {
+      return false;
     }
   }
-  
+
   /**
-   * Import an existing wallet
-   */
-  async importWallet(userId: string, privateKey: string): Promise<WalletData | { error: string }> {
-    try {
-      // Validate private key
-      if (!privateKey || privateKey.length < 64) {
-        return {
-          error: 'Invalid private key format'
-        };
-      }
-      
-      // Convert private key to keypair
-      let secretKey: Uint8Array;
-      try {
-        secretKey = bs58.decode(privateKey);
-        if (secretKey.length !== 64) {
-          throw new Error('Invalid key length');
-        }
-      } catch (e) {
-        return {
-          error: 'Invalid private key format'
-        };
-      }
-      
-      const keypair = Keypair.fromSecretKey(secretKey);
-      const walletAddress = keypair.publicKey.toString();
-      
-      // Store in database
-      await prisma.wallet.upsert({
-        where: { userId },
-        update: {
-          walletAddress,
-          walletPk: privateKey,
-        },
-        create: {
-          userId,
-          walletAddress,
-          walletPk: privateKey,
-          createdAt: new Date()
-        }
-      });
-      
-      // Create default config if none exists
-      await this.createDefaultConfigIfNeeded(userId);
-      
-      return {
-        userId,
-        walletAddress,
-        walletPk: privateKey,
-        createdAt: new Date()
-      };
-    } catch (error) {
-      console.error('Error importing wallet:', error);
-      return {
-        error: 'Failed to import wallet. Please try again.'
-      };
-    }
-  }
-  
-  /**
-   * Get a user's wallet
+   * Get a user's connected wallet (public address only).
    */
   async getWallet(userId: string): Promise<Wallet | null> {
     return prisma.wallet.findUnique({
       where: { userId }
     });
   }
-  
+
   /**
    * Get user configuration
    */
@@ -156,7 +103,7 @@ export class JupiterService {
       where: { userId }
     });
   }
-  
+
   /**
    * Update user configuration
    */
@@ -174,10 +121,10 @@ export class JupiterService {
         create: {
           userId,
           autoBuy: configData.autoBuy ?? false,
-          autoSell: configData.autoSell ?? false,
-          buyAmount: configData.buyAmount ?? config.sniperoo.default_buy_amount,
-          takeProfit: configData.takeProfit ?? config.sniperoo.default_take_profit,
-          stopLoss: configData.stopLoss ?? config.sniperoo.default_stop_loss
+          autoSell: configData.autoSell ?? DEFAULT_AUTO_SELL,
+          buyAmount: configData.buyAmount ?? DEFAULT_BUY_AMOUNT_SOL,
+          takeProfit: configData.takeProfit ?? DEFAULT_TAKE_PROFIT_PCT,
+          stopLoss: configData.stopLoss ?? DEFAULT_STOP_LOSS_PCT
         }
       });
       return true;
@@ -186,7 +133,7 @@ export class JupiterService {
       return false;
     }
   }
-  
+
   /**
    * Create default config if it doesn't exist
    */
@@ -197,213 +144,101 @@ export class JupiterService {
         data: {
           userId,
           autoBuy: false,
-          autoSell: config.sniperoo.auto_sell,
-          buyAmount: config.sniperoo.default_buy_amount,
-          takeProfit: config.sniperoo.default_take_profit,
-          stopLoss: config.sniperoo.default_stop_loss
+          autoSell: DEFAULT_AUTO_SELL,
+          buyAmount: DEFAULT_BUY_AMOUNT_SOL,
+          takeProfit: DEFAULT_TAKE_PROFIT_PCT,
+          stopLoss: DEFAULT_STOP_LOSS_PCT
         }
       });
     }
   }
-  
+
   /**
-   * Buy a token using Jupiter with optional Jito integration
+   * Build an unsigned SOL -> token swap transaction for `ownerAddress`.
+   * Does not sign or send anything — the caller (a Solana Pay transaction
+   * request handler) hands this to the owner's own wallet to sign.
    */
-  async buyToken(tokenAddress: string, userId: string): Promise<BuyResult> {
-    try {
-      // Get user wallet and config
-      const wallet = await this.getWallet(userId);
-      if (!wallet) {
-        return { success: false, error: 'No wallet found for user' };
+  async buildBuySwapTransaction(
+    ownerAddress: string,
+    tokenAddress: string,
+    solAmount: number,
+    opts: { slippageBps?: number; useJito?: boolean } = {}
+  ): Promise<BuiltSwapTransaction> {
+    const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
+      params: {
+        inputMint: SOL_MINT,
+        outputMint: tokenAddress,
+        amount: Math.floor(solAmount * 1e9),
+        slippageBps: opts.slippageBps ?? 500,
       }
-      
-      const userConfig = await this.getUserConfig(userId);
-      if (!userConfig) {
-        return { success: false, error: 'No user configuration found' };
-      }
-      
-      // Get user preferences
-      const userPrefs = await this.getUserPreferences(userId);
-      
-      // Check if wallet has enough SOL
-      const solBalance = await this.getSolBalance(wallet.walletAddress);
-      if (solBalance < userConfig.buyAmount) {
-        return { 
-          success: false, 
-          error: `Insufficient SOL balance. You have ${solBalance.toFixed(4)} SOL but need ${userConfig.buyAmount} SOL.` 
-        };
-      }
-      
-      // 1. Get quote from Jupiter
-      const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
-        params: {
-          inputMint: 'So11111111111111111111111111111111111111112', // SOL mint address
-          outputMint: tokenAddress,
-          amount: Math.floor(userConfig.buyAmount * 1e9), // Convert SOL to lamports
-          slippageBps: config.swap.slippageBps
-        }
-      });
-      
-      if (!quoteResponse.data) {
-        return { success: false, error: 'Failed to get quote from Jupiter' };
-      }
-      
-      // 2. Get swap transaction
-      const swapResponse = await axios.post(JUPITER_SWAP_API, {
-        quoteResponse: quoteResponse.data,
-        userPublicKey: wallet.walletAddress,
-        wrapUnwrapSOL: true,
-        useJitoTip: userPrefs.useJito
-      });
-      
-      if (!swapResponse.data || !swapResponse.data.swapTransaction) {
-        return { success: false, error: 'Failed to generate swap transaction' };
-      }
-      
-      // 3. Deserialize and sign transaction
-      const keypair = Keypair.fromSecretKey(bs58.decode(wallet.walletPk));
-      const serializedTransaction = swapResponse.data.swapTransaction;
-      const transaction = Transaction.from(Buffer.from(serializedTransaction, 'base64'));
-      
-      // 4. Sign and send transaction
-      transaction.partialSign(keypair);
-      const txid = await this.connection.sendRawTransaction(transaction.serialize());
-      
-      // 5. Wait for confirmation
-      await this.connection.confirmTransaction(txid);
-      
-      // 6. Record transaction in database
-      await this.recordTransaction(
-        wallet.id,
-        'BUY',
-        tokenAddress,
-        quoteResponse.data.outAmount / Math.pow(10, quoteResponse.data.outputDecimals),
-        userConfig.buyAmount,
-        quoteResponse.data.price,
-        txid,
-        'COMPLETED'
-      );
-      
-      return { 
-        success: true, 
-        txId: txid 
-      };
-      
-    } catch (error) {
-      console.error('Error buying token:', error);
-      let errorMessage = 'Failed to buy token';
-      
-      if (axios.isAxiosError(error) && error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-      
-      return { 
-        success: false, 
-        error: errorMessage 
-      };
-    }
+    });
+    if (!quoteResponse.data) throw new Error('Failed to get quote from Jupiter');
+
+    const swapResponse = await axios.post(JUPITER_SWAP_API, {
+      quoteResponse: quoteResponse.data,
+      userPublicKey: ownerAddress,
+      wrapUnwrapSOL: true,
+      useJitoTip: opts.useJito ?? false,
+    });
+    if (!swapResponse.data?.swapTransaction) throw new Error('Failed to generate swap transaction');
+
+    return {
+      transactionBase64: swapResponse.data.swapTransaction,
+      quote: {
+        inAmount: quoteResponse.data.inAmount,
+        outAmount: quoteResponse.data.outAmount,
+        outputDecimals: quoteResponse.data.outputDecimals ?? 9,
+        price: quoteResponse.data.price,
+      },
+    };
   }
-  
+
   /**
-   * Sell a token
+   * Build an unsigned token -> SOL swap transaction for `ownerAddress`,
+   * selling `percentage` of that owner's on-chain balance of `tokenAddress`.
+   * Does not sign or send anything.
    */
-  async sellToken(tokenAddress: string, percentage: number, userId: string): Promise<SellResult> {
-    try {
-      // Get user wallet and config
-      const wallet = await this.getWallet(userId);
-      if (!wallet) {
-        return { success: false, error: 'No wallet found for user' };
+  async buildSellSwapTransaction(
+    ownerAddress: string,
+    tokenAddress: string,
+    percentage: number,
+    opts: { slippageBps?: number; useJito?: boolean } = {}
+  ): Promise<BuiltSwapTransaction> {
+    const tokenBalanceRaw = await this.getTokenBalanceRaw(ownerAddress, tokenAddress);
+    if (tokenBalanceRaw <= 0n) throw new Error('No tokens found in that wallet for this mint.');
+
+    const sellAmountRaw = (tokenBalanceRaw * BigInt(Math.round(percentage * 100))) / 10000n;
+    if (sellAmountRaw <= 0n) throw new Error('Invalid sell amount.');
+
+    const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
+      params: {
+        inputMint: tokenAddress,
+        outputMint: SOL_MINT,
+        amount: sellAmountRaw.toString(),
+        slippageBps: opts.slippageBps ?? 500,
       }
-      
-      // Get user preferences
-      const userPrefs = await this.getUserPreferences(userId);
-      
-      // Get token balance
-      const tokenBalance = await this.getTokenBalance(wallet.walletAddress, tokenAddress);
-      if (tokenBalance <= 0) {
-        return { success: false, error: 'No tokens found in wallet' };
-      }
-      
-      // Calculate amount to sell
-      const sellAmount = tokenBalance * (percentage / 100);
-      if (sellAmount <= 0) {
-        return { success: false, error: 'Invalid sell amount' };
-      }
-      
-      // 1. Get quote from Jupiter for selling
-      const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
-        params: {
-          inputMint: tokenAddress,
-          outputMint: 'So11111111111111111111111111111111111111112', // SOL mint address
-          amount: Math.floor(sellAmount * 1e9), // Assuming 9 decimals
-          slippageBps: config.swap.slippageBps
-        }
-      });
-      
-      if (!quoteResponse.data) {
-        return { success: false, error: 'Failed to get quote from Jupiter' };
-      }
-      
-      // 2. Get swap transaction
-      const swapResponse = await axios.post(JUPITER_SWAP_API, {
-        quoteResponse: quoteResponse.data,
-        userPublicKey: wallet.walletAddress,
-        wrapUnwrapSOL: true,
-        useJitoTip: userPrefs.useJito
-      });
-      
-      if (!swapResponse.data || !swapResponse.data.swapTransaction) {
-        return { success: false, error: 'Failed to generate swap transaction' };
-      }
-      
-      // 3. Deserialize and sign transaction
-      const keypair = Keypair.fromSecretKey(bs58.decode(wallet.walletPk));
-      const serializedTransaction = swapResponse.data.swapTransaction;
-      const transaction = Transaction.from(Buffer.from(serializedTransaction, 'base64'));
-      
-      // 4. Sign and send transaction
-      transaction.partialSign(keypair);
-      const txid = await this.connection.sendRawTransaction(transaction.serialize());
-      
-      // 5. Wait for confirmation
-      await this.connection.confirmTransaction(txid);
-      
-      // 6. Record transaction in database
-      await this.recordTransaction(
-        wallet.id,
-        'SELL',
-        tokenAddress,
-        sellAmount,
-        quoteResponse.data.outAmount / 1e9, // Convert lamports to SOL
-        quoteResponse.data.price,
-        txid,
-        'COMPLETED'
-      );
-      
-      return { 
-        success: true, 
-        txId: txid 
-      };
-      
-    } catch (error) {
-      console.error('Error selling token:', error);
-      let errorMessage = 'Failed to sell token';
-      
-      if (axios.isAxiosError(error) && error.response?.data?.error) {
-        errorMessage = error.response.data.error;
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-      
-      return { 
-        success: false, 
-        error: errorMessage 
-      };
-    }
+    });
+    if (!quoteResponse.data) throw new Error('Failed to get quote from Jupiter');
+
+    const swapResponse = await axios.post(JUPITER_SWAP_API, {
+      quoteResponse: quoteResponse.data,
+      userPublicKey: ownerAddress,
+      wrapUnwrapSOL: true,
+      useJitoTip: opts.useJito ?? false,
+    });
+    if (!swapResponse.data?.swapTransaction) throw new Error('Failed to generate swap transaction');
+
+    return {
+      transactionBase64: swapResponse.data.swapTransaction,
+      quote: {
+        inAmount: quoteResponse.data.inAmount,
+        outAmount: quoteResponse.data.outAmount,
+        outputDecimals: quoteResponse.data.outputDecimals ?? 9,
+        price: quoteResponse.data.price,
+      },
+    };
   }
-  
+
   /**
    * Get user preferences for Jito, etc.
    */
@@ -414,43 +249,47 @@ export class JupiterService {
       useJito: true // Default to using Jito
     };
   }
-  
+
   /**
    * Toggle Jito usage for a user
    */
   async toggleJito(userId: string): Promise<boolean> {
     try {
-      // Implement your actual toggling logic
-      // This is a placeholder implementation
       const currentPrefs = await this.getUserPreferences(userId);
-      
-      // Here you would update the preferences in your database
-      // For now, we just return the opposite of current setting
       return !currentPrefs.useJito;
     } catch (error) {
       console.error('Error toggling Jito:', error);
       return false;
     }
   }
-  
+
   /**
-   * Get a token's balance for a wallet
+   * Get a token's raw base-unit balance for a wallet (real on-chain read —
+   * the previous version of this method was a hardcoded mock).
    */
-  private async getTokenBalance(walletAddress: string, tokenAddress: string): Promise<number> {
+  private async getTokenBalanceRaw(walletAddress: string, tokenAddress: string): Promise<bigint> {
     try {
-      // Implement token balance checking logic
-      // This is placeholder implementation
-      return 1000; // Mock token balance
+      const owner = new PublicKey(walletAddress);
+      const mint = new PublicKey(tokenAddress);
+      const accounts = await this.connection.getParsedTokenAccountsByOwner(owner, { programId: TOKEN_PROGRAM_ID });
+      let total = 0n;
+      for (const { account } of accounts.value) {
+        const info = account.data.parsed.info;
+        if (info.mint === mint.toBase58()) {
+          total += BigInt(info.tokenAmount.amount);
+        }
+      }
+      return total;
     } catch (error) {
       console.error('Error getting token balance:', error);
-      return 0;
+      return 0n;
     }
   }
-  
+
   /**
    * Get SOL balance for a wallet
    */
-  private async getSolBalance(walletAddress: string): Promise<number> {
+  async getSolBalance(walletAddress: string): Promise<number> {
     try {
       const publicKey = new PublicKey(walletAddress);
       const balance = await this.connection.getBalance(publicKey);
@@ -460,11 +299,15 @@ export class JupiterService {
       return 0;
     }
   }
-  
+
   /**
-   * Record a transaction in the database
+   * Record a completed transaction for PnL tracking. Since swaps are now
+   * signed and submitted by the user's own wallet (not this service), the
+   * caller must supply a real signature it learned some other way (e.g. a
+   * user pasting it back via `/confirm <signature>`) — this is best-effort
+   * bookkeeping, not a guarantee every trade gets recorded.
    */
-  private async recordTransaction(
+  async recordTransaction(
     walletId: string,
     type: 'BUY' | 'SELL',
     tokenMint: string,
@@ -494,74 +337,21 @@ export class JupiterService {
       console.error('Error recording transaction:', error);
     }
   }
-  
+
   /**
-   * Get users with auto-buy enabled
+   * Get users with auto-buy enabled. Kept for the (currently unreachable —
+   * see src/index.ts's handleWebsocketMessage, which is defined but never
+   * called) auto-buy code path. A fully unattended auto-buy is inherently
+   * incompatible with a non-custodial signing model — there is no key here
+   * to sign with — so this can only ever list candidates, never execute for
+   * them.
    */
   async getUsersWithAutoBuy(): Promise<{ userId: string; walletId: string }[]> {
     const users = await prisma.userConfig.findMany({
-      where: {
-        autoBuy: true
-      },
-      select: {
-        userId: true,
-        wallet: {
-          select: {
-            id: true
-          }
-        }
-      }
+      where: { autoBuy: true },
+      select: { userId: true, wallet: { select: { id: true } } }
     });
-    
-    return users.map(user => ({
-      userId: user.userId,
-      walletId: user.wallet.id
-    }));
-  }
-
-  /**
-   * Get users with their preferences (both AutoBuy and PumpSwap)
-   */
-  async getUsersWithPreferences(): Promise<{ 
-    userId: string; 
-    walletId?: string;
-    config?: { autoBuy: boolean };
-    preferences?: { pumpSwapEnabled: boolean }
-  }[]> {
-    // Get all wallets
-    const wallets = await prisma.wallet.findMany({
-      select: {
-        id: true,
-        userId: true,
-        config: {
-          select: {
-            autoBuy: true
-          }
-        }
-      }
-    });
-    
-    // Get all user preferences
-    const preferences = await prisma.userPreference.findMany({
-      select: {
-        userId: true,
-        pumpSwapEnabled: true
-      }
-    });
-    
-    // Create a map of user preferences
-    const prefsMap = new Map();
-    preferences.forEach(pref => {
-      prefsMap.set(pref.userId, { pumpSwapEnabled: pref.pumpSwapEnabled });
-    });
-    
-    // Combine data
-    return wallets.map(wallet => ({
-      userId: wallet.userId,
-      walletId: wallet.id,
-      config: wallet.config || undefined,
-      preferences: prefsMap.get(wallet.userId) || undefined
-    }));
+    return users.filter((u) => u.wallet).map((user) => ({ userId: user.userId, walletId: user.wallet!.id }));
   }
 
   /**
@@ -577,13 +367,7 @@ export class JupiterService {
         where: { userId },
         orderBy: { createdAt: 'asc' }
       });
-      
-      // For now, we don't store wallet names, so we'll just return the basic info
-      return wallets.map(wallet => ({
-        id: wallet.id,
-        walletAddress: wallet.walletAddress,
-        name: undefined // We'll add name support in the future
-      }));
+      return wallets.map((wallet) => ({ id: wallet.id, walletAddress: wallet.walletAddress, name: undefined }));
     } catch (error) {
       console.error('Error getting all wallets:', error);
       return [];
@@ -591,83 +375,28 @@ export class JupiterService {
   }
 
   /**
-   * Set a wallet as the default wallet for a user
-   * This works by reordering wallets (first wallet is default)
+   * Set a wallet as the default wallet for a user. Placeholder — there is
+   * currently no multi-wallet default selection mechanism; kept only so the
+   * existing Telegram callback wiring compiles and degrades gracefully.
    */
   async setDefaultWallet(userId: string, walletId: string): Promise<boolean> {
-    try {
-      // Validate that the wallet belongs to the user
-      const wallet = await prisma.wallet.findFirst({
-        where: {
-          id: walletId,
-          userId
-        }
-      });
-      
-      if (!wallet) {
-        throw new Error('Wallet not found or does not belong to user');
-      }
-      
-      // Currently we don't have a mechanism to set a default wallet
-      // This is placeholder functionality - in the future, we would implement
-      // proper default wallet selection by updating a defaultWalletId field on user
-      return true;
-    } catch (error) {
-      console.error('Error setting default wallet:', error);
-      return false;
-    }
+    const wallet = await prisma.wallet.findFirst({ where: { id: walletId, userId } });
+    return !!wallet;
   }
 
   /**
-   * Delete a wallet
+   * Delete a connected wallet record (just forgets the public address —
+   * there was never a key to delete).
    */
   async deleteWallet(userId: string, walletId: string): Promise<boolean> {
     try {
-      // Validate that the wallet belongs to the user
-      const wallet = await prisma.wallet.findFirst({
-        where: {
-          id: walletId,
-          userId
-        }
-      });
-      
-      if (!wallet) {
-        throw new Error('Wallet not found or does not belong to user');
-      }
-      
-      // Delete the wallet
-      await prisma.wallet.delete({
-        where: { id: walletId }
-      });
-      
+      const wallet = await prisma.wallet.findFirst({ where: { id: walletId, userId } });
+      if (!wallet) throw new Error('Wallet not found or does not belong to user');
+      await prisma.wallet.delete({ where: { id: walletId } });
       return true;
     } catch (error) {
       console.error('Error deleting wallet:', error);
       return false;
-    }
-  }
-
-  /**
-   * Get a wallet's private key (be careful with this!)
-   */
-  async getWalletPrivateKey(userId: string, walletId: string): Promise<string> {
-    try {
-      // Validate that the wallet belongs to the user
-      const wallet = await prisma.wallet.findFirst({
-        where: {
-          id: walletId,
-          userId
-        }
-      });
-      
-      if (!wallet) {
-        throw new Error('Wallet not found or does not belong to user');
-      }
-      
-      return wallet.walletPk;
-    } catch (error) {
-      console.error('Error getting wallet private key:', error);
-      throw new Error('Failed to get private key');
     }
   }
 
@@ -679,138 +408,63 @@ export class JupiterService {
     tokenSymbol?: string;
     tokenName?: string;
     balance: number;
-    usdValue?: number;
     pnl?: number;
     pnlPercentage?: number;
   }>> {
     try {
-      // Get user wallet
       const wallet = await this.getWallet(userId);
       if (!wallet) return [];
-      
-      // Get token account balances
+
       const publicKey = new PublicKey(wallet.walletAddress);
-      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(
-        publicKey,
-        { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-      );
-      
-      // Process token accounts
+      const tokenAccounts = await this.connection.getParsedTokenAccountsByOwner(publicKey, { programId: TOKEN_PROGRAM_ID });
+
       const positions = [];
-      
       for (const account of tokenAccounts.value) {
         const tokenData = account.account.data.parsed.info;
         const mintAddress = tokenData.mint;
         const balance = Number(tokenData.tokenAmount.amount) / Math.pow(10, tokenData.tokenAmount.decimals);
-        
-        // Skip tokens with zero balance
         if (balance <= 0) continue;
-        
-        // Skip native SOL (it shows up separately)
-        if (mintAddress === 'So11111111111111111111111111111111111111112') continue;
-        
-        // Get token transactions to calculate PNL
+        if (mintAddress === SOL_MINT) continue;
+
         const transactions = await prisma.walletTransaction.findMany({
-          where: {
-            walletId: wallet.id,
-            tokenMint: mintAddress
-          },
-          orderBy: {
-            timestamp: 'asc'
-          }
+          where: { walletId: wallet.id, tokenMint: mintAddress },
+          orderBy: { timestamp: 'asc' }
         });
-        
-        // Calculate PNL if there are transactions
-        let pnl = 0;
-        let pnlPercentage = 0;
-        let tokenName = 'Unknown';
-        let tokenSymbol = 'Unknown';
-        
+
+        let pnl: number | undefined;
+        let pnlPercentage: number | undefined;
         if (transactions.length > 0) {
-          // Attempt to get token metadata
-          try {
-            const tokenMetadata = await this.getTokenMetadata(mintAddress);
-            tokenName = tokenMetadata.name || 'Unknown';
-            tokenSymbol = tokenMetadata.symbol || 'Unknown';
-          } catch (e) {
-            console.error('Error fetching token metadata:', e);
-          }
-          
-          // Calculate average buy price and current estimated price
           let totalInvested = 0;
           let totalTokensBought = 0;
-          
           for (const tx of transactions) {
             if (tx.type === 'BUY') {
               totalInvested += tx.solAmount;
               totalTokensBought += tx.tokenAmount;
             }
           }
-          
-          if (totalTokensBought > 0) {
+          if (totalTokensBought > 0 && tx_hasValidPrice(transactions)) {
             const avgBuyPrice = totalInvested / totalTokensBought;
-            
-            // Get estimated current token price
-            // This would ideally use a price oracle, but we're keeping it simple
-            const currentPriceEstimate = await this.estimateTokenPrice(mintAddress);
-            
-            // Calculate PNL
-            const currentValue = balance * currentPriceEstimate;
+            const lastKnownPrice = transactions[transactions.length - 1].price;
+            const currentValue = balance * lastKnownPrice;
             const investedValue = balance * avgBuyPrice;
-            
             pnl = currentValue - investedValue;
-            pnlPercentage = (pnl / investedValue) * 100;
+            pnlPercentage = investedValue > 0 ? (pnl / investedValue) * 100 : undefined;
           }
         }
-        
-        positions.push({
-          tokenMint: mintAddress,
-          tokenName,
-          tokenSymbol,
-          balance,
-          pnl,
-          pnlPercentage
-        });
+
+        positions.push({ tokenMint: mintAddress, balance, pnl, pnlPercentage });
       }
-      
       return positions;
     } catch (error) {
       console.error('Error getting user token positions:', error);
       return [];
     }
   }
+}
 
-  /**
-   * Estimate token price
-   */
-  private async estimateTokenPrice(tokenMint: string): Promise<number> {
-    try {
-      // In a real application, use Jupiter API to get token price
-      // For now, return a mock price
-      return 0.01; // Mock price
-    } catch (error) {
-      console.error('Error estimating token price:', error);
-      return 0;
-    }
-  }
-
-  /**
-   * Get token metadata
-   */
-  private async getTokenMetadata(tokenMint: string): Promise<{ name: string, symbol: string }> {
-    try {
-      // In a real application, fetch from a token list or Metaplex
-      // For now, return placeholder data
-      return {
-        name: 'Unknown Token',
-        symbol: 'UNKNOWN'
-      };
-    } catch (error) {
-      console.error('Error getting token metadata:', error);
-      return { name: 'Unknown', symbol: 'UNKNOWN' };
-    }
-  }
+function tx_hasValidPrice(transactions: { price: number }[]): boolean {
+  return transactions.length > 0 && transactions[transactions.length - 1].price > 0;
 }
 
 // Export a singleton instance
-export const jupiterService = new JupiterService(); 
+export const jupiterService = new JupiterService();

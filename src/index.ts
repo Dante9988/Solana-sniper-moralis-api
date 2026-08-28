@@ -1,6 +1,7 @@
 import WebSocket from "ws"; // Node.js websocket library
 import { WebSocketRequest } from "./types"; // Typescript Types for type safety
 import { config } from "./config"; // Configuration parameters for our bot
+import { isApiServerEnabled } from "./apiServerGate";
 import { fetchTransactionDetails, createSwapTransaction, getRugCheckConfirmed, fetchAndSaveSwapDetails, fetchTokenMintFromTx } from "./transactions";
 import { validateEnv } from "./utils/env-validator";
 import player from "play-sound";
@@ -11,7 +12,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { MintsDataReponse } from "./types";
 import { checkTokenPnL, startPeriodicChecks } from './services/tokenTrackingService';
 import { client } from './discord/discord';
-import { sniperooService } from './services/sniperooService';
+import { jupiterService } from './services/jupiterService';
 import { telegramBot } from './telegram/telegramBot';
 import { pumpSwapService, verifyPumpFunMigration } from './services/pumpswapService';
 import { formatMarketCap, formatVolume, getTokenMarketData } from "./services/tokenDataService";
@@ -862,19 +863,15 @@ async function handleWebsocketMessage(message: any) {
 
             console.log("Token Mint:", tokenMint);
 
-            // Get all users with auto-buy enabled
-            const users = await sniperooService.getUsersWithAutoBuy();
+            // Auto-buy is inherently incompatible with the non-custodial signing
+            // model used everywhere else in this bot (see ARCHITECTURE.md §8) —
+            // there is no private key here to sign an unattended buy with. This
+            // only logs candidates; it has never actually executed anything
+            // (this whole function, handleWebsocketMessage, is dead code — it is
+            // defined but never called anywhere in this file).
+            const users = await jupiterService.getUsersWithAutoBuy();
             for (const user of users) {
-                try {
-                    const success = await sniperooService.buyToken(tokenMint, user.userId);
-                    if (success) {
-                        console.log(`Auto-buy successful for user ${user.userId}`);
-                    } else {
-                        console.log(`Auto-buy failed for user ${user.userId}`);
-                    }
-                } catch (error) {
-                    console.error(`Error auto-buying for user ${user.userId}:`, error);
-                }
+                console.log(`Auto-buy is enabled for user ${user.userId} but requires their own wallet approval — no automatic execution is possible.`);
             }
         }
     } catch (error) {
@@ -1098,10 +1095,22 @@ async function main() {
   🚀 Web3 Provider: ${process.env.HELIUS_HTTPS_URI?.substring(0, 25)}...
   `);
 
-  console.log('🔌 API_ENABLED is set to true - Starting API server with bot...');
-  initApiServer();
-  console.log('✅ API server initialized successfully');
-  
+  // Off by default (see ARCHITECTURE.md §8.3) — src/api/index.ts binds
+  // 0.0.0.0 by default and, even with API_AUTH_TOKEN set, exposes wallet
+  // and trading-request endpoints. Require an explicit opt-in.
+  if (isApiServerEnabled()) {
+    try {
+      console.log('🔌 API_ENABLED=true — starting API server with bot...');
+      initApiServer();
+      console.log('✅ API server initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize API server:', error);
+      console.log('⚠️ Continuing bot startup without API server');
+    }
+  } else {
+    console.log('🔌 API server not started (API_ENABLED is not "true"). Run with API_ENABLED=true, or separately with `npm run api:server` for the read-only status API.');
+  }
+
   // Initialize Discord client
   try {
     await client.login(process.env.DISCORD_BOT_TOKEN);
@@ -1109,27 +1118,9 @@ async function main() {
   } catch (error) {
     console.error('Failed to initialize Discord client:', error);
   }
-  
+
   // Telegram bot is already initialized at the top of the file
   // No need to initialize it again
-  
-  // Check if we should start the API server (only if API_ENABLED=true)
-  //const enableApi = process.env.API_ENABLED === 'true';
-  
-  // if (enableApi) {
-  //   try {
-  //     console.log('🔌 API_ENABLED is set to true - Starting API server with bot...');
-  //     initApiServer();
-  //     console.log('✅ API server initialized successfully');
-  //   } catch (error) {
-  //     console.error('❌ Failed to initialize API server:', error);
-  //     console.log('⚠️ Continuing bot startup without API server');
-  //   }
-  // } else {
-  //   console.log('🔌 API server not started (API_ENABLED not set to true)');
-  //   console.log('🔌 To enable API, run with: API_ENABLED=true yarn dev');
-  //   console.log('🔌 Or run API server separately with: yarn api:server');
-  // }
   
   // Start periodic checks
   startPeriodicChecks(client);

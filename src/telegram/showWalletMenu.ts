@@ -51,18 +51,17 @@ export async function showWalletMenu(ctx: Context): Promise<void> {
 `;
 
     if (hasWallets && userWallet) {
-      walletMessage += `<b>Your Primary Wallet:</b>\n${await getFormattedBalance(userWallet.walletAddress)}\n<code>${userWallet.walletAddress}</code>`;
+      walletMessage += `<b>Your Connected Wallet:</b>\n${await getFormattedBalance(userWallet.walletAddress)}\n<code>${userWallet.walletAddress}</code>`;
     } else {
-      walletMessage += "<b>No wallets found.</b> Create or import one to get started!";
+      walletMessage += "<b>No wallet connected.</b> Connect your wallet's public address to get started — never a private key.";
     }
-    
+
     walletMessage += "\n\nSelect an option below:";
 
     // Create wallet menu buttons
     const keyboard = Markup.inlineKeyboard([
       [
-        Markup.button.callback('💼 Create Wallet', 'wallet:create_init'),
-        Markup.button.callback('🔑 Import Wallet', 'wallet:import_init')
+        Markup.button.callback('🔗 Connect Wallet', 'wallet:create_init'),
       ],
       [
         Markup.button.callback('💰 Check Balance', 'wallet:balance'),

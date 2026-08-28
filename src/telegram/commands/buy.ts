@@ -1,106 +1,91 @@
 import { Context } from 'telegraf';
 import { jupiterService } from '../../services/jupiterService';
-import { PumpSwapService } from '../../services/pumpswapService';
-import { getUserPreferredService, SwapService } from './service';
+import { createBuyIntent, SolanaPayConfigError } from '../../services/solanaPayService';
+import { renderQrPng } from '../../services/qrCode';
 import { showBuyMenu } from '../showBuyMenu';
+import { isTelegramAdmin, NOT_ADMIN_MESSAGE } from '../adminGuard';
 
-// Create instance of PumpSwapService
-const pumpSwapService = new PumpSwapService();
+const TOKEN_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 export async function buy(ctx: Context): Promise<void> {
   try {
     const userId = ctx.from?.id.toString();
-    
+
     if (!userId) {
       await ctx.reply('❌ Failed to identify user.');
       return;
     }
 
-    // Get message text
+    if (!isTelegramAdmin(userId)) {
+      await ctx.reply(NOT_ADMIN_MESSAGE);
+      return;
+    }
+
     const message = ctx.message;
     if (!message || !('text' in message)) {
       await showBuyMenu(ctx);
       return;
     }
 
-    // Parse command arguments
     const args = message.text.split(' ').slice(1);
-    
-    // Check if token address is provided
     if (args.length === 0) {
       await showBuyMenu(ctx);
       return;
     }
-    
+
     const tokenAddress = args[0];
-    
-    // Check if the token address is valid
-    if (!tokenAddress.match(/^[A-Za-z0-9]{32,44}$/)) {
+    if (!TOKEN_ADDRESS_RE.test(tokenAddress)) {
       await ctx.reply('❌ Invalid token address format. Please provide a valid Solana token address.');
       return;
     }
-    
-    // Get user config for buy amount
-    const userConfig = await jupiterService.getUserConfig(userId);
-    if (!userConfig) {
-      await ctx.reply('❌ No user configuration found. Please set up your configuration first using /config.');
-      return;
-    }
-    
-    // Check which service the user prefers
-    const preferredService = getUserPreferredService(userId);
-    
-    // Send "processing" message
-    const processingMsg = await ctx.reply(
-      `⏳ Processing your buy order for token: \n<code>${tokenAddress}</code>\nAmount: ${userConfig.buyAmount} SOL`,
-      { parse_mode: 'HTML' }
-    );
-    
-    // Buy token using the preferred service
-    let result;
-    
-    if (preferredService === SwapService.JUPITER) {
-      // Use Jupiter service
-      result = await jupiterService.buyToken(tokenAddress, userId);
+
+    // Optional amount override; falls back to the user's configured default buy amount.
+    let solAmount: number;
+    if (args[1]) {
+      solAmount = Number(args[1]);
+      if (!Number.isFinite(solAmount) || solAmount <= 0) {
+        await ctx.reply('❌ Amount must be a positive number of SOL.');
+        return;
+      }
     } else {
-      // Use Pump.fun service
-      result = await pumpSwapService.buyToken(tokenAddress, userId);
+      const userConfig = await jupiterService.getUserConfig(userId);
+      if (!userConfig) {
+        await ctx.reply('❌ No user configuration found. Please set up your configuration first using /config, or run /buy <mint> <sol_amount>.');
+        return;
+      }
+      solAmount = userConfig.buyAmount;
     }
-    
-    // Handle the result
-    if (result.success && result.txId) {
-      // Format transaction ID for display (truncate if needed)
-      const txIdDisplay = result.txId.length > 15 
-        ? `${result.txId.substring(0, 8)}...${result.txId.substring(result.txId.length - 8)}`
-        : result.txId;
-        
-      // Create Solscan transaction link
-      const txLink = `https://solscan.io/tx/${result.txId}`;
-      
-      await ctx.reply(
-        `✅ <b>Purchase successful!</b>\n\n` +
-        `🔗 <a href="${txLink}">View transaction details</a>\n\n` +
-        `🔄 Service: <b>${preferredService === SwapService.JUPITER ? 'Jupiter' : 'Pump.fun'}</b>\n\n` +
-        `Swap completed successfully. Use /wallet to check your balance.`,
-        { 
-          parse_mode: 'HTML',
-          disable_web_page_preview: true 
-        } as any
-      );
-    } else {
-      // Handle error case
-      const errorMessage = result.error || 'Unknown error occurred';
-      
-      await ctx.reply(
-        `❌ <b>Purchase failed</b>\n\n` +
-        `Error: ${errorMessage}\n\n` +
-        `Please check that the token address is correct and try again.`,
-        { parse_mode: 'HTML' }
-      );
-    }
-    
+
+    await sendBuyPayLink(ctx, tokenAddress, solAmount);
   } catch (error) {
     console.error('Buy command error:', error);
     await ctx.reply('❌ An error occurred while processing your request.');
   }
-} 
+}
+
+export async function sendBuyPayLink(ctx: Context, tokenAddress: string, solAmount: number): Promise<void> {
+  try {
+    const { url } = createBuyIntent(tokenAddress, solAmount);
+    const qr = await renderQrPng(url);
+
+    await ctx.replyWithPhoto(
+      { source: qr },
+      {
+        caption:
+          `💰 <b>Buy ${solAmount} SOL of</b>\n<code>${tokenAddress}</code>\n\n` +
+          `Open this link in your Solana wallet (Phantom, Solflare, …) or scan the QR code to review and approve — ` +
+          `this bot never sees or holds your private key, and nothing is sent unless you approve it in your own wallet.\n\n` +
+          `<a href="${url}">${url}</a>`,
+        parse_mode: 'HTML',
+      }
+    );
+  } catch (error) {
+    if (error instanceof SolanaPayConfigError) {
+      console.error('Solana Pay config error:', error.message);
+      await ctx.reply('❌ This bot is not configured to accept trades right now (missing SOLANA_PAY_BASE_URL). Contact the operator.');
+      return;
+    }
+    console.error('Error creating buy pay link:', error);
+    await ctx.reply(`❌ ${error instanceof Error ? error.message : 'Failed to create a buy request.'}`);
+  }
+}

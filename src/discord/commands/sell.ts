@@ -1,9 +1,11 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, InteractionEditReplyOptions } from 'discord.js';
-import { sniperooService } from '../../services/sniperooService';
+import { AttachmentBuilder, ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
+import { createSellIntent, SolanaPayConfigError } from '../../services/solanaPayService';
+import { renderQrPng } from '../../services/qrCode';
+import { isDiscordAdmin, NOT_ADMIN_MESSAGE } from '../adminGuard';
 
 export const data = new SlashCommandBuilder()
     .setName('sell')
-    .setDescription('Sell a token using Sniperoo')
+    .setDescription('Get a Solana Pay link to approve a sell in your own wallet')
     .addStringOption(option =>
         option
             .setName('token')
@@ -17,6 +19,11 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.deferReply({ ephemeral: true });
+
+    if (!isDiscordAdmin(interaction.user.id)) {
+        await interaction.editReply(NOT_ADMIN_MESSAGE);
+        return;
+    }
 
     try {
         const tokenAddress = interaction.options.getString('token');
@@ -32,21 +39,22 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             return;
         }
 
-        const success = await sniperooService.sellToken(
-            tokenAddress,
-            percentage,
-            interaction.user.id
-        );
+        const { url } = createSellIntent(tokenAddress, percentage);
+        const qr = await renderQrPng(url);
 
-        if (success) {
-            await interaction.editReply({
-                content: `✅ Sell order placed successfully!\n\nToken: \`${tokenAddress}\`\nPercentage: ${percentage}%`
-            });
-        } else {
-            await interaction.editReply('Failed to place sell order. Please try again.');
-        }
+        await interaction.editReply({
+            content:
+                `💱 **Sell ${percentage}% of** \`${tokenAddress}\`\n\n` +
+                `Open this link in your Solana wallet app or scan the QR code to review and approve — ` +
+                `this bot never sees or holds your private key.\n\n${url}`,
+            files: [new AttachmentBuilder(qr, { name: 'solana-pay.png' })],
+        });
     } catch (error) {
         console.error('Sell command error:', error);
-        await interaction.editReply('An error occurred while processing your request.');
+        if (error instanceof SolanaPayConfigError) {
+            await interaction.editReply('This bot is not configured to accept trades right now (missing SOLANA_PAY_BASE_URL).');
+            return;
+        }
+        await interaction.editReply(error instanceof Error ? error.message : 'An error occurred while processing your request.');
     }
-} 
+}

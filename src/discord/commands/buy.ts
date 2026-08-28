@@ -1,17 +1,30 @@
-import { CommandInteraction, SlashCommandBuilder, ChatInputCommandInteraction, InteractionEditReplyOptions } from 'discord.js';
-import { sniperooService } from '../../services/sniperooService';
+import { AttachmentBuilder, ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
+import { jupiterService } from '../../services/jupiterService';
+import { createBuyIntent, SolanaPayConfigError } from '../../services/solanaPayService';
+import { renderQrPng } from '../../services/qrCode';
+import { isDiscordAdmin, NOT_ADMIN_MESSAGE } from '../adminGuard';
 
 export const data = new SlashCommandBuilder()
     .setName('buy')
-    .setDescription('Buy a token using Sniperoo')
+    .setDescription('Get a Solana Pay link to approve a buy in your own wallet')
     .addStringOption(option =>
         option
             .setName('token')
             .setDescription('Token address to buy')
-            .setRequired(true));
+            .setRequired(true))
+    .addNumberOption(option =>
+        option
+            .setName('amount')
+            .setDescription('Amount of SOL to spend (defaults to your configured buy amount)')
+            .setRequired(false));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.deferReply({ ephemeral: true });
+
+    if (!isDiscordAdmin(interaction.user.id)) {
+        await interaction.editReply(NOT_ADMIN_MESSAGE);
+        return;
+    }
 
     try {
         const tokenAddress = interaction.options.getString('token');
@@ -20,31 +33,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
             return;
         }
 
-        const success = await sniperooService.buyToken(
-            tokenAddress,
-            interaction.user.id
-        );
-
-        if (success) {
-            const config = await sniperooService.getUserConfig(interaction.user.id);
-            if (!config) {
-                await interaction.editReply('Failed to get user configuration.');
+        let solAmount = interaction.options.getNumber('amount');
+        if (!solAmount || solAmount <= 0) {
+            const userConfig = await jupiterService.getUserConfig(interaction.user.id);
+            if (!userConfig) {
+                await interaction.editReply('No configuration found and no amount given. Provide an amount, or set a default with `/config set`.');
                 return;
             }
-
-            await interaction.editReply({
-                content: `✅ Buy order placed successfully!\n\n` +
-                    `Token: \`${tokenAddress}\`\n` +
-                    `Amount: ${config.buyAmount} SOL\n` +
-                    `Auto-sell: ${config.autoSell ? 'Enabled' : 'Disabled'}\n` +
-                    `Take Profit: ${config.takeProfit}%\n` +
-                    `Stop Loss: ${config.stopLoss}%`
-            });
-        } else {
-            await interaction.editReply('Failed to place buy order. Please try again.');
+            solAmount = userConfig.buyAmount;
         }
+
+        const { url } = createBuyIntent(tokenAddress, solAmount);
+        const qr = await renderQrPng(url);
+
+        await interaction.editReply({
+            content:
+                `💰 **Buy ${solAmount} SOL of** \`${tokenAddress}\`\n\n` +
+                `Open this link in your Solana wallet app or scan the QR code to review and approve — ` +
+                `this bot never sees or holds your private key.\n\n${url}`,
+            files: [new AttachmentBuilder(qr, { name: 'solana-pay.png' })],
+        });
     } catch (error) {
         console.error('Buy command error:', error);
-        await interaction.editReply('An error occurred while processing your request.');
+        if (error instanceof SolanaPayConfigError) {
+            await interaction.editReply('This bot is not configured to accept trades right now (missing SOLANA_PAY_BASE_URL).');
+            return;
+        }
+        await interaction.editReply(error instanceof Error ? error.message : 'An error occurred while processing your request.');
     }
-} 
+}

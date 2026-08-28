@@ -11,7 +11,11 @@ model Wallet {
   id            String              @id @default(uuid())
   userId        String              @unique
   walletAddress String              @unique
-  walletPk      String              @unique
+  /// Deliberately optional and never populated by any code path anymore —
+  /// this bot never generates, imports, or stores a private key (see
+  /// ARCHITECTURE.md §8). Kept nullable rather than dropped so existing rows
+  /// (from before this change) aren't touched by a destructive migration.
+  walletPk      String?             @unique
   createdAt     DateTime            @default(now())
   config        UserConfig?
   balances      WalletBalance[]

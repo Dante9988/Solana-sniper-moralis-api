@@ -1,6 +1,7 @@
 import { Scenes, Markup } from 'telegraf';
 import { jupiterService } from '../services/jupiterService';
 import { setupConfigScenes } from './scenes/configScenes';
+import { isTelegramAdmin, NOT_ADMIN_MESSAGE } from './adminGuard';
 
 // Create scenes for wallet operations that require multiple steps
 export function setupScenes() {
@@ -20,113 +21,47 @@ export function setupScenes() {
     return ctx.scene.leave();
   });
   
-  // Scene for creating a new wallet
-  const createWalletScene = new Scenes.BaseScene<any>('create_wallet_scene');
-  
-  createWalletScene.enter(async (ctx) => {
-    await ctx.reply('Enter a name for your new wallet:');
-  });
-  
-  createWalletScene.on('text', async (ctx) => {
-    const name = ctx.message.text;
+  // Scene for connecting a wallet by its PUBLIC address. Replaces the old
+  // create/import scenes, which generated or accepted a PRIVATE key and
+  // stored it in Postgres — this bot no longer holds signing authority over
+  // any wallet at all (see ARCHITECTURE.md §8), so there is nothing left to
+  // create or import, only a public address to remember.
+  const connectWalletScene = new Scenes.BaseScene<any>('connect_wallet_scene');
+
+  connectWalletScene.enter(async (ctx) => {
     const userId = ctx.from?.id.toString();
-    
-    if (!userId) {
-      await ctx.reply('❌ Failed to identify user.');
+    if (!isTelegramAdmin(userId)) {
+      await ctx.reply(NOT_ADMIN_MESSAGE);
       return ctx.scene.leave();
     }
-    
-    try {
-      // Show processing message
-      await ctx.reply('⏳ Creating your wallet...');
-      
-      // Create the wallet
-      const result = await jupiterService.createWallet(userId, name);
-      
-      if ('error' in result) {
-        await ctx.reply(`❌ ${result.error}`);
-        return ctx.scene.leave();
-      }
-      
-      // Mask the private key in the response
-      const { walletAddress, walletPk } = result;
-      const maskedPk = walletPk.substring(0, 6) + '...' + walletPk.substring(walletPk.length - 4);
-      
-      // Show success message with wallet details
-      await ctx.reply(
-        `✅ <b>Wallet Created Successfully!</b>\n\n` +
-        `<b>Name:</b> ${name}\n\n` +
-        `<b>Address:</b>\n<code>${walletAddress}</code>\n\n` +
-        `<b>Private Key:</b> <tg-spoiler>${walletPk}</tg-spoiler>\n\n` +
-        `⚠️ <b>NEVER share your private key with anyone!</b>\n` +
-        `Save it somewhere safe. You can manage your wallet using the buttons below.`,
-        {
-          parse_mode: 'HTML',
-          ...Markup.inlineKeyboard([
-            [
-              Markup.button.callback('💰 Check Balance', 'wallet:balance'),
-              Markup.button.callback('📋 List Wallets', 'wallet:list')
-            ],
-            [
-              Markup.button.callback('⬅️ Back to Main Menu', 'wallet:back')
-            ]
-          ])
-        }
-      );
-      
-      return ctx.scene.leave();
-    } catch (error) {
-      console.error('Create wallet error:', error);
-      await ctx.reply('❌ Failed to create wallet. Please try again.');
-      return ctx.scene.leave();
-    }
-  });
-  
-  // Scene for importing a wallet
-  const importWalletScene = new Scenes.BaseScene<any>('import_wallet_scene');
-  
-  importWalletScene.enter(async (ctx) => {
     await ctx.reply(
-      '🔑 <b>Import Wallet</b>\n\n' +
-      'Please enter your private key to import your wallet:\n\n' +
-      '⚠️ <b>CAUTION:</b> This is sensitive information. Make sure you are in a private environment.',
+      '🔗 <b>Connect Wallet</b>\n\n' +
+      'Enter your wallet\'s PUBLIC address (never a private key or seed phrase — this bot never asks for one and never stores one):',
       { parse_mode: 'HTML' }
     );
   });
-  
-  importWalletScene.on('text', async (ctx) => {
-    const privateKey = ctx.message.text;
+
+  connectWalletScene.on('text', async (ctx) => {
+    const address = ctx.message.text.trim();
     const userId = ctx.from?.id.toString();
-    
+
     if (!userId) {
       await ctx.reply('❌ Failed to identify user.');
       return ctx.scene.leave();
     }
-    
+
     try {
-      // Show processing message
-      await ctx.reply('⏳ Importing your wallet...');
-      
-      // Import the wallet
-      const result = await jupiterService.importWallet(userId, privateKey);
-      
+      const result = await jupiterService.connectWallet(userId, address);
+
       if ('error' in result) {
         await ctx.reply(`❌ ${result.error}`);
         return ctx.scene.leave();
       }
-      
-      // Delete the message with the private key for security
-      try {
-        await ctx.deleteMessage(ctx.message.message_id);
-      } catch (e) {
-        console.error('Failed to delete message with private key:', e);
-      }
-      
-      // Show success message
+
       await ctx.reply(
-        `✅ <b>Wallet Imported Successfully!</b>\n\n` +
+        `✅ <b>Wallet Connected!</b>\n\n` +
         `<b>Address:</b>\n<code>${result.walletAddress}</code>\n\n` +
-        `Your wallet is now ready to use.`,
+        `You can now use /buy and /sell — each one hands you a link/QR to approve in your own wallet app.`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([
@@ -140,11 +75,11 @@ export function setupScenes() {
           ])
         }
       );
-      
+
       return ctx.scene.leave();
     } catch (error) {
-      console.error('Import wallet error:', error);
-      await ctx.reply('❌ Failed to import wallet. Please try again.');
+      console.error('Connect wallet error:', error);
+      await ctx.reply('❌ Failed to connect wallet. Please try again.');
       return ctx.scene.leave();
     }
   });
@@ -185,8 +120,7 @@ export function setupScenes() {
   const stage = new Scenes.Stage<any>([
     renameWalletScene,
     withdrawScene,
-    createWalletScene,
-    importWalletScene,
+    connectWalletScene,
     ...configScenes
   ]);
   

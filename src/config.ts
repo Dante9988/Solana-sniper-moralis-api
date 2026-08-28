@@ -133,14 +133,11 @@ export const config = {
     },
     verbose_log: false,      // Enable for debugging
   },
-  sniperoo: {
-    enabled: true,
-    api_key: process.env.SNIPEROO_API_KEY || "",
-    default_buy_amount: 0.1, // Default SOL amount for buys
-    default_take_profit: 50, // Default take profit percentage
-    default_stop_loss: 15,   // Default stop loss percentage
-    auto_sell: true,        // Enable auto-sell by default
-  },
+  // Sniperoo (third-party custodial trading SaaS) has been removed entirely —
+  // it stored plaintext private keys and had no safety gate. See
+  // ARCHITECTURE.md §8. Trading-preference defaults now live directly in
+  // src/services/jupiterService.ts, which never generates, imports, or
+  // stores a private key.
   telegram: {
     enabled: true,
     token: process.env.TELEGRAM_BOT_TOKEN || "",

@@ -15,14 +15,22 @@ import {
   triggerDailySummary 
 } from '../services/tokenTrackingService';
 import { generateCustomTimeRangeReport } from '../services/dailyTopTokensService';
-import { Connection, Keypair, PublicKey } from '@solana/web3.js';
-import bs58 from 'bs58';
+import { Connection, PublicKey } from '@solana/web3.js';
 import { PrismaClient } from '@prisma/client';
-import { pumpSwapService } from '../services/pumpswapService';
+import { jupiterService } from '../services/jupiterService';
+import {
+  buildTransactionForAccount,
+  createBuyIntent,
+  createSellIntent,
+  getIntent,
+  labelForIntent,
+  SolanaPayConfigError,
+} from '../services/solanaPayService';
 import axios from 'axios';
+import { createRateLimiter } from './rateLimit';
 
 const prisma = new PrismaClient();
-const app = express();
+export const app = express();
 
 // API server configuration
 const HOST = process.env.API_HOST || '0.0.0.0';
@@ -40,6 +48,30 @@ const EFFECTIVE_PORT = isMainApp ?
 // Middleware
 app.use(cors());
 app.use(bodyParser.json());
+
+// Bearer-key auth for everything under /api/* (wallet, transaction-request
+// creation, config, pnl). Fails CLOSED: with no API_AUTH_TOKEN configured,
+// every /api/* request is rejected rather than silently left open — this
+// server has no other access control and is bound to 0.0.0.0 by default
+// (see ARCHITECTURE.md §8.3). /health, /, and the Solana Pay /pay/* routes
+// are intentionally exempt: /pay/* must stay unauthenticated per the Solana
+// Pay Transaction Request spec (a wallet app calls them directly, and
+// building a transaction for a caller-declared account cannot move that
+// account's funds without its own signature).
+app.use('/api', (req, res, next) => {
+  const configuredToken = process.env.API_AUTH_TOKEN?.trim();
+  if (!configuredToken) {
+    res.status(503).json({ success: false, error: 'This API is not configured (API_AUTH_TOKEN is unset) — refusing all /api/* requests.' });
+    return;
+  }
+  const header = req.header('authorization');
+  const provided = header?.startsWith('Bearer ') ? header.slice('Bearer '.length).trim() : undefined;
+  if (provided !== configuredToken) {
+    res.status(401).json({ success: false, error: 'missing or invalid API token' });
+    return;
+  }
+  next();
+});
 
 // Swagger configuration
 const swaggerOptions = {
@@ -295,7 +327,7 @@ async function getSolPrice(): Promise<number> {
 /**
  * Setup all API routes
  */
-function setupRoutes() {
+export function setupRoutes() {
   console.log('📡 Setting up API routes for Solana Sniper Bot...');
   
   // Health check endpoint
@@ -427,12 +459,18 @@ function setupRoutes() {
   });
   
   // ----- Wallet Management Endpoints -----
-  
+  //
+  // The former /api/wallet/create and /api/wallet/import routes generated or
+  // accepted a raw private key over an UNAUTHENTICATED HTTP endpoint bound to
+  // 0.0.0.0 and stored it in plaintext in Postgres. Removed entirely — see
+  // ARCHITECTURE.md §8. Only a "connect a public address" route remains,
+  // which cannot grant signing access to anything.
+
   /**
    * @swagger
-   * /api/wallet/create:
+   * /api/wallet/connect:
    *   post:
-   *     summary: Create a new wallet
+   *     summary: Record a user's wallet PUBLIC address (never a private key)
    *     requestBody:
    *       required: true
    *       content:
@@ -441,150 +479,38 @@ function setupRoutes() {
    *             type: object
    *             required:
    *               - userId
-   *               - name
+   *               - address
    *             properties:
    *               userId:
    *                 type: string
-   *               name:
-   *                 type: string
-   *     responses:
-   *       201:
-   *         description: Wallet created successfully
-   */
-  app.post('/api/wallet/create', async (req, res) => {
-    try {
-      const { userId, name } = req.body;
-      
-      if (!userId || !name) {
-        return res.status(400).json({
-          success: false,
-          error: 'userId and name are required'
-        });
-      }
-      
-      // Generate a new Solana keypair
-      const keypair = Keypair.generate();
-      const walletAddress = keypair.publicKey.toString();
-      const walletPk = bs58.encode(keypair.secretKey);
-      
-      // Store in database
-      await prisma.wallet.create({
-        data: {
-          userId,
-          walletAddress,
-          walletPk,
-          createdAt: new Date()
-        }
-      });
-      
-      res.status(201).json({
-        success: true,
-        data: {
-          userId,
-          walletAddress,
-          walletPk,
-          createdAt: new Date()
-        }
-      });
-    } catch (error: any) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message || 'Failed to create wallet' 
-      });
-    }
-  });
-  
-  /**
-   * @swagger
-   * /api/wallet/import:
-   *   post:
-   *     summary: Import an existing wallet
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             required:
-   *               - userId
-   *               - privateKey
-   *             properties:
-   *               userId:
-   *                 type: string
-   *               privateKey:
+   *               address:
    *                 type: string
    *     responses:
    *       200:
-   *         description: Wallet imported successfully
+   *         description: Wallet connected successfully
    */
-  app.post('/api/wallet/import', async (req, res) => {
+  app.post('/api/wallet/connect', async (req, res) => {
     try {
-      const { userId, privateKey } = req.body;
-      
-      if (!userId || !privateKey) {
-        return res.status(400).json({
-          success: false,
-          error: 'userId and privateKey are required'
-        });
+      const { userId, address } = req.body;
+
+      if (!userId || !address) {
+        return res.status(400).json({ success: false, error: 'userId and address are required' });
       }
-      
-      // Validate private key
-      if (!privateKey || privateKey.length < 64) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid private key format'
-        });
+
+      const result = await jupiterService.connectWallet(userId, address);
+      if ('error' in result) {
+        return res.status(400).json({ success: false, error: result.error });
       }
-      
-      // Convert private key to keypair
-      let secretKey: Uint8Array;
-      try {
-        secretKey = bs58.decode(privateKey);
-        if (secretKey.length !== 64) {
-          throw new Error('Invalid key length');
-        }
-      } catch (e) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid private key format'
-        });
-      }
-      
-      const keypair = Keypair.fromSecretKey(secretKey);
-      const walletAddress = keypair.publicKey.toString();
-      
-      // Store in database
-      await prisma.wallet.upsert({
-        where: { userId },
-        update: {
-          walletAddress,
-          walletPk: privateKey,
-        },
-        create: {
-          userId,
-          walletAddress,
-          walletPk: privateKey,
-          createdAt: new Date()
-        }
-      });
-      
-      res.json({
-        success: true,
-        data: {
-          userId,
-          walletAddress,
-          walletPk: privateKey,
-          createdAt: new Date()
-        }
-      });
+
+      res.json({ success: true, data: { userId, walletAddress: result.walletAddress } });
     } catch (error: any) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message || 'Failed to import wallet' 
+      res.status(500).json({
+        success: false,
+        error: error.message || 'Failed to connect wallet'
       });
     }
   });
-  
+
   /**
    * @swagger
    * /api/wallet/{userId}:
@@ -643,7 +569,7 @@ function setupRoutes() {
    * @swagger
    * /api/transaction/buy:
    *   post:
-   *     summary: Buy a token
+   *     summary: Create a Solana Pay buy request. Returns a link/QR for the caller's own wallet to sign and submit — this endpoint never executes a trade itself.
    *     requestBody:
    *       required: true
    *       content:
@@ -651,58 +577,43 @@ function setupRoutes() {
    *           schema:
    *             type: object
    *             required:
-   *               - userId
    *               - tokenAddress
+   *               - solAmount
    *             properties:
-   *               userId:
-   *                 type: string
    *               tokenAddress:
    *                 type: string
-   *               customSettings:
-   *                 type: object
+   *               solAmount:
+   *                 type: number
    *     responses:
    *       200:
-   *         description: Buy transaction executed successfully
+   *         description: Solana Pay buy request created
    */
   app.post('/api/transaction/buy', async (req, res) => {
     try {
-      const { userId, tokenAddress, customSettings } = req.body;
-      
-      if (!userId || !tokenAddress) {
+      const { tokenAddress, solAmount } = req.body;
+
+      if (!tokenAddress || !solAmount) {
         return res.status(400).json({
           success: false,
-          error: 'userId and tokenAddress are required'
+          error: 'tokenAddress and solAmount are required'
         });
       }
-      
-      const result = await pumpSwapService.buyToken(tokenAddress, userId, customSettings);
-      
-      if (!result.success) {
-        return res.status(400).json({
-          success: false,
-          error: result.error
-        });
-      }
-      
-      res.json({
-        success: true,
-        data: {
-          txId: result.txId
-        }
-      });
+
+      const { intentId, url } = createBuyIntent(tokenAddress, solAmount);
+      res.json({ success: true, data: { intentId, url } });
     } catch (error: any) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message || 'Failed to execute buy transaction' 
+      res.status(error instanceof SolanaPayConfigError ? 500 : 400).json({
+        success: false,
+        error: error.message || 'Failed to create buy request'
       });
     }
   });
-  
+
   /**
    * @swagger
    * /api/transaction/sell:
    *   post:
-   *     summary: Sell a token
+   *     summary: Create a Solana Pay sell request. Returns a link/QR for the caller's own wallet to sign and submit — this endpoint never executes a trade itself.
    *     requestBody:
    *       required: true
    *       content:
@@ -710,56 +621,69 @@ function setupRoutes() {
    *           schema:
    *             type: object
    *             required:
-   *               - userId
    *               - tokenAddress
    *               - percentage
    *             properties:
-   *               userId:
-   *                 type: string
    *               tokenAddress:
    *                 type: string
    *               percentage:
    *                 type: number
-   *               customSettings:
-   *                 type: object
    *     responses:
    *       200:
-   *         description: Sell transaction executed successfully
+   *         description: Solana Pay sell request created
    */
   app.post('/api/transaction/sell', async (req, res) => {
     try {
-      const { userId, tokenAddress, percentage, customSettings } = req.body;
-      
-      if (!userId || !tokenAddress || percentage === undefined) {
+      const { tokenAddress, percentage } = req.body;
+
+      if (!tokenAddress || percentage === undefined) {
         return res.status(400).json({
           success: false,
-          error: 'userId, tokenAddress, and percentage are required'
+          error: 'tokenAddress and percentage are required'
         });
       }
-      
-      const result = await pumpSwapService.sellToken(tokenAddress, percentage, userId, customSettings);
-      
-      if (!result.success) {
-        return res.status(400).json({
-          success: false,
-          error: result.error
-        });
-      }
-      
-      res.json({
-        success: true,
-        data: {
-          txId: result.txId
-        }
-      });
+
+      const { intentId, url } = createSellIntent(tokenAddress, percentage);
+      res.json({ success: true, data: { intentId, url } });
     } catch (error: any) {
-      res.status(500).json({ 
-        success: false, 
-        error: error.message || 'Failed to execute sell transaction' 
+      res.status(error instanceof SolanaPayConfigError ? 500 : 400).json({
+        success: false,
+        error: error.message || 'Failed to create sell request'
       });
     }
   });
-  
+
+  // ----- Solana Pay Transaction Request Endpoints -----
+  //
+  // Implements https://docs.solanapay.com/spec#transaction-request. These are
+  // deliberately UNAUTHENTICATED per spec — a wallet app calls them directly.
+  // GET returns display metadata; POST receives the CALLER's own public key
+  // and returns an unsigned transaction for that specific account. Building a
+  // transaction here cannot move anyone's funds — only the account owner's
+  // own wallet, by signing it, can do that.
+
+  // Unauthenticated by design (see the comment above) — rate-limited per IP
+  // instead, so a single caller can't hammer Jupiter's quote/swap API for
+  // free (phase7.txt §3 "rate limiting ... for public payment intents").
+  const payRateLimit = createRateLimiter({ windowMs: 60_000, max: 30 });
+
+  app.get('/pay/:kind(buy|sell)/:intentId', payRateLimit, async (req, res) => {
+    const intent = getIntent(req.params.intentId);
+    if (!intent) return res.status(404).json({ error: 'Unknown or expired request' });
+    res.json(labelForIntent(intent));
+  });
+
+  app.post('/pay/:kind(buy|sell)/:intentId', payRateLimit, async (req, res) => {
+    try {
+      const { account } = req.body;
+      if (!account) return res.status(400).json({ error: 'account is required' });
+      const built = await buildTransactionForAccount(req.params.intentId, account);
+      res.json(built);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || 'Failed to build transaction' });
+    }
+  });
+
   // ----- Utility Endpoints -----
   
   /**

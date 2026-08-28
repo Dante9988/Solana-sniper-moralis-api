@@ -1,5 +1,6 @@
 import { Context, Markup } from 'telegraf';
-import { sniperooService, UserConfig } from '../../services/sniperooService';
+import { jupiterService } from '../../services/jupiterService';
+import { UserConfig } from '@prisma/client';
 
 export async function config(ctx: Context): Promise<void> {
   try {
@@ -59,7 +60,7 @@ export async function config(ctx: Context): Promise<void> {
         stopLoss
       };
 
-      const success = await sniperooService.updateUserConfig(userId, configUpdate);
+      const success = await jupiterService.updateUserConfig(userId, configUpdate);
 
       if (!success) {
         await ctx.reply('❌ Failed to update configuration. Please try again.');
@@ -84,7 +85,7 @@ async function showConfigMenu(ctx: Context): Promise<void> {
   if (!userId) return;
 
   // Get current config to display values
-  const config = await sniperooService.getUserConfig(userId);
+  const config = await jupiterService.getUserConfig(userId);
   
   // Create message based on existing config
   let message = '⚙️ <b>Trading Configuration</b>\n\n';
@@ -133,7 +134,7 @@ async function showConfigMenu(ctx: Context): Promise<void> {
  * View the current configuration
  */
 async function viewConfig(ctx: Context, userId: string): Promise<void> {
-  const config = await sniperooService.getUserConfig(userId);
+  const config = await jupiterService.getUserConfig(userId);
   
   if (!config) {
     await ctx.reply(
