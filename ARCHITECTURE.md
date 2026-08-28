@@ -197,7 +197,9 @@ Database migrations (additive):
 
 - `prisma/migrations/20260827010000_wallet_pk_optional` — makes `Wallet.walletPk` nullable (Telegram/Discord/API custody removal, see §8)
 
-**Note:** the original `20250324020906_init` migration (and `migration_lock.toml`) that created the legacy `Wallet`/`TokenAlert`/`WalletTransaction`/`WalletBalance` tables no longer exists in the migrations folder — it was deleted somewhere in `main2`'s history before the merge (most likely a case-insensitive-filesystem checkout issue, the same class of bug documented in §8.5). The tables themselves are still in `prisma/schema.prisma` and presumably still exist in any already-provisioned database, but `prisma migrate deploy/status` against a **fresh** database, or one that already recorded that migration as applied, may report drift or fail. Regenerate that migration (`prisma migrate diff` against an existing DB, or `prisma db pull` + a fresh baseline) before trusting `prisma migrate deploy` on a new environment. (The `20260827010000_wallet_pk_optional` migration above was applied directly to the local dev DB via `prisma db execute`, bypassing `migrate dev`'s drift check, for exactly this reason — do the same on any other pre-existing database until the missing init migration is regenerated.)
+**Resolved in Phase 7A.1 (was previously documented here as a gap):** `prisma/migrations/20250324020906_init/migration.sql` and `prisma/migrations/migration_lock.toml` — the original migration that creates the legacy `Wallet`/`UserConfig`/`PumpFunToken`/`TokenAlert`/`WalletTransaction`/`WalletBalance` tables — existed on `origin/main` but had been missing from `master`'s migration chain since before the `main2` merge (most likely the same class of case-insensitive-filesystem checkout bug documented in §8.5). Restored byte-for-byte from `origin/main` (`git show origin/main:<path>`, verified against the source blob via both `git diff --no-index` and matching `git hash-object`/SHA-256 — see `src/__tests__/migrationChain.test.ts`, which pins those hashes so the historical file can never be silently edited going forward). `prisma migrate deploy` now applies all 7 migrations, in order, against a genuinely fresh PostgreSQL 16 database — both the clean-install path (fresh DB, all 7 migrations) and the upgrade path (a disposable DB seeded through migration 6, with a live `Wallet` row present, then migration 7 applied on top) were verified against real, disposable, throwaway Postgres containers during Phase 7A.1, never against any shared or persistent database. CI now runs the same clean-install validation on every push/PR against its own disposable `postgres:16` service container (§11).
+
+**New gap found while restoring the above (not fixed in Phase 7A.1 — out of that phase's scope):** `schema.prisma`'s `UserPreference` model has no corresponding migration anywhere in the chain (checked both `master`'s and `main`'s history). `prisma migrate deploy` still succeeds — it only applies the migration files that exist, it does not diff against `schema.prisma` — but the resulting database has no `UserPreference` table, so any code path that reads or writes it (`prisma.userPreference.*`) will fail against a freshly migrated database. Needs its own additive migration (`prisma migrate dev --create-only` against a real Postgres instance, reviewed before applying) in a future phase.
 
 Behavior and boundaries
 
@@ -369,7 +371,7 @@ File: `src/intelligence/providers/anthropicSynthesisProvider.ts`
 
 ### 5.6 Persistence (Prisma)
 
-Migrations: see the list in §3's Phase 5 section (the original `20250324020906_init` legacy-tables migration file is missing from the repo — see the note there).
+Migrations: see the list in §3's Phase 5 section (the original `20250324020906_init` legacy-tables migration was restored in Phase 7A.1 — see the note there).
 
 Models (Phase 1–5, intelligence/forensics only — the legacy `Wallet`/`TokenAlert`/`WalletTransaction`/`WalletBalance`/`UserPreference` models used by the Telegram bot are separate, see §8):
 
@@ -490,7 +492,8 @@ Two separate near-duplicate filenames differing only by capitalization already c
 1. **Implement real PumpSwap AMM instruction building**, or remove the vestigial `SwapService.PUMPFUN` preference option (`telegram/commands/service.ts`) that no longer changes anything at execution time now that both `/buy` and `/sell` always go through Jupiter.
 2. Verify the Solana Pay flow live end-to-end once a real `SOLANA_PAY_BASE_URL`/deployment exists (§8.2) — still only unit-tested in this dev environment.
 3. Rotate any wallet whose private key was imported through the old custodial flow, before §8.2's fix.
-4. Regenerate the missing `20250324020906_init` migration (§3's Phase 5 note) so `prisma migrate deploy/status` behaves predictably on any database.
+4. ~~Regenerate the missing `20250324020906_init` migration~~ — restored byte-for-byte in Phase 7A.1 (§3's Phase 5 note); `prisma migrate deploy` is now validated clean-install and upgrade against real disposable PostgreSQL, both locally and in CI (§11).
+5. Add the still-missing `UserPreference` migration (found while restoring the above — §3's Phase 5 note) — a fresh `prisma migrate deploy` currently succeeds but leaves that table absent.
 
 ---
 
@@ -584,10 +587,12 @@ Intelligence does **not** post Discord alerts yet. The Telegram surface (§8) is
 ```bash
 npm install
 npx prisma generate
-npx prisma migrate deploy    # see §3's Phase 5 note about the missing init migration first
+npx prisma validate
+npx prisma migrate deploy    # full 7-migration chain, init included (§3 Phase 5 note) — validated
+                              # clean-install and upgrade against real disposable Postgres in 7A.1
 
 npm run build                 # tsc
-npx vitest run                # full mocked suite (535 tests as of this snapshot)
+npx vitest run                # full mocked suite (546 tests as of this snapshot)
 npm run test:intelligence     # intelligence subset
 npx prisma@6.5.0 validate
 
@@ -600,7 +605,9 @@ npm run forensics:fixture      # synthetic, zero live network calls — safe to 
 npm run x:smoke                # only place X_BEARER_TOKEN is read
 ```
 
-CI (`.github/workflows/ci.yml`) runs `npm ci`, `prisma generate`, `tsc --noEmit`, `vitest run`, `npm run build` on Node 20 for every push/PR to `main`/`master`. It uses a placeholder `DATABASE_URL` and never talks to a real database or a real Telegram/Discord/Anthropic/Helius/wallet-app endpoint — `src/api/__tests__/index.test.ts` mocks `../discord/discord` and `../telegram/telegramBot` before importing `src/api/index.ts` for exactly this reason (importing the real modules would call `client.login(DISCORD_BOT_TOKEN)` at module scope). The `src/presentation/`/`src/researchApi/`/`src/assets/`/`src/x/`/`src/forensics/` execution-boundary tests still only scan those directories (unchanged); `src/telegram/`, `src/discord/`, and `src/api/` now have their own separate regression coverage instead (§3 Phase 6 note, §8.2's intent-hardening tests, §8.3's auth tests) — so CI verifies both that the trading surface compiles *and* that its auth/allowlist/non-custodial invariants hold, but the live Solana Pay flow (a real wallet app fetching `/pay/*` and signing) is still not exercised by CI or by any test in this repo; see §14.
+CI (`.github/workflows/ci.yml`) runs, on Node 20, for every push/PR to `main`/`master`: `npm ci` → `prisma generate` → `prisma validate` → wait for a disposable `postgres:16` **service container** to report ready (`pg_isready`) → `prisma migrate deploy` against that container (a real clean-install migration run every time — not a placeholder, and not a shared or persistent database; it starts empty on every job and is discarded when the job ends) → `tsc --noEmit` → `vitest run` → `npm run build`. This is a Phase 7A.1 change: CI previously used a `DATABASE_URL` string Prisma Client never actually connected with (`prisma generate` only needs it to be *set*, not reachable), which is exactly how the missing `20250324020906_init` migration (§3, §5.6) went unnoticed — `prisma migrate deploy` was never actually exercised in CI before. The full test suite still mocks Prisma completely and makes no live network/database calls of its own — `src/api/__tests__/index.test.ts` mocks `../discord/discord` and `../telegram/telegramBot` before importing `src/api/index.ts` for exactly this reason (importing the real modules would call `client.login(DISCORD_BOT_TOKEN)` at module scope). The `src/presentation/`/`src/researchApi/`/`src/assets/`/`src/x/`/`src/forensics/` execution-boundary tests still only scan those directories (unchanged); `src/telegram/`, `src/discord/`, and `src/api/` now have their own separate regression coverage instead (§3 Phase 6 note, §8.2's intent-hardening tests, §8.3's auth tests) — so CI verifies both that the trading surface compiles *and* that its auth/allowlist/non-custodial invariants hold, but the live Solana Pay flow (a real wallet app fetching `/pay/*` and signing) is still not exercised by CI or by any test in this repo; see §14.
+
+**What Phase 7A.1's migration validation does and does not cover:** CI's `postgres:16` service container proves the *clean-install* path — the full 7-migration chain applies to a genuinely fresh database — on every run, going forward. The *upgrade* path (a database that already has migrations 1-6 applied, then gets migration 7 on top, with pre-existing rows) was validated once, manually, during Phase 7A.1 against a disposable local Postgres 16 container seeded with a representative `Wallet` row — it is **not** re-validated by CI on every run, because CI's database starts empty every time. If a future migration needs the same kind of upgrade-safety proof (e.g. another `ALTER` against a populated table), repeat that manual procedure: apply migrations up to N-1, insert representative rows, apply migration N, confirm the rows and constraints look right. A true point-in-time snapshot of a real production database was not available in this environment, so "upgrade validated" here means "validated against a disposable database seeded to look like the prior schema," not "replayed against an actual historical database dump" — that stronger check remains open if a sanitized snapshot ever becomes available.
 
 Prefer `npm`/`npx` (not Yarn) in this environment — `yarn.lock` has repeatedly drifted from `package-lock.json` (registry-host-only diffs) with no clear trigger found; CI only uses `npm ci`, so `yarn.lock` is not load-bearing. Also: local `npm install`/`npm ci` was found to resolve some optional transitive dependencies (`arweave`, `socks`) differently between npm 11 (many local dev machines) and npm 10.8.x (the CI runner's bundled npm on Node 20) — if `npm ci` passes locally but fails in CI with a "not in sync" lockfile error, regenerate `package-lock.json` with Node 20 (`nvm install 20 && nvm use 20 && npm install`) rather than assuming the lockfile is simply stale.
 
@@ -636,9 +643,9 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 **Still open, from `main2` (see §8 for full detail):**
 
 1. Real PumpSwap AMM swap execution was never implemented (`getPumpFunBuyInstructions`/`getPumpFunSellInstructions` were always empty placeholders, and are now removed along with the custodial signing that called them) — Jupiter is the only working swap path.
-2. The original `20250324020906_init` Prisma migration file is missing from the repo (deleted somewhere in `main2`'s history) — `prisma migrate deploy/status` may report drift against a database that already has it recorded as applied (see §3's Phase 5 note).
-3. Any private key already imported via the old Telegram/Discord/Sniperoo flows, before the non-custodial fix, is still sitting in plaintext in Postgres (`Wallet.walletPk`, now nullable but not retroactively cleared) — those wallets should be treated as compromised and rotated.
-4. `SOLANA_PAY_BASE_URL` has no real value in this dev environment, so the non-custodial buy/sell flow is verified only by unit test here, not live end-to-end — do that once deployed somewhere with a real HTTPS URL.
+2. Any private key already imported via the old Telegram/Discord/Sniperoo flows, before the non-custodial fix, is still sitting in plaintext in Postgres (`Wallet.walletPk`, now nullable but not retroactively cleared) — those wallets should be treated as compromised and rotated.
+3. `SOLANA_PAY_BASE_URL` has no real value in this dev environment, so the non-custodial buy/sell flow is verified only by unit test here, not live end-to-end — do that once deployed somewhere with a real HTTPS URL.
+4. `UserPreference` (in `schema.prisma`) has no migration anywhere in the chain — found during Phase 7A.1's migration-chain restoration, not fixed there (see §3's Phase 5 note).
 
 **Resolved (kept here for history — see §8.2-8.3, §8.6 for detail):**
 
@@ -648,6 +655,7 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 - ~~`src/api/index.ts` had no authentication on any route and started unconditionally.~~ Fixed — off by default (`API_ENABLED`), bearer-authenticated on every `/api/*` route when enabled.
 - ~~`/buy`/`/sell` weren't restricted to an admin/allowlisted user.~~ Fixed — `TELEGRAM_ADMIN_IDS`/`DISCORD_ADMIN_IDS` allowlists, fail closed.
 - ~~`.env.example` didn't document the Telegram/`main2`-API/Solana-Pay env vars.~~ Fixed — see §12.
+- ~~The original `20250324020906_init` Prisma migration file was missing from the repo, so `prisma migrate deploy` failed against a fresh database.~~ Fixed in Phase 7A.1 — restored byte-for-byte from `origin/main`; clean-install and upgrade paths validated against real disposable PostgreSQL, and CI now runs the same clean-install validation on every push/PR (§3, §5.6, §11).
 
 **Pre-existing (still true):**
 
@@ -667,7 +675,7 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 
 1. Verify the Solana Pay flow live end-to-end once a real `SOLANA_PAY_BASE_URL`/deployment exists (open the generated link in an actual wallet app and confirm the transaction it shows is correct).
 2. Rotate any wallet whose private key was ever imported through the old custodial flow, before this session's fixes.
-3. Regenerate the missing `20250324020906_init` migration (or a fresh baseline) so `prisma migrate deploy/status` behaves predictably on any database.
+3. Add the missing `UserPreference` migration (§3 Phase 5 note, found in Phase 7A.1) — generate it against a real Postgres instance (`prisma migrate dev --create-only`) and review the SQL before applying anywhere real.
 4. Set real `TELEGRAM_ADMIN_IDS`/`DISCORD_ADMIN_IDS`/`API_AUTH_TOKEN` values before relying on any of §8.3/§8.6's gates — they fail closed, but only once actually configured; an empty `.env` still means "nobody" for the allowlists (correct) and "server refuses everything" for the API (also correct, but means the API literally won't work until you set a token).
 
 **Everything else (unchanged priority):**
