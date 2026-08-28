@@ -1,7 +1,8 @@
 /**
- * Phase 6 — HTTP API configuration (phase6.txt §5). Fail-closed validated,
- * same discipline as `forensics/thresholds.ts`. All names are additive to
- * `.env`; nothing here is a secret except `API_KEYS`, which is never logged.
+ * Phase 6/7B.1 — HTTP API configuration (phase6.txt §5, phase7b1.txt §4-9).
+ * Fail-closed validated, same discipline as `forensics/thresholds.ts`. All
+ * names are additive to `.env`; nothing here is a secret except `API_KEYS`
+ * and `SUPABASE_JWT_SECRET`, neither of which is ever logged.
  */
 
 export class ApiConfigError extends Error {
@@ -43,12 +44,124 @@ function parseApiKeys(env: NodeJS.ProcessEnv): ReadonlySet<string> {
   );
 }
 
+function parseOriginList(raw: string | undefined): ReadonlySet<string> {
+  if (raw === undefined || raw.trim() === "") return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0)
+  );
+}
+
+export interface SupabaseAuthConfig {
+  /** e.g. https://<project-ref>.supabase.co — no trailing slash. */
+  readonly projectUrl: string;
+  /** The `iss` claim Supabase issues: `${projectUrl}/auth/v1`. */
+  readonly issuer: string;
+  /** Supabase's well-known JWKS endpoint, for the modern ES256/RS256 signing keys. */
+  readonly jwksUrl: string;
+  /** Legacy shared HS256 secret (Supabase project Settings -> API -> JWT Settings), optional. */
+  readonly hsSecret?: string;
+  /** Expected `aud` claim, e.g. "authenticated". Only checked when set. */
+  readonly audience?: string;
+}
+
+export interface CorsConfig {
+  /** Explicit production/staging origin allowlist — never a wildcard. */
+  readonly allowedOrigins: ReadonlySet<string>;
+  /** Additional localhost/dev origins, only ever honored outside production. */
+  readonly devOrigins: ReadonlySet<string>;
+  readonly isProduction: boolean;
+}
+
+export type RateLimitBackend = "memory" | "redis";
+
+export interface RateLimitConfig {
+  readonly backend: RateLimitBackend;
+  readonly redisUrl?: string;
+}
+
 export interface ApiConfig {
   readonly port: number;
   readonly apiKeys: ReadonlySet<string>;
   readonly publicReads: boolean;
   readonly rateLimitPerMinute: number;
   readonly scanEnqueueLimitPerHour: number;
+  readonly supabase: SupabaseAuthConfig | null;
+  readonly cors: CorsConfig;
+  readonly rateLimit: RateLimitConfig;
+}
+
+const DEFAULT_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:19006", "http://localhost:8081"];
+
+function loadSupabaseConfig(env: NodeJS.ProcessEnv): SupabaseAuthConfig | null {
+  const projectUrlRaw = env.SUPABASE_URL?.trim();
+  if (!projectUrlRaw) return null; // Supabase auth is an opt-in feature: unset -> not configured, see requireSupabaseUser().
+
+  const projectUrl = projectUrlRaw.replace(/\/+$/, "");
+  try {
+    // eslint-disable-next-line no-new
+    new URL(projectUrl);
+  } catch {
+    throw new ApiConfigError(`SUPABASE_URL must be a valid URL, got ${JSON.stringify(projectUrlRaw)}`);
+  }
+
+  const hsSecret = env.SUPABASE_JWT_SECRET?.trim() || undefined;
+  const audience = env.SUPABASE_JWT_AUDIENCE?.trim() || undefined;
+
+  return Object.freeze({
+    projectUrl,
+    issuer: `${projectUrl}/auth/v1`,
+    jwksUrl: `${projectUrl}/auth/v1/.well-known/jwks.json`,
+    hsSecret,
+    audience,
+  });
+}
+
+function loadCorsConfig(env: NodeJS.ProcessEnv): CorsConfig {
+  const isProduction = env.NODE_ENV === "production";
+  const allowedOrigins = parseOriginList(env.CORS_ALLOWED_ORIGINS);
+  for (const origin of allowedOrigins) {
+    if (origin === "*") {
+      throw new ApiConfigError("CORS_ALLOWED_ORIGINS must not contain \"*\" — an explicit allowlist is required (phase7b1.txt §8).");
+    }
+  }
+
+  // Dev origins are only ever consulted outside production (see corsMiddleware) —
+  // computing the set here is just where the config lives, not a hole in prod.
+  const explicitDevOrigins = env.CORS_DEV_ORIGINS?.trim();
+  const devOrigins =
+    explicitDevOrigins !== undefined && explicitDevOrigins !== ""
+      ? parseOriginList(explicitDevOrigins)
+      : new Set(DEFAULT_DEV_ORIGINS);
+
+  return Object.freeze({ allowedOrigins, devOrigins, isProduction });
+}
+
+function loadRateLimitConfig(env: NodeJS.ProcessEnv): RateLimitConfig {
+  const isProduction = env.NODE_ENV === "production";
+  const raw = env.RATE_LIMIT_BACKEND?.trim().toLowerCase();
+
+  if (isProduction && !raw) {
+    // Fail closed rather than silently pretending an in-memory limiter is
+    // distributed (phase7b1.txt §9) — production must say so explicitly.
+    throw new ApiConfigError(
+      'RATE_LIMIT_BACKEND must be explicitly set to "memory" or "redis" in production (NODE_ENV=production) — refusing to silently default to an in-memory limiter that will not be shared across instances.'
+    );
+  }
+
+  const backend: RateLimitBackend = raw === "redis" ? "redis" : "memory";
+  if (raw !== undefined && raw !== "memory" && raw !== "redis") {
+    throw new ApiConfigError(`RATE_LIMIT_BACKEND must be "memory" or "redis", got ${JSON.stringify(env.RATE_LIMIT_BACKEND)}`);
+  }
+
+  const redisUrl = env.REDIS_URL?.trim() || undefined;
+  if (backend === "redis" && !redisUrl) {
+    throw new ApiConfigError('RATE_LIMIT_BACKEND=redis requires REDIS_URL to be set — refusing to start without it.');
+  }
+
+  return Object.freeze({ backend, redisUrl });
 }
 
 export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
@@ -58,5 +171,8 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     publicReads: parseStrictBool(env, "API_PUBLIC_READS", false),
     rateLimitPerMinute: parsePositiveInt(env, "PRESENTATION_RATE_LIMIT_PER_MIN", 30),
     scanEnqueueLimitPerHour: parsePositiveInt(env, "SCAN_ENQUEUE_LIMIT_PER_HOUR", 6),
+    supabase: loadSupabaseConfig(env),
+    cors: loadCorsConfig(env),
+    rateLimit: loadRateLimitConfig(env),
   });
 }

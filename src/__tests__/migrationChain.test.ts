@@ -78,6 +78,57 @@ describe('the historical init migration chain is present and unmodified (phase7B
   });
 });
 
+describe('the UserPreference table has a migration matching schema.prisma (phase7b1.txt §3)', () => {
+  const USER_PREF_MIGRATION_PATH = 'prisma/migrations/20260828071721_add_user_preference/migration.sql';
+
+  it('the migration file exists and creates the table schema.prisma declares', () => {
+    expect(existsSync(USER_PREF_MIGRATION_PATH)).toBe(true);
+    const sql = readFileSync(USER_PREF_MIGRATION_PATH, 'utf8');
+    expect(sql).toMatch(/CREATE TABLE "UserPreference"/);
+    expect(sql).toMatch(/"userId" TEXT NOT NULL/);
+    expect(sql).toMatch(/"pumpSwapEnabled" BOOLEAN NOT NULL DEFAULT true/);
+    expect(sql).toMatch(/CREATE UNIQUE INDEX "UserPreference_userId_key"/);
+  });
+
+  it('is purely additive (no ALTER/DROP of any other table)', () => {
+    const sql = readFileSync(USER_PREF_MIGRATION_PATH, 'utf8');
+    expect(sql).not.toMatch(/ALTER TABLE/);
+    expect(sql).not.toMatch(/DROP TABLE/);
+    expect(sql).not.toMatch(/DROP COLUMN/);
+  });
+
+  it('sorts after every migration that currently exists before it', () => {
+    const migrationDirs = readdirSync('prisma/migrations', { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(migrationDirs[migrationDirs.length - 1]).toBe('20260828071721_add_user_preference');
+  });
+});
+
+describe('pumpSwapEnabled is a notification preference only — never an execution gate (phase7b1.txt §3)', () => {
+  // Despite the name, this flag must never be read by anything that builds,
+  // signs, or submits a trade. It is read in exactly two places today:
+  // src/telegram/commands/togglePumpSwap.ts (the toggle command itself) and
+  // src/telegram/alerts.ts (deciding whether to DM a Pump.fun alert). If a
+  // future change makes a trading/execution surface read this field, that
+  // would silently reintroduce the "PumpSwap is enabled by default" implication
+  // phase7b1.txt explicitly warned against — so this is pinned as a regression.
+  const EXECUTION_SURFACE_FILES = [
+    'src/services/jupiterService.ts',
+    'src/services/pumpswapService.ts',
+    'src/services/solanaPayService.ts',
+    'src/api/index.ts',
+  ];
+
+  it('no execution-surface file reads pumpSwapEnabled', () => {
+    for (const file of EXECUTION_SURFACE_FILES) {
+      const source = readFileSync(file, 'utf8');
+      expect(source, file).not.toMatch(/pumpSwapEnabled/);
+    }
+  });
+});
+
 describe('CI runs a real PostgreSQL migration deployment, not a placeholder (phase7B.txt)', () => {
   const workflow = readFileSync('.github/workflows/ci.yml', 'utf8');
 

@@ -3,8 +3,9 @@
 > Source of truth for how this repository works **today** (Phases **1–6**, **X**, plus the trading/Telegram surface merged from the `main2` branch).
 > Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
-**Snapshot date:** 2026-08-27
-**Latest commits:** `4ee49ca` (Phase 7A: non-custodial trading, authenticated API, allowlisted commands — this document's §8), `10668e0` (Merge PR #7 `main2` → `master`, the commit that introduced the custodial trading paths §8 then removed), `ed1ccd3` (rename `src/api` → `src/researchApi` to resolve a directory collision with `main2`), `516fed2` (Phase 6), `8ad67a4` (Phase X)
+**Snapshot date:** 2026-08-28
+**Canonical branch:** `main` (fast-forwarded to `master`'s tip in Phase 7B.1 — see §16.1; `master` still exists, unused going forward)
+**Latest commits:** `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway, Supabase auth — §16), `7ba40f4` (Phase 7A.1: restored the historical init migration, real Postgres CI — §5.6, §11), `4ee49ca` (Phase 7A: non-custodial trading, authenticated API, allowlisted commands — §8), `10668e0` (Merge PR #7 `main2` → `master`, the commit that introduced the custodial trading paths §8 then removed), `ed1ccd3` (rename `src/api` → `src/researchApi` to resolve a directory collision with `main2`), `516fed2` (Phase 6), `8ad67a4` (Phase X)
 
 **Stack:** TypeScript / Node 18+ (CI runs Node 20), Solana Web3.js, Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
@@ -23,7 +24,7 @@ Three layers share one codebase:
 | Layer | Purpose | Trading |
 |-------|---------|---------|
 | **Legacy listeners + Discord** | Detect Pump.fun mints / pool CreatePool events; alert Discord; optional PnL tracking | Simulation-gated (`config.rug_check.simulation_mode`) — keep disabled for production research |
-| **Token intelligence (Phases 1–6, X)** | Non-blocking research pipeline on pool/migration discoveries → deterministic report → optional Anthropic synthesis → deterministic forensics → PostgreSQL → read-only HTTP presentation API | **Impossible** from this path — fail-closed, no execution imports, enforced by an automated test (`src/presentation/__tests__/executionBoundary.test.ts`, `src/assets/__tests__/executionBoundary.test.ts`) |
+| **Token intelligence (Phases 1–6, X, 7B.1)** | Non-blocking research pipeline on pool/migration discoveries → deterministic report → optional Anthropic synthesis → deterministic forensics → PostgreSQL → read-only HTTP presentation API, now the canonical Supabase-authenticated `/api/v1` gateway (§16) | **Impossible** from this path — fail-closed, no execution imports, enforced by an automated test (`src/presentation/__tests__/executionBoundary.test.ts`, `src/assets/__tests__/executionBoundary.test.ts`) |
 | **Telegram/Discord trading bot + trading services** (merged from `main2`, PR #7) | `/buy`, `/sell`, `/wallet connect <public_address>` via Telegram, Discord, and `POST /api/transaction/*` | **Non-custodial and allowlisted** — this bot never generates, imports, or stores a private key; every trade is a Solana Pay link the user approves in their own wallet app (§8.2), and only allowlisted user IDs can invoke trading commands at all (§8.6). Its HTTP server (`src/api/index.ts`) is off by default and bearer-authenticated when enabled (§8.3). |
 
 **Implemented:** everything in the first two layers (event types, orchestrator, researchers, Prisma report store, non-blocking listener dispatch, Anthropic synthesis, Moralis compatibility cleanup, trench.bot removed from runtime, canonical asset identity, deterministic Solana forensics 5A–5E, read-only presentation HTTP API, an X API read-only capability checkpoint) plus, from `main2`: a Telegraf-based Telegram bot with real buy/sell/wallet commands, a `PumpSwapService` and a `JupiterService` trading class, a websocket/API server, PnL/top-calls/simulation reporting scripts.
@@ -129,6 +130,10 @@ Three layers share one codebase:
 | **X** | Read-only X (Twitter) API capability checkpoint | Done — see below |
 | **6+** | Chroma/RAG, notifications, a *safe* Telegram/chat surface | Not started |
 | **(unnumbered)** | `main2` merge (PR #7): Telegraf trading bot, `PumpSwapService`, `JupiterService`, websocket/API server, PnL/top-calls reporting | Merged; **not gated, not part of the phaseN.txt spec sequence** — see §8 |
+| **7A** | Non-custodial trading, authenticated `/api/*`, Telegram/Discord allowlists (removes the custodial paths `main2` introduced) | Done — see §8 |
+| **7A.1** | Restore the historical `20250324020906_init` migration; real PostgreSQL migration validation in CI | Done — see §5.6, §11 |
+| **7B.1** | Canonical `/api/v1` gateway: Supabase JWT auth, versioned routes, OpenAPI, CORS/rate-limit/logging hygiene | Done — see §16 |
+| **7B.2** | Authenticated WebSockets, X/Ansem monitoring, wallet-following intelligence, token creation, PumpSwap execution | Not started — see §16.11 |
 
 Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt`, `phase4.txt`, `phase5*.txt`, `phase6` (repository root, historical prompts). The `main2` merge had no corresponding phase brief — it is independent legacy work with its own history (commits from May 2025), reconciled into `master` in this session (see git log around `10668e0` and the fix commits immediately before it for the merge-damage repairs that were required).
 
@@ -233,8 +238,8 @@ Primary artifacts:
   - `toApiJson.ts` — versioned, stable-field-name JSON projection.
   - Both renderers re-screen output against the Phase 3 prohibited-language reject list (`anthropicSynthesisProvider.ts`'s exported `PROHIBITED_PATTERNS`), not just raw model output.
   - `__tests__/executionBoundary.test.ts` — walks `src/presentation/` and `src/researchApi/` source for denylisted imports (execution, wallet, tracker, live Discord login). **This test only covers those two directories** — it says nothing about `src/telegram/`, `src/api/`, or `src/services/{pumpswapService,jupiterService}.ts`, all of which are real execution paths from `main2` (§8). Those trading/chat surfaces have their own, differently-shaped regression coverage instead — not "unreachable," but "reachable and proven non-custodial": `src/services/__tests__/nonCustodialTradingBoundary.test.ts` (no private-key generation/import/logging anywhere in `src/telegram/`, `src/discord/`, `src/api/`, or the trading services; no write to `Wallet.walletPk`; no `sniperooService` references; no `sendTransaction`/`signTransaction`) and `src/services/__tests__/tradingAllowlistWiring.test.ts` (the allowlist guards are actually called from every trading entrypoint, not just defined).
-- `src/services/riskViewLoader.ts` — the one place Prisma rows are loaded and mapped into `RiskViewInput`; also falls back to a standalone `SolanaForensicsRun` for a mint with no `TokenIntelligenceReport` (e.g. a token only ever manually scanned via `POST /scan`, never seen by the live listener) rather than reporting it as never-analysed.
-- `src/researchApi/` — Express, its own `API_PORT` (not the listener's `METRICS_PORT`, and not the same process as `main2`'s `src/api/index.ts` or `src/api/standalone.ts` — see §8.3 for how three different things all end up named "api"). `GET /api/v1/tokens/:mint/report`, `GET /api/v1/tokens/:mint/forensics`, `POST /api/v1/tokens/:mint/scan` (idempotent enqueue via the Phase 5D `forensicsJobService`), `GET /api/v1/jobs/:jobKey`, `GET /api/v1/health`. Bearer-key auth (`API_KEYS`) on `POST`, optionally public on `GET` (`API_PUBLIC_READS`); in-memory per-key/IP rate limiting. `createApiServer()` only ever listens behind `require.main === module`. Named `researchApi` rather than `api` because `main2`'s own unrelated `src/api/` collided with it once merged — merging the two into one directory would have mixed execution-path code into this read-only layer's own execution-boundary scan.
+- `src/services/riskViewLoader.ts` — the one place Prisma rows are loaded and mapped into `RiskViewInput`; also falls back to a standalone `SolanaForensicsRun` for a mint with no `TokenIntelligenceReport` (e.g. a token only ever manually scanned via `POST /scans`, never seen by the live listener) rather than reporting it as never-analysed.
+- `src/researchApi/` — Express, its own `API_PORT` (not the listener's `METRICS_PORT`, and not the same process as `main2`'s `src/api/index.ts` or `src/api/standalone.ts` — see §8.3 for how three different things all end up named "api"). Evolved into the canonical `/api/v1` gateway in Phase 7B.1 — full route map, Supabase auth, CORS, rate-limit-backend, request-id/logging, and error-contract detail lives in **§16**, not repeated here. `createApiServer()` only ever listens behind `require.main === module`. Named `researchApi` rather than `api` because `main2`'s own unrelated `src/api/` collided with it once merged — merging the two into one directory would have mixed execution-path code into this read-only layer's own execution-boundary scan.
 
 Database: no migration — Phase 6 only reads existing Phase 1–5 tables.
 
@@ -473,7 +478,7 @@ Both fixed in the same session as §8.2:
 
 | Name | File(s) | Port/host default | Auth | Trade/wallet routes | Started by |
 |------|---------|--------------------|------|----------------------|------------|
-| Phase 6 research API | `src/researchApi/server.ts` | `API_PORT` (own var, default 8787) | Bearer key on `POST`, optional public `GET` | None — read-only + one idempotent job enqueue | `npm run api` only, behind `require.main === module` |
+| Canonical `/api/v1` gateway (Phase 6, evolved in 7B.1 — §16) | `src/researchApi/server.ts` | `API_PORT` (own var, default 8787) | Supabase JWT **or** internal `API_KEYS`; `/me` is Supabase-only; full detail in §16.4 | None — read-only + one idempotent job enqueue | `npm run api` only, behind `require.main === module` |
 | `main2` standalone API | `src/api-server.ts` → `src/api/standalone.ts` | `API_PORT`/`API_HOST` (default `0.0.0.0:3001`) | None | None — `/health`, `/`, `/api/status`, `/api/utils/sol-price` only | `npm run api:server` / `npm run dev:api` |
 | `main2` full API | `src/api/index.ts` | `API_HOST`/`API_PORT` (default `0.0.0.0:3001`), or `API_PORT_MAIN` (3030) when run alongside the main app | Bearer `API_AUTH_TOKEN` on every `/api/*` route (fails closed); `/health`, `/`, `/pay/*` exempt | `POST /api/wallet/connect` (public address only, non-custodial), `GET /api/wallet/:userId`, `POST /api/transaction/{buy,sell}` (return a Solana Pay link — do not execute), `GET/POST /pay/{buy,sell}/:intentId` (build-only, unauthenticated by design) | Only when `API_ENABLED=true` (§8.3) |
 
@@ -523,7 +528,15 @@ src/
 ├── forensics/                        # Phase 5A-5E deterministic analyzers, worker, policy (see §3)
 ├── assets/                           # Phase 4 canonical identity (see §3)
 ├── presentation/                     # Phase 6 pure projection layer (see §3)
-├── researchApi/                      # Phase 6 read-only HTTP API (see §3, §8.4)
+├── researchApi/                      # Canonical /api/v1 gateway (Phase 6, evolved 7B.1 — see §3, §8.4, §16)
+│   ├── server.ts                     # createApiServer(db, config) — requestId, CORS, routes, error handler
+│   ├── config.ts                     # Fail-closed env config: API_KEYS, Supabase, CORS, rate-limit backend
+│   ├── middleware/{authenticate,supabaseAuth,requestId,cors,rateLimit,validateMint}.ts
+│   ├── routes/{health,docs,me,tokens,jobs}.ts
+│   ├── contracts/{zodOpenApi,common,errors,openapi}.ts   # One Zod source for validation + OpenAPI (§16.5)
+│   ├── lib/logger.ts                 # pino + redaction (§16.8)
+│   ├── scripts/generateOpenApiDocument.ts   # npm run openapi:generate
+│   └── __tests__/                    # supabaseAuth, cors, config, rateLimit, logger, openapi, routes.test.ts
 ├── x/                                 # Phase X read-only X API checkpoint (see §3)
 ├── api/
 │   ├── index.ts                      # Off by default, bearer-authed on every /api/* route (§8.3-8.4).
@@ -588,17 +601,19 @@ Intelligence does **not** post Discord alerts yet. The Telegram surface (§8) is
 npm install
 npx prisma generate
 npx prisma validate
-npx prisma migrate deploy    # full 7-migration chain, init included (§3 Phase 5 note) — validated
-                              # clean-install and upgrade against real disposable Postgres in 7A.1
+npx prisma migrate deploy    # full 8-migration chain, init through add_user_preference (§3, §5.6, §16.2)
+                              # — validated clean-install and upgrade against real disposable Postgres
 
 npm run build                 # tsc
-npx vitest run                # full mocked suite (546 tests as of this snapshot)
+npx vitest run                # full mocked suite (615 tests as of this snapshot)
 npm run test:intelligence     # intelligence subset
+npm run test:api-v1           # /api/v1 gateway subset only (src/researchApi) — §16
+npm run openapi:generate      # writes openapi.json (gitignored snapshot; the live route always regenerates)
 npx prisma@6.5.0 validate
 
 npm run dev                   # see §0/§8 — also starts the Telegram bot (non-custodial, allowlisted); API_ENABLED=true additionally starts src/api/index.ts (bearer-authenticated)
 npm run pumpfun                # Pump.fun mint Discord only, no trading surfaces
-npm run api                    # Phase 6 read-only research API, standalone process
+npm run api                    # Canonical /api/v1 gateway (Phase 6, evolved 7B.1 — §16), standalone process
 npm run api:server             # main2's read-only standalone status API
 npm run forensics:worker       # disabled by default (FORENSICS_WORKER_ENABLED=false)
 npm run forensics:fixture      # synthetic, zero live network calls — safe to run any time
@@ -627,7 +642,10 @@ See `.env.example` for the names that are actually documented there — it now i
 | X (Phase X) | `X_BEARER_TOKEN`, `X_API_BASE_URL`, `X_STREAM_ENABLED`, `X_REQUEST_TIMEOUT_MS` | Yes |
 | Forensics worker (Phase 5D) | `FORENSICS_WORKER_ENABLED`, `FORENSICS_WORKER_CONCURRENCY`, `FORENSICS_JOB_POLL_MS`, `FORENSICS_JOB_LEASE_MS`, `FORENSICS_JOB_HEARTBEAT_MS`, `FORENSICS_JOB_MAX_ATTEMPTS`, `FORENSICS_JOB_BASE_BACKOFF_MS` | Yes |
 | Forensics integration (Phase 5E) | `FORENSICS_ENQUEUE_ENABLED`, `FORENSICS_RECONCILIATION_ENABLED`, `FORENSICS_AI_RESYNTHESIS_ENABLED` | Yes |
-| Research API (Phase 6) | `API_PORT` (default 8787), `API_KEYS`, `API_PUBLIC_READS`, `PRESENTATION_RATE_LIMIT_PER_MIN`, `SCAN_ENQUEUE_LIMIT_PER_HOUR` | Yes — but see §8.4, this `API_PORT` is easy to confuse with `main2`'s unrelated same-named var |
+| Research API / `/api/v1` gateway (Phase 6, evolved in Phase 7B.1 — §16) | `API_PORT` (default 8787), `API_KEYS` (internal/admin only — §16.4), `API_PUBLIC_READS`, `PRESENTATION_RATE_LIMIT_PER_MIN`, `SCAN_ENQUEUE_LIMIT_PER_HOUR` | Yes — but see §8.4, this `API_PORT` is easy to confuse with `main2`'s unrelated same-named var |
+| Supabase JWT auth (Phase 7B.1, §16.4) | `SUPABASE_URL` (only required setting — enables JWKS-based ES256/RS256 verification automatically), `SUPABASE_JWT_SECRET` (legacy HS256 only), `SUPABASE_JWT_AUDIENCE` | Yes |
+| `/api/v1` CORS (Phase 7B.1, §16.6) | `CORS_ALLOWED_ORIGINS` (never a wildcard — config load throws if `*` is present), `CORS_DEV_ORIGINS` (non-production only) | Yes |
+| `/api/v1` rate-limit backend (Phase 7B.1, §16.7) | `RATE_LIMIT_BACKEND` (`memory`\|`redis` — required explicitly when `NODE_ENV=production`), `REDIS_URL` (required when backend is `redis`) | Yes |
 | Telegram bot (main2) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `TELEGRAM_CHANNEL_ALERTS_ENABLED`, `TELEGRAM_ADMIN_IDS` (trading-command allowlist, fails closed — §8.6) | Yes |
 | Discord trading allowlist | `DISCORD_ADMIN_IDS` (fails closed — §8.6) | Yes |
 | **main2 API server — ⚠️ see §8.3-8.4** | `API_ENABLED` (default `false` — must be `true` to start the server at all), `API_HOST` (default `0.0.0.0`), `API_PORT` (default 3001, collides in name with Phase 6's), `API_PORT_MAIN` (default 3030), `API_AUTH_TOKEN` (bearer token required on every `/api/*` route — fails closed with 503 if unset) | Yes |
@@ -690,4 +708,110 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 
 ## 15. One-line truth
 
-**`npm run dev` alerts Discord on CreatePool, dispatches a non-blocking read-only Token Intelligence pipeline (Moralis/RugCheck/social/Anthropic/Solana forensics → Prisma, optionally exposed read-only via `npm run api`) — and, separately, also launches an allowlisted, non-custodial Telegram/Discord trading bot (every `/buy`/`/sell` is a Solana Pay link the user approves in their own wallet — this project never generates, imports, or stores a private key), plus an HTTP server (`src/api/index.ts`) that is off by default and bearer-authenticated on every `/api/*` route when enabled. The intelligence/forensics/presentation path is genuinely execution-proof and test-enforced; the trading surface no longer custodies funds and is no longer open to arbitrary users or unauthenticated requests — what's left open is documented, not hidden: real PumpSwap AMM execution was never built, the live Solana Pay flow is only unit-tested here (no real deployment to test against), and any key imported before this fix is still compromised until rotated (§8, §13, §14).**
+**`npm run dev` alerts Discord on CreatePool, dispatches a non-blocking read-only Token Intelligence pipeline (Moralis/RugCheck/social/Anthropic/Solana forensics → Prisma, optionally exposed read-only via `npm run api`) — and, separately, also launches an allowlisted, non-custodial Telegram/Discord trading bot (every `/buy`/`/sell` is a Solana Pay link the user approves in their own wallet — this project never generates, imports, or stores a private key), plus an HTTP server (`src/api/index.ts`) that is off by default and bearer-authenticated on every `/api/*` route when enabled. The intelligence/forensics/presentation path is genuinely execution-proof and test-enforced; the trading surface no longer custodies funds and is no longer open to arbitrary users or unauthenticated requests — what's left open is documented, not hidden: real PumpSwap AMM execution was never built, the live Solana Pay flow is only unit-tested here (no real deployment to test against), and any key imported before this fix is still compromised until rotated (§8, §13, §14). As of Phase 7B.1 (§16), that same read-only intelligence pipeline is also reachable through a versioned, Supabase-authenticated `/api/v1` gateway (`npm run api`) meant for the OnlyPump web/mobile apps — it is read-only today; it does not, and cannot yet, place a trade.**
+
+---
+
+## 16. Phase 7B.1 — the canonical `/api/v1` gateway
+
+Phase 7B.1 turned the Phase 6 research API (`src/researchApi/`) into the versioned REST foundation the OnlyPump Vite web app and future Expo mobile app build against. It adds no new data sources and no execution — every route is either a pure Prisma read (via the existing `riskViewLoader`/`toApiJson`) or the same idempotent forensics-scan enqueue Phase 6 already had. What changed is who can call it and how: Supabase-authenticated instead of internal-only, versioned and documented, with the request/error/CORS/rate-limit hygiene a public-facing gateway needs.
+
+### 16.1 Canonical branch
+
+`main` was fast-forwarded to `master`'s tip (`7ba40f4`, `--ff-only`, no force, no history rewrite) and is once again the sole canonical branch — it was already GitHub's default branch throughout, and `main` **remains** that default. `master` was left in place (not deleted) as an alias pointing at the same commit; new work should target `main` going forward. This feature branch (`feature/phase-7b1-api-gateway`) was cut from the updated `main`. Setting branch-protection to require the CI check on `main` was **not completed** in this session — it needs a permission this sandbox's own tool-use policy declined for repo-settings mutations, not a GitHub permissions gap (the acting account has admin access); do it manually from GitHub's branch protection settings, or re-run this step somewhere that allows it.
+
+A pre-existing local `main` branch (not pushed to any remote) carried one commit ("feat: add token intelligence phase 3.1", predating this session) not reachable from `master`. It was left untouched — the canonical-branch fast-forward above operated on `origin/main`/`master` directly (`git push origin master:main`), never on that local branch ref, so nothing local was discarded.
+
+### 16.2 The `UserPreference` decision
+
+`schema.prisma` declared `UserPreference` (`userId` unique, `pumpSwapEnabled` boolean, default `true`) with no migration anywhere in the repo's history — found while restoring the init migration in Phase 7A.1 (§3, §5.6). Before writing a migration, every reference to the model and to `pumpSwapEnabled` was inspected:
+
+- `src/telegram/commands/togglePumpSwap.ts` — the `/togglepumpswap` command (registered, live, `src/telegram/commands/index.ts`) reads/writes it directly.
+- `src/telegram/alerts.ts` — `sendTokenAlert` reads it to decide whether to DM a given user about a new Pump.fun-sourced token.
+- Nowhere else. In particular: **no execution/trading-surface file reads it** — `jupiterService.ts`, `pumpswapService.ts`, `solanaPayService.ts`, and `src/api/index.ts` were all grepped and contain zero references (pinned as a regression test, `src/__tests__/migrationChain.test.ts`).
+
+This is genuine, live, wired behavior — not a vestigial/dead field — so per phase7b1.txt §3's decision rule it was **kept, not deleted**, and given an additive migration (`prisma/migrations/20260828071721_add_user_preference`, generated via `prisma migrate dev --create-only` against a disposable Postgres 16 container and reviewed before applying — `CREATE TABLE` + one `CREATE UNIQUE INDEX`, no `ALTER`/`DROP` of anything else).
+
+The "unsafe implication" phase7b1.txt warned about — a preference that claims to enable PumpSwap trading when no such execution exists — turned out not to apply here: despite the name, `pumpSwapEnabled` **only gates a Telegram DM notification**, never a trade. Real PumpSwap AMM execution remains unimplemented anywhere in this codebase (§8.2), and this field has no path to it. `schema.prisma`'s model now carries an explicit doc comment saying so, and both the "notification only" claim and the "default `true` is not a trading default" claim are pinned as regression tests, not just documentation.
+
+Validated: `prisma migrate deploy` against a fresh, disposable PostgreSQL 16 database applies all 8 migrations (the restored init through this one) cleanly, in order; `prisma migrate status` reports up to date; the resulting `UserPreference` table's columns match `schema.prisma` exactly.
+
+### 16.3 Route map
+
+All of the following live in `src/researchApi/`, mounted under `/api/v1` by `src/researchApi/server.ts`'s `createApiServer(db, config)`. `npm run api` is the only thing that ever calls `.listen()` on it (`require.main === module` guard, same discipline as the forensics worker).
+
+| Method | Path | Auth | Notes |
+|--------|------|------|-------|
+| GET | `/api/v1/health` | none | Liveness only — proves the process is alive, no dependency checks (phase7b1.txt §6) |
+| GET | `/api/v1/ready` | none | Readiness — checks `SELECT 1` against Postgres; never returns the connection string or underlying driver error, only `ok`/`error` |
+| GET | `/api/v1/openapi.json` | none | The live OpenAPI 3.1 document, generated on every request from the same Zod schemas the routes validate against (§16.5) |
+| GET | `/api/v1/docs` | none | Swagger UI over the same document |
+| GET | `/api/v1/me` | **Supabase only** | Returns `{userId, email?}` derived from the verified token's `sub`/`email` claims — never raw claims, never accepted from an internal API key (there is no "self" for a server-to-server key) |
+| GET | `/api/v1/tokens/:mint/report` | Supabase or API key* | Deterministic risk view (unchanged from Phase 6, reused via `riskViewLoader`/`toApiJson`) |
+| GET | `/api/v1/tokens/:mint/forensics` | Supabase or API key* | Latest `SolanaForensicsRun` for the mint, if any |
+| POST | `/api/v1/tokens/:mint/scans` | Supabase or API key | Idempotent forensics-scan enqueue (renamed from Phase 6's `/scan`) — `202` on a freshly queued job, `200` with the same `jobKey` on a repeat call for the same mint |
+| GET | `/api/v1/jobs/:jobKey` | Supabase or API key* | Poll a forensics job's status |
+
+\* Falls back to public/unauthenticated when `API_PUBLIC_READS=true` (unchanged Phase 6 behavior) — `POST /scans` never does, regardless of that flag.
+
+Every response — success or error — carries an `X-Request-Id` header the server generates itself (never trusts a client-supplied one, to keep log correlation from being spoofable by a public caller).
+
+### 16.4 Authentication: Supabase JWT + internal API key
+
+`src/researchApi/middleware/supabaseAuth.ts` verifies a Supabase access token (`jose`, no other JWT library): signature, issuer (`${SUPABASE_URL}/auth/v1`), expiration, and audience (when `SUPABASE_JWT_AUDIENCE` is configured) are all checked before the `sub` claim is trusted as the application user id. Two signing mechanisms are supported, selected by the token's own (unverified) header `alg`, never by guessing:
+
+- **Modern (ES256/RS256):** verified against the project's own published JWKS (`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`), fetched and cached by `jose`'s `createRemoteJWKSet`. No `SUPABASE_JWT_SECRET` needed — `SUPABASE_URL` alone is enough.
+- **Legacy (HS256):** verified against `SUPABASE_JWT_SECRET` (Supabase project Settings → API → JWT Settings), only if that env var is set; an HS256 token is rejected outright if it isn't.
+
+`jose`'s `jwtVerify` always checks the cryptographic signature — there is no code path here (or anywhere in this file) that trusts a merely-decoded, unsigned (`alg: none`), or unverified JWT; that's asserted directly by `src/researchApi/__tests__/supabaseAuth.test.ts`, all of it run against **local test keys** (`jose`'s `generateKeyPair`/`SignJWT`), never Supabase's real endpoint.
+
+`src/researchApi/middleware/authenticate.ts` combines this with the Phase 6 internal `API_KEYS` bearer check (kept as the "explicitly internal/admin compatibility" path phase7b1.txt §5 asked for — this API's own equivalent of the trading API's `API_AUTH_TOKEN`, a **different** credential from a **different** file): a request is authenticated if it presents *either* a valid Supabase token *or* a value in `API_KEYS`. `GET /me` is the one exception — it strictly requires a real Supabase identity, since an opaque internal key has no "self" to return. With neither mechanism configured at all, every authenticated route fails closed with `503 AUTH_NOT_CONFIGURED` rather than silently accepting anything.
+
+**`API_KEYS` (and the trading API's separate `API_AUTH_TOKEN`) must never reach the Vite web app or the Expo mobile app** — those are server-to-server/admin credentials only; public clients authenticate solely with their own Supabase access token. Nothing in this repository puts either value into frontend code, and `.env.example`'s comments say so explicitly.
+
+### 16.5 Contracts: one Zod source for validation, responses, and OpenAPI
+
+`src/researchApi/contracts/` is the single place request/response shapes are declared — `src/researchApi/contracts/openapi.ts` generates the `/api/v1/openapi.json` document directly from the same Zod schemas (`@asteasolutions/zod-to-openapi`) the routes use, so there's one definition instead of separately hand-maintained Express validation, OpenAPI JSDoc comments, and response shapes. (The mint-format check itself still goes through the existing `src/assets/assetResolver.ts` via `validateMint.ts`, reused rather than re-implemented — Phase 4's Solana `PublicKey` validation didn't need rebuilding in Zod to get an OpenAPI-documented `mint` parameter.)
+
+Every error response uses the same envelope (`src/researchApi/contracts/errors.ts`):
+
+```json
+{
+  "error": {
+    "code": "INVALID_MINT",
+    "message": "The supplied token mint is invalid.",
+    "requestId": "b3e1..."
+  }
+}
+```
+
+`code` is one of a small fixed set (`BAD_REQUEST`, `INVALID_MINT`, `UNAUTHORIZED`, `AUTH_NOT_CONFIGURED`, `FORBIDDEN`, `NOT_FOUND`, `RATE_LIMITED`, `INTERNAL_ERROR`) each mapped to one HTTP status. No response — success or error — ever includes a stack trace, a raw SQL/Postgres error, a provider secret, an internal connection string, a private key, or a raw JWT; the global error handler logs the real error server-side (redacted, see below) and returns only `INTERNAL_ERROR` to the caller.
+
+### 16.6 CORS
+
+`src/researchApi/middleware/cors.ts` — an explicit allowlist (`CORS_ALLOWED_ORIGINS`), never a wildcard (`loadApiConfig` throws at startup if `*` appears in it). A request with no `Origin` header (native mobile, server-to-server, curl) is never touched by this middleware — CORS is a browser-only concept. Outside `NODE_ENV=production`, an additional `CORS_DEV_ORIGINS` list (defaulting to the usual local Vite (`:5173`) and Expo (`:19006`/`:8081`) ports) is also honored; in production, only `CORS_ALLOWED_ORIGINS` counts. A denied origin gets no `Access-Control-*` headers at all on a normal request (the browser enforces the block), and an outright `403` on a preflight `OPTIONS` so the browser never proceeds to the real request.
+
+### 16.7 Rate limiting
+
+`src/researchApi/middleware/rateLimit.ts` now sits behind a `RateLimiterStore` interface — `MemoryRateLimiterStore` (single-process fixed window, the only kind Phase 6 had) or `RedisRateLimiterStore` (shared counters via `INCR`/`PEXPIRE` against `REDIS_URL`, using `ioredis`). Which one is used is `RATE_LIMIT_BACKEND` (`memory` | `redis`), and `loadApiConfig` **fails closed on this specifically**: with `NODE_ENV=production`, `RATE_LIMIT_BACKEND` must be set explicitly (no silent default that would pretend a single process's in-memory counters are shared across a multi-instance deployment), and `RATE_LIMIT_BACKEND=redis` without `REDIS_URL` refuses to start at all. Outside production, an unset `RATE_LIMIT_BACKEND` still quietly defaults to `memory` — fine for local dev and tests. Read and scan-creation limits remain the separate Phase 6 policies (`PRESENTATION_RATE_LIMIT_PER_MIN`, `SCAN_ENQUEUE_LIMIT_PER_HOUR`); health/docs/openapi.json are never rate-limited (they're free, and a client needs them before it can even authenticate).
+
+### 16.8 Logging
+
+`src/researchApi/lib/logger.ts` wraps the already-installed (previously unused) `pino`, configured with a redaction path list covering `Authorization`/`Cookie` headers, any `apiKey`/`token`/`accessToken` field, and — as defense-in-depth, even though nothing in this gateway should ever hold one — `walletPk`/`privateKey`/`secretKey`/`mnemonic`/`seedPhrase`/`databaseUrl` wherever they appear in a logged object. Redaction happens inside pino's own serializer, not at each call site, so a future call that accidentally logs a whole request or config object still can't leak these paths.
+
+### 16.9 Legacy `/api/*` (unversioned)
+
+`src/api/index.ts` (the `main2` trading surface, §8) is unchanged and explicitly marked `⚠️ DEPRECATED / INTERNAL` in its own header comment — it still exists only for the Telegram/Discord non-custodial trading flow that already depends on `/api/wallet/connect`, `/api/transaction/{buy,sell}`, and the public `/pay/*` Solana Pay callbacks (§8.2-8.3). No new frontend work should target it; it is not part of `/api/v1` and never will be. Its Phase 7A security behavior (fail-closed bearer auth, off by default, no wallet-create/import routes) is unchanged and still covered by `src/api/__tests__/index.test.ts`.
+
+### 16.10 New environment variables
+
+All names-only in `.env.example`; see §12 for the full table. New in this phase: `SUPABASE_URL`, `SUPABASE_JWT_SECRET`, `SUPABASE_JWT_AUDIENCE`, `CORS_ALLOWED_ORIGINS`, `CORS_DEV_ORIGINS`, `RATE_LIMIT_BACKEND`, `REDIS_URL`.
+
+### 16.11 What's still open (Phase 7B.2 candidates)
+
+1. Branch protection on `main` requiring the CI check was not set (§16.1 — sandbox tool-use policy, not a GitHub permissions gap).
+2. Live end-to-end Supabase auth against a real Supabase project was not exercised — everything here is proven against local test keys (§16.4); do that once the OnlyPump frontend actually calls this gateway.
+3. `RedisRateLimiterStore` was proven against a mocked `ioredis` client, never a live Redis instance — validate against a real (disposable/staging) Redis before relying on `RATE_LIMIT_BACKEND=redis` in production.
+4. Authenticated WebSockets, X/Ansem monitoring, wallet-following intelligence, token creation, and PumpSwap execution are all explicitly out of scope for 7B.1 (phase7b1.txt) and remain unbuilt.
+5. No TypeScript client was generated from the OpenAPI document yet — the contract layer (§16.5) was built to make that possible later, not to do it now.
+6. `GET /api/v1/tokens/:mint/report` and `/forensics` still 404 a mint that was only ever `POST`ed to `/scans` and hasn't completed — this is unchanged Phase 6 behavior (see `riskViewLoader.ts`), not new to this phase, but worth deciding whether the frontend needs a "processing" distinction from "never analysed."

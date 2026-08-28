@@ -6,6 +6,7 @@
 
 import { NextFunction, Request, Response } from "express";
 import { resolveAsset } from "../../assets/assetResolver";
+import { sendError } from "../contracts/errors";
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -20,7 +21,7 @@ export function validateMint(req: Request, res: Response, next: NextFunction): v
   const resolved = resolveAsset({ address: req.params.mint, chain: "SOLANA" });
   if (resolved.status !== "RESOLVED") {
     const reason = "reason" in resolved ? resolved.reason : `resolution status ${resolved.status}`;
-    res.status(400).json({ error: `invalid Solana mint: ${reason}` });
+    sendError(res, "INVALID_MINT", `invalid Solana mint: ${reason}`, req.requestId ?? "");
     return;
   }
   req.normalizedMint = resolved.asset.normalizedAddress;

@@ -1,3 +1,18 @@
+/**
+ * ⚠️ DEPRECATED / INTERNAL (phase7b1.txt §4): this is the legacy `main2`
+ * trading surface — unversioned `/api/*`, off by default, bearer-token
+ * gated (§8.3). The canonical, versioned gateway for the OnlyPump web and
+ * mobile apps is `src/researchApi/server.ts`'s `/api/v1/*` (Supabase-
+ * authenticated, OpenAPI-documented — see ARCHITECTURE.md §16). This file
+ * is kept running, unmodified in this phase, purely for backward
+ * compatibility with the existing Telegram/Discord non-custodial trading
+ * flow (§8.2) that already depends on its `/api/wallet/connect` and
+ * `/api/transaction/{buy,sell}` routes plus the public `/pay/*` Solana Pay
+ * callbacks. Do not point new frontend work at this file — build against
+ * `/api/v1` instead. Its Phase 7A security behavior (fail-closed auth,
+ * non-custodial trading, no wallet-create/import routes) is unchanged and
+ * still covered by src/api/__tests__/index.test.ts.
+ */
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';

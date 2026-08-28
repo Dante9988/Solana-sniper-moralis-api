@@ -39,3 +39,9 @@ yarn.lock
 # Project Personal Files
 holdings.db
 myConfig.ts
+
+# Generated OpenAPI snapshot (npm run openapi:generate) — the Zod schemas +
+# registry in src/researchApi/contracts/ are the source of truth, not this
+# file; it's a disposable local artifact, and the live /api/v1/openapi.json
+# route always regenerates from source.
+/openapi.json
