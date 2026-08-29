@@ -3,9 +3,9 @@
 > Source of truth for how this repository works **today** (Phases **1–6**, **X**, plus the trading/Telegram surface merged from the `main2` branch).
 > Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
-**Snapshot date:** 2026-08-28
+**Snapshot date:** 2026-08-29
 **Canonical branch:** `main` (fast-forwarded to `master`'s tip in Phase 7B.1 — see §16.1; `master` still exists, unused going forward)
-**Latest commits:** `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway, Supabase auth — §16), `7ba40f4` (Phase 7A.1: restored the historical init migration, real Postgres CI — §5.6, §11), `4ee49ca` (Phase 7A: non-custodial trading, authenticated API, allowlisted commands — §8), `10668e0` (Merge PR #7 `main2` → `master`, the commit that introduced the custodial trading paths §8 then removed), `ed1ccd3` (rename `src/api` → `src/researchApi` to resolve a directory collision with `main2`), `516fed2` (Phase 6), `8ad67a4` (Phase X)
+**Latest commits:** `414f068` (Merge PR #9 `feature/phase-7b2-wallet-realtime` → `main`), `b505e9f` (Phase 7B.2: wallet-ownership verification, authenticated realtime job events — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway, Supabase auth — §16), `7ba40f4` (Phase 7A.1: restored the historical init migration, real Postgres CI — §5.6, §11), `4ee49ca` (Phase 7A: non-custodial trading, authenticated API, allowlisted commands — §8), `10668e0` (Merge PR #7 `main2` → `master`, the commit that introduced the custodial trading paths §8 then removed), `ed1ccd3` (rename `src/api` → `src/researchApi` to resolve a directory collision with `main2`), `516fed2` (Phase 6), `8ad67a4` (Phase X)
 
 **Stack:** TypeScript / Node 18+ (CI runs Node 20), Solana Web3.js, Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
