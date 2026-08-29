@@ -25,6 +25,19 @@ describe("OpenAPI contract generation (phase7b1.txt §4/§7)", () => {
     );
   });
 
+  it("documents every route added by phase7b2.txt §2/§4", () => {
+    const paths = Object.keys(doc.paths ?? {});
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        "/api/v1/wallets/challenges",
+        "/api/v1/wallets/verify",
+        "/api/v1/me/wallets",
+        "/api/v1/me/wallets/{walletId}",
+        "/api/v1/realtime/tickets",
+      ])
+    );
+  });
+
   it("declares a bearer security scheme and applies it to every authenticated route", () => {
     expect(doc.components?.securitySchemes?.bearerAuth).toMatchObject({ type: "http", scheme: "bearer" });
     const meOperation = (doc.paths?.["/api/v1/me"] as Record<string, unknown>)?.get as { security?: unknown[] };

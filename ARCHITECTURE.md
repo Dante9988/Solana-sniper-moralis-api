@@ -528,15 +528,17 @@ src/
 ├── forensics/                        # Phase 5A-5E deterministic analyzers, worker, policy (see §3)
 ├── assets/                           # Phase 4 canonical identity (see §3)
 ├── presentation/                     # Phase 6 pure projection layer (see §3)
-├── researchApi/                      # Canonical /api/v1 gateway (Phase 6, evolved 7B.1 — see §3, §8.4, §16)
+├── researchApi/                      # Canonical /api/v1 gateway (Phase 6, evolved 7B.1/7B.2 — see §3, §8.4, §16, §17)
 │   ├── server.ts                     # createApiServer(db, config) — requestId, CORS, routes, error handler
-│   ├── config.ts                     # Fail-closed env config: API_KEYS, Supabase, CORS, rate-limit backend
+│   ├── config.ts                     # Fail-closed env config: API_KEYS, Supabase, CORS, rate-limit/realtime backend
 │   ├── middleware/{authenticate,supabaseAuth,requestId,cors,rateLimit,validateMint}.ts
-│   ├── routes/{health,docs,me,tokens,jobs}.ts
-│   ├── contracts/{zodOpenApi,common,errors,openapi}.ts   # One Zod source for validation + OpenAPI (§16.5)
+│   ├── routes/{health,docs,me,tokens,jobs,wallets,realtimeTickets}.ts
+│   ├── contracts/{zodOpenApi,common,errors,openapi,wallets}.ts   # One Zod source for validation + OpenAPI (§16.5)
+│   ├── realtime/{eventEnvelope,eventBus,eventPublisher,ticketStore,websocketServer}.ts   # Phase 7B.2 (§17)
 │   ├── lib/logger.ts                 # pino + redaction (§16.8)
 │   ├── scripts/generateOpenApiDocument.ts   # npm run openapi:generate
-│   └── __tests__/                    # supabaseAuth, cors, config, rateLimit, logger, openapi, routes.test.ts
+│   └── __tests__/                    # supabaseAuth, cors, config, rateLimit, logger, openapi, routes,
+│                                      # wallets, eventBus, ticketStore, eventEnvelope, websocketServer.test.ts
 ├── x/                                 # Phase X read-only X API checkpoint (see §3)
 ├── api/
 │   ├── index.ts                      # Off by default, bearer-authed on every /api/* route (§8.3-8.4).
@@ -563,6 +565,9 @@ src/
 │   ├── jupiterService.ts             # Non-custodial: connectWallet (public address) + build-only swap methods (§8.2)
 │   ├── solanaPayService.ts           # Solana Pay Transaction Request sessions + link building (§8.2)
 │   ├── qrCode.ts                     # Renders a Solana Pay URL as a PNG for chat delivery
+│   ├── walletVerificationService.ts  # Phase 7B.2: Sign-In-With-Solana challenge/verify (§17.1) — non-custodial
+│   ├── scanOwnershipService.ts       # Phase 7B.2: user <-> jobKey ownership mapping (§17.2)
+│   ├── __tests__/walletVerificationService.test.ts / .dbIntegration.test.ts   # §17.1
 │   ├── __tests__/nonCustodialTradingBoundary.test.ts  # Grep-based: no key material anywhere in
 │   │                                  # telegram/discord/api/trading-service source (§3 Phase 6 note)
 │   ├── __tests__/tradingAllowlistWiring.test.ts       # Guards are called, not just defined (§4)
@@ -605,7 +610,10 @@ npx prisma migrate deploy    # full 8-migration chain, init through add_user_pre
                               # — validated clean-install and upgrade against real disposable Postgres
 
 npm run build                 # tsc
-npx vitest run                # full mocked suite (615 tests as of this snapshot)
+npx vitest run                # full mocked suite (701 tests as of this snapshot; 2 more opt-in DB-integration
+                               # files are skipped by default — see below)
+WALLET_RUN_DB_TESTS=true npx vitest run src/services/__tests__/walletVerificationService.dbIntegration.test.ts
+                               # real-Postgres atomicity/cross-account-claim proof (§17.1) — disposable DB only
 npm run test:intelligence     # intelligence subset
 npm run test:api-v1           # /api/v1 gateway subset only (src/researchApi) — §16
 npm run openapi:generate      # writes openapi.json (gitignored snapshot; the live route always regenerates)
@@ -646,6 +654,8 @@ See `.env.example` for the names that are actually documented there — it now i
 | Supabase JWT auth (Phase 7B.1, §16.4) | `SUPABASE_URL` (only required setting — enables JWKS-based ES256/RS256 verification automatically), `SUPABASE_JWT_SECRET` (legacy HS256 only), `SUPABASE_JWT_AUDIENCE` | Yes |
 | `/api/v1` CORS (Phase 7B.1, §16.6) | `CORS_ALLOWED_ORIGINS` (never a wildcard — config load throws if `*` is present), `CORS_DEV_ORIGINS` (non-production only) | Yes |
 | `/api/v1` rate-limit backend (Phase 7B.1, §16.7) | `RATE_LIMIT_BACKEND` (`memory`\|`redis` — required explicitly when `NODE_ENV=production`), `REDIS_URL` (required when backend is `redis`) | Yes |
+| Wallet-challenge binding (Phase 7B.2, §17.1) | `ONLYPUMP_DOMAIN` (default `onlypump.me`), `ONLYPUMP_URI` (default `https://onlypump.me`) — baked into every challenge message server-side, never from request input | Yes |
+| Realtime event bus + WS ticket store (Phase 7B.2, §17.5) | `REALTIME_BACKEND` (`memory`\|`redis` — required explicitly when `NODE_ENV=production`, reuses `REDIS_URL`), `WS_TICKET_TTL_MS`, `WS_MAX_MESSAGE_BYTES`, `WS_MAX_SUBSCRIPTIONS_PER_CONNECTION`, `WS_MAX_CONNECTIONS_PER_USER`, `WS_IDLE_TIMEOUT_MS` | Yes |
 | Telegram bot (main2) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `TELEGRAM_CHANNEL_ALERTS_ENABLED`, `TELEGRAM_ADMIN_IDS` (trading-command allowlist, fails closed — §8.6) | Yes |
 | Discord trading allowlist | `DISCORD_ADMIN_IDS` (fails closed — §8.6) | Yes |
 | **main2 API server — ⚠️ see §8.3-8.4** | `API_ENABLED` (default `false` — must be `true` to start the server at all), `API_HOST` (default `0.0.0.0`), `API_PORT` (default 3001, collides in name with Phase 6's), `API_PORT_MAIN` (default 3030), `API_AUTH_TOKEN` (bearer token required on every `/api/*` route — fails closed with 503 if unset) | Yes |
@@ -812,6 +822,74 @@ All names-only in `.env.example`; see §12 for the full table. New in this phase
 1. Branch protection on `main` requiring the CI check was not set (§16.1 — sandbox tool-use policy, not a GitHub permissions gap).
 2. Live end-to-end Supabase auth against a real Supabase project was not exercised — everything here is proven against local test keys (§16.4); do that once the OnlyPump frontend actually calls this gateway.
 3. `RedisRateLimiterStore` was proven against a mocked `ioredis` client, never a live Redis instance — validate against a real (disposable/staging) Redis before relying on `RATE_LIMIT_BACKEND=redis` in production.
-4. Authenticated WebSockets, X/Ansem monitoring, wallet-following intelligence, token creation, and PumpSwap execution are all explicitly out of scope for 7B.1 (phase7b1.txt) and remain unbuilt.
+4. ~~Authenticated WebSockets~~ — built in Phase 7B.2 (§17). X/Ansem monitoring, wallet-following intelligence, token creation, and PumpSwap execution are still explicitly out of scope and remain unbuilt.
 5. No TypeScript client was generated from the OpenAPI document yet — the contract layer (§16.5) was built to make that possible later, not to do it now.
 6. `GET /api/v1/tokens/:mint/report` and `/forensics` still 404 a mint that was only ever `POST`ed to `/scans` and hasn't completed — this is unchanged Phase 6 behavior (see `riskViewLoader.ts`), not new to this phase, but worth deciding whether the frontend needs a "processing" distinction from "never analysed."
+
+---
+
+## 17. Phase 7B.2 — wallet-ownership verification and realtime job events
+
+Delivers the backend half of "Supabase login → connect Solana wallet → prove wallet ownership → inspect token → request scan → receive authenticated realtime completion" (phase7b2.txt). No execution, no custodial signing, no trading — this phase proves a user controls an address and delivers job-lifecycle notifications faster than REST polling; it does not let a wallet proof, a social signal, or anything else trigger a trade.
+
+### 17.1 Wallet-ownership verification (Sign-In-With-Solana style)
+
+`src/services/walletVerificationService.ts` — the only place a signature is checked. Flow:
+
+1. `POST /api/v1/wallets/challenges` (Supabase-only auth, like `/me`) takes a Solana address, returns a `challengeId`, a human-readable `message`, and an `expiresAt` (~5 minutes out).
+2. The message is generated server-side from fields bound at creation time — the authenticated Supabase user id, the address, `ONLYPUMP_DOMAIN`/`ONLYPUMP_URI` (never taken from request input), a cryptographically random nonce, issued-at, and expiry — and states plainly that it proves ownership, signs the user into/connects the wallet to OnlyPump, and does **not** authorize a transaction or transfer funds. It also says (for user reassurance) that it never grants access to a private key or seed phrase.
+3. The frontend has the wallet sign those exact message bytes with `signMessage` (never a transaction) and calls `POST /api/v1/wallets/verify` with `{challengeId, address, signature}`.
+4. The server re-derives the same message from the stored challenge row, verifies the detached Ed25519 signature (`tweetnacl`) against it and the submitted public key, checks the challenge hasn't expired or already been consumed, and that it was issued to this same Supabase user for this same address.
+5. On success, an atomic `updateMany` (guarded by `consumedAt: null` — never a separate read-then-write) marks the challenge consumed, and a `VerifiedWallet` row is created. **Real-Postgres-verified**: two simultaneous verify calls for the same challenge — only one ever succeeds (`src/services/__tests__/walletVerificationService.dbIntegration.test.ts`, opt-in, `WALLET_RUN_DB_TESTS=true`).
+
+Persistence (`prisma/migrations/20260828082913_add_wallet_verification_and_scan_ownership`, additive):
+
+- `WalletChallenge` — stores `challengeHash` (sha256 of the raw challenge id handed to the client), never the raw id itself ("store hashes where practical instead of reusable plaintext secrets," phase7b2.txt §2). The full `message` text *is* stored — unlike the challenge id, the message is meant to be publicly readable; it's what the signature is actually checked against.
+- `VerifiedWallet` — a dedicated, non-custodial model. **Not** a reuse of `Wallet.walletPk` (§8's legacy, nullable, never-written custodial column) — this table has no secret-key column of any kind, checked by both a unit test and a migration-content regression test. `@@unique([network, address])` means one address can be verified by at most one OnlyPump account at a time — the default "prevent cross-account claims" phase7b2.txt §2 asked for, enforced by Postgres itself (real-Postgres-verified in the same opt-in integration test) as well as in application code. Re-verifying the same address under the *same* user is idempotent, not an error.
+- Unlinking (`DELETE /api/v1/me/wallets/:walletId`) only deletes the ownership-proof row for the caller's own wallet (`userId` + `id`, both checked) — it never touches `SolanaForensicsRun`, `TokenIntelligenceReport`, or any other data that address may appear in.
+
+### 17.2 User-scoped scan/job access
+
+The underlying `SolanaForensicsJob` stays globally deduplicated by mint + analysis policy (Phase 5D, unchanged) — many users requesting the same mint around the same time still share one job. What's new is `UserScanRequest` (`userId` + `mint` + `jobKey`, `@@unique([userId, jobKey])`, additive in the same migration as §17.1): an ownership/subscription mapping recorded by `POST /api/v1/tokens/:mint/scans` for every Supabase-authenticated caller (an internal API-key caller has no Supabase user id to scope to, and keeps its prior unscoped access instead — see below).
+
+`GET /api/v1/jobs/:jobKey` now checks this mapping (`src/services/scanOwnershipService.ts`'s `userOwnsJob`) for a Supabase-authenticated caller before returning anything — an unowned or unknown `jobKey` both return a plain `404`, so the response never confirms a job exists to someone who isn't allowed to see it. An internal `API_KEYS` caller (admin/server-to-server, §16.4) is deliberately **not** scoped this way — that's the intended difference between an end-user credential and an internal one, same principle already used for the `/api/v1/tokens/*` read routes. The WebSocket subscribe path (§17.4) uses the exact same `userOwnsJob` check before adding a subscription, so the REST and realtime authorization stories are identical, not two separately-maintained rules.
+
+### 17.3 Realtime event envelope
+
+`src/researchApi/realtime/eventEnvelope.ts` — one authoritative, versioned shape:
+
+```json
+{ "version": "1", "eventId": "uuid", "type": "scan.completed", "occurredAt": "ISO-8601", "data": {} }
+```
+
+Zod-validated (`RealtimeEventEnvelopeSchema`), and the same schema module (`contracts/zodOpenApi.ts`) as every REST contract. Six event types are defined: `connection.ready`, `scan.accepted`, `scan.started`, `scan.completed`, `scan.failed`, `token.report.updated`. **Only the first five are currently emitted anywhere** — `token.report.updated` is defined (so the type union, validation, and any future client generation already account for it) but no code path publishes it yet in this phase; wiring it to the intelligence pipeline's own report-save path (separate from the on-demand forensics-scan flow this phase built) is future work, not silently claimed as done.
+
+`scan.accepted` fires from `POST /api/v1/tokens/:mint/scans` (the API process) right after the enqueue call has genuinely succeeded — including on the idempotent-repeat path, since a second subscriber to an already-in-flight job still needs to see it. `scan.started`/`scan.completed`/`scan.failed` fire from inside `ForensicsWorker` (`src/forensics/forensicsWorker.ts`'s new optional `onJobLifecycleEvent` callback, wired only from `forensicsWorkerMain.ts`, mirroring the existing `onRunPersisted` reconciliation-callback pattern) — always *after* the corresponding DB status transition has committed, never before or instead of it. `scan.failed` fires only on a **genuinely terminal** failure (`failForensicsJob`, permanent or retries-exhausted) — a retryable failure that requeues the job (`retryForensicsJob`) does not fire an event, per phase7b2.txt §5's "do not emit artificial progress ... only emit states the backend genuinely knows." A lifecycle-callback failure is logged and swallowed; it never fails or blocks the underlying job.
+
+**The job record and REST API remain the source of truth.** Realtime delivery is best-effort — `GET /api/v1/jobs/:jobKey` (or `/report`) is always the way to reconcile true state after a reconnect or a missed event; nothing in this backend assumes a WebSocket message was actually delivered.
+
+### 17.4 Authenticated WebSocket: `/api/v1/realtime`
+
+Never a Supabase JWT (or any other long-lived credential) in the WebSocket query string. Instead:
+
+1. `POST /api/v1/realtime/tickets` (Supabase-authenticated REST) issues a cryptographically random, single-use ticket bound to the caller's user id, good for `WS_TICKET_TTL_MS` (default 45s, within phase7b2.txt §4's ~30-60s window).
+2. The client connects to `wss://.../api/v1/realtime?ticket=<ticket>`. The upgrade handler (`src/researchApi/realtime/websocketServer.ts`) atomically consumes the ticket (`TicketStore.consume` — a single `GETDEL` against Redis in production, an unconditional-delete-then-check `Map` operation in memory; either way, a second consume attempt for the same ticket always returns null, even under a real race — see `src/researchApi/__tests__/ticketStore.test.ts`) before completing the handshake. Missing, unknown, expired, or already-used tickets all get the upgrade rejected outright (no 101 Switching Protocols).
+3. **Origin is checked independently of the CORS middleware** — browser CORS/preflight machinery does not apply to a WebSocket upgrade at all, so `isAllowedOrigin()` re-checks the `Origin` header (when present — a missing Origin means a non-browser/native client, not subject to this check) against the exact same `CorsConfig` allowlist, in its own code path, before the ticket is even looked up.
+4. Once connected, the server immediately sends `connection.ready`. The client then sends `{type:"subscribe", jobKey}` for each job it wants updates on — checked against `userOwnsJob` (§17.2) every time, denying an unowned/unknown job with a plain `NOT_FOUND` error frame (never confirming existence). `{type:"unsubscribe", jobKey}` reverses it. Any other message shape — including one that tries to smuggle an `apiKey`/`jwt`/credential-shaped field — is simply an unrecognized shape, rejected the same as any other invalid message (`src/researchApi/__tests__/websocketServer.test.ts` asserts this explicitly).
+5. Hygiene, all configurable via `RealtimeConfig` (`../config.ts`): `ws`'s own `maxPayload` enforces `WS_MAX_MESSAGE_BYTES` (default 8KB) and terminates a connection that exceeds it; `WS_MAX_SUBSCRIPTIONS_PER_CONNECTION` (default 20) and `WS_MAX_CONNECTIONS_PER_USER` (default 5) are enforced in-process; a ping/pong heartbeat (`WS_IDLE_TIMEOUT_MS`, default 60s) terminates connections that stop responding; `attachRealtimeServer()` returns a `close()` handle used for graceful shutdown (closes every open connection with code 1001, then the `WebSocketServer` itself) — wired into `server.ts`'s existing `SIGINT`/`SIGTERM` handler.
+
+All of the above is proven with a real ephemeral `http.Server` + a real `ws` client per test — the same "real transport, disposable instance" principle already used for Postgres integration tests, never a live/shared endpoint (`src/researchApi/__tests__/websocketServer.test.ts`, 18 tests: ticket valid/missing/unknown/expired/reused, allowed/disallowed/absent Origin, invalid JSON, schema-invalid message, oversized message, unauthorized subscribe, end-to-end event delivery through the real event bus, unsubscribe, subscription/connection limits, no-credentials-accepted, graceful shutdown).
+
+### 17.5 Distributed event bus and ticket store
+
+`src/researchApi/realtime/eventBus.ts` (`EventBus`) and `.../ticketStore.ts` (`TicketStore`) are both built the same way as Phase 7B.1's `RateLimiterStore` (§16.7): an interface, an `InMemoryEventBus`/`MemoryTicketStore` (single-process only — fine for tests and local dev), and a `RedisEventBus`/`RedisTicketStore` for anything multi-process. `RedisEventBus` uses real Redis Pub/Sub with **two** connections (`ioredis`'s own convention — a connection issuing `SUBSCRIBE` cannot run any other command, so publish and subscribe never share one). Both are governed by one new config knob, `REALTIME_BACKEND` (`memory`|`redis`, reusing `REDIS_URL`) — chosen as a single shared setting rather than two separate ones because a multi-process deployment needs *both* the event bus and the ticket store to be distributed simultaneously to work at all (unlike rate limiting, which merely degrades — a per-process ticket store or event bus would be **broken**, not just weaker, the moment there's more than one process). Same fail-closed rule as `RATE_LIMIT_BACKEND`: `NODE_ENV=production` refuses to start without `REALTIME_BACKEND` set explicitly, and `REALTIME_BACKEND=redis` without `REDIS_URL` refuses to start at all.
+
+`forensicsWorkerMain.ts` (a **separate process** from the API/WebSocket server) constructs its own `EventBus` from the same config and publishes job-lifecycle events onto it — proving the cross-process design requires an actual Redis instance in production; the worker and the API only ever agree on job state through Postgres and, for realtime delivery, through Redis Pub/Sub. All bus/ticket-store tests use a **mocked** `ioredis` client (`vi.fn()`-based fakes simulating `INCR`/`PEXPIRE`/`GETDEL`/`SUBSCRIBE`/`PUBLISH`) — never a live Redis connection, per phase7b2.txt §11.
+
+### 17.6 What's still open (Phase 7B.3 candidates)
+
+1. `RedisEventBus`/`RedisTicketStore` are proven against mocked `ioredis` clients only — validate against a real (disposable/staging) Redis instance before relying on `REALTIME_BACKEND=redis` in production (same open item as §16.7's `RedisRateLimiterStore`).
+2. `token.report.updated` is defined in the event-type union but not wired to any emitter yet (§17.3) — needs a decision on whether/how to connect it to the intelligence pipeline's own report-save path.
+3. No live Supabase project, no live Solana wallet-adapter signature, and no live multi-process (API + worker) Redis relay were exercised end-to-end — everything here is proven with local test JWT keys, an ephemeral test keypair for signing, and disposable/mocked infrastructure. Do the real thing once there's a real deployment to test against.
+4. `ONLYPUMP_DOMAIN`/`ONLYPUMP_URI` need real values before any challenge message is meaningful outside this dev environment.
+5. The frontend integration (`only-pump-me`) is tracked separately — see that repository's own `ARCHITECTURE.md`/README for its side of this phase.

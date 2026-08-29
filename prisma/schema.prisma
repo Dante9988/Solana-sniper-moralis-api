@@ -483,3 +483,78 @@ model SolanaForensicsError {
 
   @@index([runId])
 }
+
+// --- Phase 7B.2: non-custodial Solana wallet-ownership verification and
+// user-scoped scan access (ARCHITECTURE.md §17). `userId` throughout is the
+// Supabase auth `sub` claim (a UUID) -- an opaque string with no local FK,
+// same convention as Wallet.userId/UserPreference.userId elsewhere in this
+// schema (Supabase's own `auth.users` table lives in a separate database).
+
+/// A pending "sign this message to prove you control this address" challenge
+/// (SIWS-style, phase7b2.txt §2). `challengeHash` -- not the raw challenge id
+/// handed to the client -- is what's stored and indexed, so a read-only
+/// database compromise doesn't hand out reusable challenge identifiers
+/// (phase7b2.txt §2 "store hashes where practical instead of reusable
+/// plaintext secrets"). The exact `message` text is stored in full: unlike
+/// the challenge id, the message is meant to be publicly readable -- it's
+/// what proves the signature was actually over these exact bytes.
+model WalletChallenge {
+  id            String    @id @default(uuid())
+  challengeHash String    @unique
+  userId        String
+  address       String
+  network       String    @default("solana:mainnet")
+  domain        String
+  uri           String
+  nonce         String
+  message       String
+  issuedAt      DateTime  @default(now())
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// A Solana address whose ownership was proven by a verified detached Ed25519
+/// signature over a WalletChallenge (never a private key or seed phrase --
+/// see src/researchApi/services/walletVerificationService.ts). Deliberately
+/// its own model, not a reuse of Wallet.walletPk (the legacy, now-nullable,
+/// never-written custodial column, §8) -- this table never has, and must
+/// never gain, a secret-key column of any kind.
+/// @@unique([network, address]) means one address can be the *verified*
+/// wallet of at most one OnlyPump account at a time (phase7b2.txt §2's
+/// default: prevent cross-account claims). Re-verifying under a different
+/// account requires unlinking it from the first account first.
+model VerifiedWallet {
+  id         String   @id @default(uuid())
+  userId     String
+  address    String
+  network    String   @default("solana:mainnet")
+  verifiedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@unique([network, address])
+  @@index([userId])
+}
+
+/// Ownership/subscription mapping between an authenticated user, the mint
+/// they requested, and the underlying (possibly cross-user-shared/deduped)
+/// SolanaForensicsJob.jobKey (phase7b2.txt §3). This is what makes
+/// `GET /api/v1/jobs/:jobKey` and realtime job events user-scoped without
+/// duplicating or un-deduplicating the underlying forensics work: many users
+/// requesting the same mint around the same time still share one job, but
+/// each gets their own row here, so one user can never enumerate or read
+/// another user's request metadata through this mapping.
+model UserScanRequest {
+  id          String   @id @default(uuid())
+  userId      String
+  mint        String
+  jobKey      String
+  requestedAt DateTime @default(now())
+
+  @@unique([userId, jobKey])
+  @@index([jobKey])
+  @@index([userId])
+}

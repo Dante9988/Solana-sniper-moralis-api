@@ -9,6 +9,7 @@
 import { OpenApiGeneratorV31, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
 import { ErrorEnvelopeSchema } from "./errors";
 import { HealthResponseSchema, JobKeyParamSchema, MeResponseSchema, MintParamSchema, ReadyResponseSchema, ScanAcceptedResponseSchema } from "./common";
+import { CreateChallengeRequestSchema, CreateChallengeResponseSchema, VerifiedWalletListSchema, VerifiedWalletSchema, VerifyChallengeRequestSchema } from "./wallets";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -98,6 +99,78 @@ registry.registerPath({
     400: errorResponse,
     401: errorResponse,
     429: errorResponse,
+  },
+});
+
+const walletIdParam = z.object({ walletId: z.string() }).openapi("WalletIdParam");
+const ticketResponse = z.object({ ticket: z.string(), expiresInMs: z.number() }).openapi("RealtimeTicketResponse");
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/wallets/challenges",
+  summary: "Create a short-lived, single-use wallet-ownership challenge for the authenticated user to sign (never a transaction).",
+  tags: ["wallet-verification"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: CreateChallengeRequestSchema } } } },
+  responses: {
+    200: { description: "Challenge created", content: { "application/json": { schema: CreateChallengeResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/wallets/verify",
+  summary: "Verify a detached Ed25519 signature over a previously issued challenge, linking the address to the authenticated user.",
+  tags: ["wallet-verification"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: VerifyChallengeRequestSchema } } } },
+  responses: {
+    200: { description: "Wallet verified", content: { "application/json": { schema: VerifiedWalletSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    409: errorResponse,
+    410: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/wallets",
+  summary: "List the authenticated user's own verified wallets.",
+  tags: ["wallet-verification"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Verified wallets", content: { "application/json": { schema: VerifiedWalletListSchema } } },
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/me/wallets/{walletId}",
+  summary: "Unlink one of the authenticated user's verified wallets. Never deletes blockchain history or shared token intelligence.",
+  tags: ["wallet-verification"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: walletIdParam },
+  responses: {
+    204: { description: "Unlinked" },
+    401: errorResponse,
+    404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/realtime/tickets",
+  summary: "Issue a short-lived, single-use ticket for connecting to the WebSocket endpoint. Never a substitute for the Supabase token itself.",
+  tags: ["realtime"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Ticket issued", content: { "application/json": { schema: ticketResponse } } },
+    401: errorResponse,
+    503: errorResponse,
   },
 });
 

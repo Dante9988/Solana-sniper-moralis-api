@@ -25,8 +25,55 @@ describe("rate-limit backend: fails closed in production (phase7b1.txt §9)", ()
   });
 
   it("production succeeds when RATE_LIMIT_BACKEND is explicitly memory", () => {
-    const config = loadApiConfig({ NODE_ENV: "production", RATE_LIMIT_BACKEND: "memory" } as NodeJS.ProcessEnv);
+    const config = loadApiConfig({
+      NODE_ENV: "production",
+      RATE_LIMIT_BACKEND: "memory",
+      REALTIME_BACKEND: "memory",
+    } as NodeJS.ProcessEnv);
     expect(config.rateLimit.backend).toBe("memory");
+  });
+});
+
+describe("realtime backend (event bus + WS ticket store): fails closed in production (phase7b2.txt §6)", () => {
+  it("throws when NODE_ENV=production and REALTIME_BACKEND is unset — no silent in-memory default", () => {
+    expect(() => loadApiConfig({ NODE_ENV: "production", RATE_LIMIT_BACKEND: "memory" } as NodeJS.ProcessEnv)).toThrow(ApiConfigError);
+  });
+
+  it("throws when REALTIME_BACKEND=redis but REDIS_URL is unset", () => {
+    expect(() => loadApiConfig({ REALTIME_BACKEND: "redis" } as NodeJS.ProcessEnv)).toThrow(/REDIS_URL/);
+  });
+
+  it("succeeds with REALTIME_BACKEND=redis when REDIS_URL is set", () => {
+    const config = loadApiConfig({ REALTIME_BACKEND: "redis", REDIS_URL: "redis://localhost:6379" } as NodeJS.ProcessEnv);
+    expect(config.realtime.backend).toBe("redis");
+    expect(config.realtime.redisUrl).toBe("redis://localhost:6379");
+  });
+
+  it("defaults to memory outside production when unset", () => {
+    const config = loadApiConfig({} as NodeJS.ProcessEnv);
+    expect(config.realtime.backend).toBe("memory");
+  });
+
+  it("rejects an unrecognized backend value", () => {
+    expect(() => loadApiConfig({ REALTIME_BACKEND: "kafka" } as NodeJS.ProcessEnv)).toThrow(ApiConfigError);
+  });
+
+  it("production succeeds when both RATE_LIMIT_BACKEND and REALTIME_BACKEND are explicitly memory", () => {
+    const config = loadApiConfig({
+      NODE_ENV: "production",
+      RATE_LIMIT_BACKEND: "memory",
+      REALTIME_BACKEND: "memory",
+    } as NodeJS.ProcessEnv);
+    expect(config.realtime.backend).toBe("memory");
+  });
+
+  it("applies sane defaults for ticket TTL, message size, and connection/subscription limits", () => {
+    const config = loadApiConfig({} as NodeJS.ProcessEnv);
+    expect(config.realtime.ticketTtlMs).toBeGreaterThanOrEqual(30_000);
+    expect(config.realtime.ticketTtlMs).toBeLessThanOrEqual(60_000);
+    expect(config.realtime.maxMessageBytes).toBeGreaterThan(0);
+    expect(config.realtime.maxSubscriptionsPerConnection).toBeGreaterThan(0);
+    expect(config.realtime.maxConnectionsPerUser).toBeGreaterThan(0);
   });
 });
 
