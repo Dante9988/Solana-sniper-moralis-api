@@ -558,3 +558,152 @@ model UserScanRequest {
   @@index([jobKey])
   @@index([userId])
 }
+
+// --- Phase 7B.3A: Pump.fun/PumpSwap lifecycle and normalized trades ---
+//
+// Numeric column widths below are chosen from real decoded mainnet values
+// gathered during the Phase 7B.3A0/7B.3A1 audit, not guessed:
+//   - token/quote/fee amounts are u64 on both programs' IDLs (max
+//     18,446,744,073,709,551,615 — 20 digits); Decimal(24,0) gives 4 digits
+//     of headroom with no wasted precision.
+//   - real observed values ranged from 5 digits (a small buy's
+//     base_amount_out) to 16 digits (a fresh mint's token_total_supply,
+//     1_000_000_000_000_000) — comfortably inside Decimal(24,0).
+//   - i128-typed fields (PumpSwap's virtual_quote_reserves) are NOT given
+//     their own typed column — they are not part of the NormalizedPumpTrade
+//     contract and are not queried directly; they live only in
+//     PumpLifecycleEvent.payload's canonicalized JSON, decimal-string
+//     encoded, avoiding a 39-digit column for a field nothing queries.
+//   - candle OHLC price fields use Decimal(38,18): checked against both a
+//     fresh mint's smallest real implied price (~2.8e-5, from a real
+//     CreateEvent's virtual reserves) and a mature pool's largest real
+//     implied price (~6.24, from a real $630M-mcap pool's reserves) — both
+//     land nowhere near either bound of Decimal(38,18)'s 20-integer-digit /
+//     18-fractional-digit range.
+
+model PumpLifecycleEvent {
+  id                    String   @id @default(uuid())
+  mint                  String
+  eventType             String // created | completed | migration_initiated | pumpswap_pool_created | pumpswap_pool_ready
+  emittingProgram       String
+  signature             String
+  outerInstructionIndex Int
+  innerPosition         Int // -1 sentinel, never null (Postgres UNIQUE treats multiple NULLs as distinct)
+  slot                  BigInt
+  /// Nullable until resolved via a cached per-slot getBlock lookup — the
+  /// undocumented getTransaction "transactionIndex" field is used as a fast
+  /// path when present (confirmed live on this project's actual Helius
+  /// endpoint), with getBlock's officially-documented signature-array
+  /// position as the durable fallback/cross-check.
+  outerTxPosition       Int?
+  blockTime             DateTime
+  /// The event's own on-chain-asserted timestamp field, when the event
+  /// carries one — kept distinct from blockTime and never substituted for
+  /// it (CANDLESTICK_CHART.md requires blockTime specifically).
+  eventTime             DateTime?
+  payloadVersion        Int      @default(1)
+  /// Canonicalized: every bigint/BN-typed field pre-converted to a decimal
+  /// string before this is written — never a raw JS number for a monetary
+  /// or reserve value.
+  payload               Json
+  poolAddress           String?
+  bondingCurveAddress   String?
+  status                String // provisional | final | orphaned
+  /// live stream | historical backfill | block reconciliation — distinct
+  /// ingestion paths must still deduplicate through the identity below.
+  source                String
+  observedAt            DateTime @default(now())
+
+  @@unique([signature, outerInstructionIndex, innerPosition, emittingProgram])
+  @@index([mint, slot, outerTxPosition, outerInstructionIndex, innerPosition])
+}
+
+model TokenLifecycleState {
+  mint          String   @id
+  state         String // bonding_curve | migrating | pumpswap | unsupported
+  bondingCurve  String?
+  pumpswapPool  String?
+  lastEventId   String
+  lastEventSlot BigInt
+  updatedAt     DateTime @updatedAt
+}
+
+model PumpTrade {
+  id                    String   @id @default(uuid())
+  venue                 String // pump | pumpswap
+  source                String // live stream | historical backfill | block reconciliation
+  mint                  String
+  quoteMint             String
+  signature             String
+  outerInstructionIndex Int
+  innerPosition         Int // -1 sentinel, never null
+  emittingProgram       String
+  slot                  BigInt
+  outerTxPosition       Int?
+  blockTime             DateTime
+  eventTime             DateTime?
+  side                  String // buy | sell
+  tokenAmount           Decimal  @db.Decimal(24, 0)
+  quoteAmount           Decimal  @db.Decimal(24, 0)
+  trader                String
+  status                String // provisional | final | orphaned
+  observedAt            DateTime @default(now())
+
+  @@unique([signature, outerInstructionIndex, innerPosition, emittingProgram])
+  @@index([mint, blockTime])
+  @@index([mint, slot, outerTxPosition])
+}
+
+model PumpCandle {
+  mint          String
+  resolution    String
+  startTime     DateTime
+  open          Decimal  @db.Decimal(38, 18)
+  high          Decimal  @db.Decimal(38, 18)
+  low           Decimal  @db.Decimal(38, 18)
+  close         Decimal  @db.Decimal(38, 18)
+  volumeToken   Decimal  @db.Decimal(24, 0)
+  volumeQuote   Decimal  @db.Decimal(24, 0)
+  volumeUsd     Decimal? @db.Decimal(24, 8)
+  trades        Int
+  /// Always COUNT(DISTINCT trader) over raw PumpTrade for this exact
+  /// interval — never summed from smaller sub-candles (not associative).
+  uniqueTraders Int
+  source        String // pump | pumpswap | mixed
+  status        String // provisional | final
+  updatedAt     DateTime @updatedAt
+
+  @@id([mint, resolution, startTime])
+}
+
+model PumpCandleRevision {
+  id             String   @id @default(uuid())
+  mint           String
+  resolution     String
+  startTime      DateTime
+  sequence       BigInt   @default(autoincrement())
+  revisionStatus String // provisional | final | corrected
+  /// Complete serialized candle at this revision — every monetary value a
+  /// decimal string, never a JS number (Phase 7B.3A1 override item 7).
+  payload        Json
+  createdAt      DateTime @default(now())
+
+  @@index([mint, resolution, sequence])
+}
+
+model SolUsdRate {
+  id             String   @id @default(uuid())
+  feedId         String
+  provider       String
+  publishTime    DateTime
+  retrievedAt    DateTime @default(now())
+  rawPrice       BigInt
+  exponent       Int
+  normalizedRate Decimal  @db.Decimal(20, 8)
+  providerStatus String?
+  supersedesId   String?
+  isActive       Boolean  @default(true)
+
+  @@index([provider, publishTime])
+  @@index([feedId, publishTime])
+}
