@@ -129,7 +129,14 @@ export class PonsChainClient implements ChainReader {
   }
 
   async getBlockNumber(): Promise<ChainClientResult<bigint>> {
-    return this.withRetry(() => this.client.getBlockNumber());
+    // viem's getBlockNumber defaults to caching for `client.cacheTime`
+    // (== the transport's pollingInterval, 4s by default) — found via a
+    // real-anvil reorg test (Phase 7B.5A) where mining new blocks between
+    // two calls a few hundred ms apart still returned the pre-mine height.
+    // A confirmation-lag/safe-tip calculation must always see the true
+    // current tip, never a stale cached one — cacheTime: 0 forces a fresh
+    // eth_blockNumber on every call.
+    return this.withRetry(() => this.client.getBlockNumber({ cacheTime: 0 }));
   }
 
   async getBlockRef(blockNumber: bigint): Promise<ChainClientResult<RawBlockRef>> {

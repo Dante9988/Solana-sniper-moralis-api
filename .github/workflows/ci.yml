@@ -92,5 +92,22 @@ jobs:
           FORENSICS_RUN_DB_TESTS: "true"
           WALLET_RUN_DB_TESTS: "true"
 
+      # Phase 7B.5A follow-up — reorgRecovery.dbIntegration.test.ts proves
+      # the recovery algorithm against a scripted fake chain reader; this
+      # additionally proves the same production PonsChainClient/
+      # DiscoveryListener/reorgRecovery.ts code path against a genuinely
+      # reorging real EVM JSON-RPC node (Foundry's anvil, via its real
+      # evm_snapshot/evm_revert), the standard way the EVM tooling
+      # ecosystem tests reorg handling without needing a live chain to
+      # misbehave. It cannot run against Robinhood Chain mainnet itself —
+      # a real reorg there can't safely be forced on demand.
+      - name: Install Foundry (for the real-anvil reorg recovery proof)
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run real-anvil reorg recovery proof (genuine node reorg, not mocked)
+        run: npx vitest run src/pons/__tests__/reorgRecovery.anvilFork.test.ts
+        env:
+          PONS_RUN_ANVIL_REORG_TEST: "true"
+
       - name: Build
         run: npm run build

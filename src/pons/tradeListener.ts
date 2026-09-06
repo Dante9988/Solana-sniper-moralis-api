@@ -270,7 +270,10 @@ export class TradeListener {
       const checkpointStoreTx = new CheckpointStore(tx);
       await checkpointStoreTx.set(TRADE_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight);
       await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
-    });
+      // See discoveryListener.ts's matching comment — Prisma's 5s default
+      // interactive-transaction timeout doesn't scale with how many trades
+      // a large catch-up range or genuine trade burst can decode.
+    }, { timeout: 60_000 });
 
     this.logger.info(
       `trade tick: processed blocks ${fromBlock}-${toBlock} across ${poolAddresses.length} pool(s) in ${poolChunks.length} chunk(s), ${trades.length} trade(s) recorded, ${retryEvents} chunk(s) needed a retry.`

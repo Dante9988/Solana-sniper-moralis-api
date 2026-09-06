@@ -1,0 +1,112 @@
+/**
+ * Phase 7B.5A — compiled bytecode/ABI for two tiny Solidity mocks used only
+ * by reorgRecovery.anvilFork.test.ts to prove real reorg recovery against a
+ * genuinely reorging local EVM node (Foundry's `anvil`), not a scripted
+ * fake ChainReader.
+ *
+ * Each mock emits the *exact* real event signature this repo already
+ * verified on-chain (src/pons/abi.ts): MockPonsFactory's TokenLaunched and
+ * MockUniswapPool's Swap both hash to the identical topic0 the real Pons
+ * factory/pool logs use, confirmed with `cast sig-event` against the
+ * compiled source below. src/pons/ponsAdapter.ts's real decodeEventLog
+ * calls therefore genuinely decode logs these mocks emit — this is not a
+ * separate/parallel decode path.
+ *
+ * Compiled once with `forge build` (Foundry, Solc 0.8.33) from the source
+ * reproduced in the comment below each constant; committed as plain
+ * bytecode so running the test requires only the `anvil` binary, not a
+ * Solidity toolchain. Never deployed to any real chain — anvil-only.
+ */
+
+/**
+ * ```solidity
+ * // SPDX-License-Identifier: MIT
+ * pragma solidity ^0.8.20;
+ *
+ * contract MockPonsFactory {
+ *     event TokenLaunched(
+ *         address indexed token,
+ *         address indexed deployer,
+ *         address indexed dexFactory,
+ *         address pairToken,
+ *         address pool,
+ *         uint256 dexId,
+ *         uint256 launchConfigId,
+ *         uint256 positionId,
+ *         uint256 restrictionsEndBlock,
+ *         uint256 initialBuyAmount
+ *     );
+ *
+ *     function launch(address token, address pool, address pairToken, uint256 initialBuyAmount) external {
+ *         emit TokenLaunched(token, msg.sender, address(this), pairToken, pool, 1, 1, 1, 0, initialBuyAmount);
+ *     }
+ *
+ *     // Return shape matches src/pons/abi.ts's getLaunchedToken tuple
+ *     // exactly (field order and types), so this repo's real
+ *     // PONS_FACTORY_ABI-based decode succeeds against this mock.
+ *     function getLaunchedToken(address token) external pure returns (
+ *         address, address, address, address, uint256, uint256, uint256, uint256, uint256, bool, uint24, bool, uint256
+ *     ) {
+ *         return (token, address(0), address(0), address(0), 0, 1, 1, 0, 1_000_000 ether, true, 3000, true, 0);
+ *     }
+ * }
+ * ```
+ *
+ * Compiled with `forge build --via-ir` (13 return values overflow the EVM
+ * stack without it).
+ */
+export const MOCK_PONS_FACTORY_BYTECODE =
+  "0x608060405234601c57600e6020565b6105be61002b82396105be90f35b6026565b60405190565b5f80fdfe60806040526004361015610013575b610298565b61001d5f3561003c565b80632b29e4bd1461003757633cf28b5a0361000e57610253565b6100fb565b60e01c90565b60405190565b5f80fd5b5f80fd5b60018060a01b031690565b61006490610050565b90565b6100708161005b565b0361007757565b5f80fd5b9050359061008882610067565b565b90565b6100968161008a565b0361009d57565b5f80fd5b905035906100ae8261008d565b565b6080818303126100f1576100c6825f830161007b565b926100ee6100d7846020850161007b565b936100e5816040860161007b565b936060016100a1565b90565b61004c565b5f0190565b3461012d5761011761010e3660046100b0565b9291909161039f565b61011f610042565b80610129816100f6565b0390f35b610048565b9060208282031261014b57610148915f0161007b565b90565b61004c565b6101599061005b565b9052565b6101669061008a565b9052565b151590565b6101789061016a565b9052565b62ffffff1690565b61018d9061017c565b9052565b9a98969492909d9c9b99979593916101a08c019e5f8d016101b191610150565b60208c016101be91610150565b60408b016101cb91610150565b60608a016101d891610150565b608089016101e59161015d565b60a088016101f29161015d565b60c087016101ff9161015d565b60e0860161020c9161015d565b610100850161021a9161015d565b61012084016102289161016f565b610140830161023691610184565b61016082016102449161016f565b610180016102519161015d565b565b346102935761028f61026e610269366004610132565b610482565b996102869d9b9d999199989298979397969496610042565b9d8e9d8e610191565b0390f35b610048565b5f80fd5b90565b6102b36102ae6102b892610050565b61029c565b610050565b90565b6102c49061029f565b90565b6102d0906102bb565b90565b6102dc906102bb565b90565b90565b6102f66102f16102fb926102df565b61029c565b61008a565b90565b610307906102e2565b9052565b90565b61032261031d6103279261030b565b61029c565b61008a565b90565b6103339061030e565b9052565b949290979695939160e08601985f870161035091610150565b6020860161035d91610150565b6040850161036a916102fe565b60608401610377916102fe565b60808301610384916102fe565b60a082016103919161032a565b60c00161039d9161015d565b565b33916103aa306102c7565b9361040760019660019060015f91926103f56103ef6103e97fdb51ea9ad51ab453a65a4cb7e60c3cb378c9501bb002609f8f97778fb6c4235a9a6102d3565b9a6102d3565b9a6102d3565b9a6103fe610042565b97889788610337565b0390a4565b5f90565b5f90565b5f90565b5f90565b61043061042b6104359261030b565b61029c565b610050565b90565b6104419061041c565b90565b90565b61045b61045661046092610444565b61029c565b61008a565b90565b90565b61047a61047561047f92610463565b61029c565b61017c565b90565b61048a61040c565b5061049361040c565b5061049c61040c565b506104a561040c565b506104ae610410565b506104b7610410565b506104c0610410565b506104c9610410565b506104d2610410565b506104db610414565b506104e4610418565b506104ed610414565b506104f6610410565b505f61050190610438565b915f61050c90610438565b915f61051790610438565b915f916001916001915f9169d3c21bcecceda100000091600191610bb8916001915f919c9b9a996105479061030e565b98610551906102e2565b9761055b906102e2565b966105659061030e565b9561056f90610447565b949361057a90610466565b92916105859061030e565b9056fea26469706673582212203c594d3678edb0d671af3f37f5cd8a8eb64f8f4668030d225fee5eccbcdcd4fc64736f6c63430008210033" as const;
+
+export const MOCK_PONS_FACTORY_ABI = [
+  {
+    type: "function",
+    name: "launch",
+    inputs: [
+      { name: "token", type: "address", internalType: "address" },
+      { name: "pool", type: "address", internalType: "address" },
+      { name: "pairToken", type: "address", internalType: "address" },
+      { name: "initialBuyAmount", type: "uint256", internalType: "uint256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
+/**
+ * ```solidity
+ * // SPDX-License-Identifier: MIT
+ * pragma solidity ^0.8.20;
+ *
+ * contract MockUniswapPool {
+ *     event Swap(
+ *         address indexed sender,
+ *         address indexed recipient,
+ *         int256 amount0,
+ *         int256 amount1,
+ *         uint160 sqrtPriceX96,
+ *         uint128 liquidity,
+ *         int24 tick
+ *     );
+ *
+ *     function swap(int256 amount0, int256 amount1) external {
+ *         emit Swap(msg.sender, msg.sender, amount0, amount1, 0, 0, 0);
+ *     }
+ * }
+ * ```
+ */
+export const MOCK_UNISWAP_POOL_BYTECODE =
+  "0x6080604052348015600e575f5ffd5b506102ad8061001c5f395ff3fe608060405234801561000f575f5ffd5b5060043610610029575f3560e01c8063ca3465491461002d575b5f5ffd5b610047600480360381019061004291906100f1565b610049565b005b3373ffffffffffffffffffffffffffffffffffffffff163373ffffffffffffffffffffffffffffffffffffffff167fc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca6784845f5f5f6040516100ae959493929190610226565b60405180910390a35050565b5f5ffd5b5f819050919050565b6100d0816100be565b81146100da575f5ffd5b50565b5f813590506100eb816100c7565b92915050565b5f5f60408385031215610107576101066100ba565b5b5f610114858286016100dd565b9250506020610125858286016100dd565b9150509250929050565b610138816100be565b82525050565b5f819050919050565b5f73ffffffffffffffffffffffffffffffffffffffff82169050919050565b5f819050919050565b5f61018961018461017f8461013e565b610166565b610147565b9050919050565b6101998161016f565b82525050565b5f6fffffffffffffffffffffffffffffffff82169050919050565b5f6101d46101cf6101ca8461013e565b610166565b61019f565b9050919050565b6101e4816101ba565b82525050565b5f8160020b9050919050565b5f61021061020b6102068461013e565b610166565b6101ea565b9050919050565b610220816101f6565b82525050565b5f60a0820190506102395f83018861012f565b610246602083018761012f565b6102536040830186610190565b61026060608301856101db565b61026d6080830184610217565b969550505050505056fea2646970667358221220daa671b3af3cfd851f93ddd5124181df1c59df51cd82961138977b8de5553b1764736f6c63430008210033" as const;
+
+export const MOCK_UNISWAP_POOL_ABI = [
+  {
+    type: "function",
+    name: "swap",
+    inputs: [
+      { name: "amount0", type: "int256", internalType: "int256" },
+      { name: "amount1", type: "int256", internalType: "int256" },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
