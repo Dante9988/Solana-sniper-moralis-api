@@ -3,6 +3,11 @@ import { CHAIN_REGISTRY, isSupportedChain } from "./chainRegistry";
 import { AssetIdentity, AssetResolutionInput, AssetResolutionResult, SupportedChain } from "./types";
 
 const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+// Deliberately NOT including ROBINHOOD here: this list is only the
+// candidate-guess set for an address supplied with no explicit chain
+// (AMBIGUOUS_CHAIN). Every Robinhood Chain route always passes
+// chain: "ROBINHOOD" explicitly, so guessing it here would only risk
+// changing existing ambiguous-EVM-address behavior for unrelated features.
 const EVM_CHAINS: SupportedChain[] = ["ETHEREUM", "BNB_SMART_CHAIN"];
 
 function resolveForChain(

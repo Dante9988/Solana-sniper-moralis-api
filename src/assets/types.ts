@@ -1,4 +1,4 @@
-export type SupportedChain = "SOLANA" | "ETHEREUM" | "BNB_SMART_CHAIN";
+export type SupportedChain = "SOLANA" | "ETHEREUM" | "BNB_SMART_CHAIN" | "ROBINHOOD";
 
 export interface AssetIdentity {
   id?: string;

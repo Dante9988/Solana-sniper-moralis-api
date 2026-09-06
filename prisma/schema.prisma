@@ -707,3 +707,87 @@ model SolUsdRate {
   @@index([provider, publishTime])
   @@index([feedId, publishTime])
 }
+
+// ---------------------------------------------------------------------------
+// Phase 7B.4 — Robinhood Chain / Pons ingestion.
+//
+// Deliberately venue-agnostic table names (not Pons-prefixed), mirroring the
+// TypeScript contract in src/discovery/types.ts: Pons, PumpSwap and any
+// future venue are three sources of the same small set of facts. The
+// `chain`/`venue` columns discriminate; the Solana adapter is meant to drop
+// in as more rows here later, not a parallel set of tables.
+//
+// Raw amount columns use Decimal(78, 0) rather than PumpTrade's
+// Decimal(24, 0): Solana's u64 amounts fit in 24 digits, but EVM's uint256
+// amounts (18-decimal ERC20 supplies routinely exceed 1e27) need headroom
+// up to uint256's real max, which is exactly 78 decimal digits.
+// ---------------------------------------------------------------------------
+
+model DiscoveredToken {
+  id                        String    @id @default(uuid())
+  chain                     String // "robinhood" | "solana" (ChainId)
+  venue                     String // "pons" | "pumpfun"
+  tokenAddress              String
+  deployer                  String
+  poolAddress               String?
+  quoteAddress              String
+  supply                    Decimal   @db.Decimal(78, 0)
+  initialBuyAmount          Decimal   @db.Decimal(78, 0)
+  /// From the same getLaunchedToken() enrichment read as supply -- needed by
+  /// the trade listener to interpret Swap's signed amount0/amount1 without
+  /// an extra RPC call per trade.
+  isToken0                  Boolean
+  poolFee                   Int
+  sourceHeight              BigInt
+  sourceHash                String
+  sourceTxHash              String
+  sourceIndex               Int
+  observedAt                DateTime  @default(now())
+  /// Populated by the graduation poller (§4.6), a scheduled read, never an
+  /// event — Pons has no migration/graduation event. Null until first polled.
+  graduated                 Boolean   @default(false)
+  graduationPairedPrincipal Decimal?  @db.Decimal(78, 0)
+  graduationThreshold       Decimal?  @db.Decimal(78, 0)
+  graduationCheckedAt       DateTime?
+
+  @@unique([chain, tokenAddress])
+  @@index([chain, observedAt])
+  @@index([chain, graduated])
+  @@index([chain, poolAddress])
+}
+
+model ChainTrade {
+  id           String   @id @default(uuid())
+  chain        String
+  venue        String
+  tokenAddress String
+  poolAddress  String?
+  side         String // buy | sell
+  tokenAmount  Decimal  @db.Decimal(78, 0)
+  quoteAmount  Decimal  @db.Decimal(78, 0)
+  quoteAddress String
+  priceQuote   Decimal  @db.Decimal(60, 18)
+  trader       String
+  sourceHeight BigInt
+  sourceHash   String
+  sourceTxHash String
+  sourceIndex  Int
+  observedAt   DateTime @default(now())
+
+  /// One log/instruction produces at most one trade fact — the EVM analog
+  /// of PumpTrade's @@unique([signature, outerInstructionIndex, ...]).
+  @@unique([chain, sourceTxHash, sourceIndex])
+  @@index([chain, tokenAddress, sourceHeight])
+}
+
+/// Persists last-processed chain position per independent ingestion source
+/// (e.g. "robinhood:pons:discovery", "robinhood:pons:trades") so a restart
+/// resumes from here rather than re-scanning from genesis or silently
+/// skipping the gap. Nothing in this repo implemented this before Phase
+/// 7B.4 (confirmed by grep during Step 0) -- this table is the fix.
+model ChainIngestionCheckpoint {
+  source      String   @id
+  lastHeight  BigInt
+  lastHash    String
+  updatedAt   DateTime @updatedAt
+}

@@ -10,6 +10,9 @@ export const CHAIN_REGISTRY: Readonly<Record<SupportedChain, Readonly<ChainDefin
   SOLANA: Object.freeze({ chain: "SOLANA", chainId: "solana-mainnet", addressFormat: "SOLANA_PUBLIC_KEY" }),
   ETHEREUM: Object.freeze({ chain: "ETHEREUM", chainId: "1", addressFormat: "EVM_20_BYTE_HEX" }),
   BNB_SMART_CHAIN: Object.freeze({ chain: "BNB_SMART_CHAIN", chainId: "56", addressFormat: "EVM_20_BYTE_HEX" }),
+  // Phase 7B.4 — chainId verified live via eth_chainId (0x1237 = 4663), not
+  // taken from documentation alone (see phase7b4.txt §2 "Correction").
+  ROBINHOOD: Object.freeze({ chain: "ROBINHOOD", chainId: "4663", addressFormat: "EVM_20_BYTE_HEX" }),
 });
 
 export const SUPPORTED_CHAINS = Object.freeze(Object.keys(CHAIN_REGISTRY) as SupportedChain[]);

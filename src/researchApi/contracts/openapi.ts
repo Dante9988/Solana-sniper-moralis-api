@@ -10,6 +10,11 @@ import { OpenApiGeneratorV31, OpenAPIRegistry } from "@asteasolutions/zod-to-ope
 import { ErrorEnvelopeSchema } from "./errors";
 import { HealthResponseSchema, JobKeyParamSchema, MeResponseSchema, MintParamSchema, ReadyResponseSchema, ScanAcceptedResponseSchema } from "./common";
 import { CreateChallengeRequestSchema, CreateChallengeResponseSchema, VerifiedWalletListSchema, VerifiedWalletSchema, VerifyChallengeRequestSchema } from "./wallets";
+import {
+  RobinhoodTokenAddressParamSchema,
+  RobinhoodTokenDetailResponseSchema,
+  RobinhoodTokenListResponseSchema,
+} from "./robinhoodTokens";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -81,6 +86,34 @@ registry.registerPath({
   request: { params: MintParamSchema },
   responses: {
     200: { description: "Forensics run", content: { "application/json": { schema: z.object({ apiVersion: z.number(), mint: z.string() }).passthrough() } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood",
+  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4).",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Discovered token list", content: { "application/json": { schema: RobinhoodTokenListResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}",
+  summary: "One discovered Robinhood Chain token's detail with its recent trades (Phase 7B.4).",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Token detail with trades", content: { "application/json": { schema: RobinhoodTokenDetailResponseSchema } } },
     400: errorResponse,
     401: errorResponse,
     404: errorResponse,
