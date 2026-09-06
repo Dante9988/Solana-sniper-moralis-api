@@ -337,7 +337,16 @@ export class DiscoveryListener {
       const checkpointStoreTx = new CheckpointStore(tx);
       await checkpointStoreTx.set(DISCOVERY_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight);
       await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
-    });
+      // Prisma's default interactive-transaction timeout is 5s. This loop's
+      // duration scales with how many tokens this tick discovered (one
+      // upsert per token, sequential within the transaction) — a large
+      // PONS_MAX_BLOCK_RANGE_PER_POLL catching up after a long gap (or a
+      // genuine launch burst) can discover far more than fits in 5s even
+      // though each individual upsert is fast. Found by running this
+      // listener against real mainnet with an aggressive catch-up range
+      // (Phase 7B.5A). 60s comfortably covers realistic burst sizes without
+      // masking a truly stuck transaction.
+    }, { timeout: 60_000 });
 
     this.logger.info(`discovery tick: processed blocks ${fromBlock}-${toBlock}, ${discovered.length} token(s) discovered (${tokensPendingEnrichment} pending enrichment), ${enrichmentRetried} retried (${enrichmentRetriedRecovered} recovered).`);
     return { status: "PROCESSED", fromBlock, toBlock, tokensDiscovered: discovered.length, tokensPendingEnrichment, enrichmentRetried, enrichmentRetriedRecovered };
