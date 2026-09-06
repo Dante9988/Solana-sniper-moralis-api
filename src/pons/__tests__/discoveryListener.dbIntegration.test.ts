@@ -22,9 +22,8 @@ import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import path from "path";
 import { DiscoveryListener, DISCOVERY_CHECKPOINT_SOURCE } from "../discoveryListener";
-import { ChainClientResult, ChainReader, RawBlockRef } from "../chainClient";
 import { RawEvmLog } from "../ponsAdapter";
-import { RobinhoodChainConfig } from "../config";
+import { TEST_CONFIG, FakeChainReader } from "./testSupport";
 
 const RUN_DB_TESTS = process.env.PONS_RUN_DB_TESTS === "true";
 
@@ -37,72 +36,21 @@ function loadRawLog(name: string): RawEvmLog {
   return { ...raw, blockNumber: BigInt(raw.blockNumber) };
 }
 
-const TEST_CONFIG: RobinhoodChainConfig = Object.freeze({
-  chainId: 4663,
-  rpcHttpUrl: "http://unused-in-this-test.invalid",
-  rpcWsUrl: "wss://unused-in-this-test.invalid",
-  explorerUrl: "https://unused-in-this-test.invalid",
-  factoryAddress: "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB",
-  lockerAddress: "0x736D76699C26D0d966744cAe304C000d471f7F35",
-  factoryLegacyAddress: "0x0c37a24F5D23A486FA692d1500881d698B1F77a4",
-  lockerLegacyAddress: "0x31ca5E101941A93A7DD6d0497928700625CF54B5",
-  quoteAddress: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
-  pollIntervalMs: 5_000,
-  graduationPollIntervalMs: 60_000,
-  maxBlockRangePerPoll: 2_000,
-  confirmationLagBlocks: 0,
-  freshStartLookbackBlocks: 100,
-});
-
-/** A canned, in-memory chain — deterministic block hashes by height (computed on demand, not precomputed for every height), and a fixed set of logs/enrichment, so this test never touches the network. */
-class FakeChainReader implements ChainReader {
-  latest: bigint;
-  /** height -> hash override, used only to simulate a reorg at a specific height the test cares about; every other height hashes deterministically on demand. */
-  blockHashOverrides = new Map<bigint, string>();
-  logsByRange: RawEvmLog[] = [];
-  enrichment = { supply: 1_000_000_000_000_000_000_000_000_000n, isToken0: true, poolFee: 10_000 };
-
-  constructor(latest: bigint) {
-    this.latest = latest;
-  }
-
-  async getBlockNumber(): Promise<ChainClientResult<bigint>> {
-    return { status: "AVAILABLE", data: this.latest, source: "fake", fetchedAt: new Date() };
-  }
-
-  async getBlockRef(blockNumber: bigint): Promise<ChainClientResult<RawBlockRef>> {
-    const hash = this.blockHashOverrides.get(blockNumber) ?? `0xhash-${blockNumber.toString()}`;
-    return { status: "AVAILABLE", data: { number: blockNumber, hash }, source: "fake", fetchedAt: new Date() };
-  }
-
-  async getLogs(params: { fromBlock: bigint; toBlock: bigint }): Promise<ChainClientResult<RawEvmLog[]>> {
-    const inRange = this.logsByRange.filter((l) => l.blockNumber >= params.fromBlock && l.blockNumber <= params.toBlock);
-    return { status: "AVAILABLE", data: inRange, source: "fake", fetchedAt: new Date() };
-  }
-
-  async readContract<T>(): Promise<ChainClientResult<T>> {
-    return { status: "AVAILABLE", data: this.enrichment as unknown as T, source: "fake", fetchedAt: new Date() };
-  }
-}
-
 describe.skipIf(!RUN_DB_TESTS)("DiscoveryListener — real Postgres integration", () => {
   const prisma = new PrismaClient();
 
-  beforeAll(async () => {
+  async function cleanup() {
     await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: TEST_TOKEN_ADDRESS } });
     await prisma.chainIngestionCheckpoint.deleteMany({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
-  });
+    await prisma.chainBlockCheckpoint.deleteMany({ where: { chain: CHAIN } });
+  }
 
+  beforeAll(cleanup);
   afterAll(async () => {
-    await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: TEST_TOKEN_ADDRESS } });
-    await prisma.chainIngestionCheckpoint.deleteMany({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
+    await cleanup();
     await prisma.$disconnect();
   });
-
-  beforeEach(async () => {
-    await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: TEST_TOKEN_ADDRESS } });
-    await prisma.chainIngestionCheckpoint.deleteMany({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
-  });
+  beforeEach(cleanup);
 
   it("persists a real discovered token and sets the checkpoint on first tick", async () => {
     const fixture = loadRawLog("token_launched_9019252.json");
@@ -123,7 +71,7 @@ describe.skipIf(!RUN_DB_TESTS)("DiscoveryListener — real Postgres integration"
     // notation (e.g. "1e+27") — .toFixed() is the correct way to get the
     // full decimal-safe digit string back out. This distinction matters
     // everywhere a Decimal crosses back into JSON (the read routes, §4.7).
-    expect(row?.supply.toFixed()).toBe("1000000000000000000000000000");
+    expect(row?.supply?.toFixed()).toBe("1000000000000000000000000000");
 
     const checkpoint = await prisma.chainIngestionCheckpoint.findUnique({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
     expect(checkpoint?.lastHeight.toString()).toBe(result.toBlock.toString());
@@ -155,7 +103,7 @@ describe.skipIf(!RUN_DB_TESTS)("DiscoveryListener — real Postgres integration"
     expect(count).toBe(1); // exactly one row despite two listener instances touching the same range
   });
 
-  it("detects a reorg at the checkpoint height and halts rather than silently continuing", async () => {
+  it("detects a reorg at the checkpoint height and fails closed when no earlier canonical ancestor is available", async () => {
     const fixture = loadRawLog("token_launched_9019252.json");
     const fakeChain = new FakeChainReader(9_019_252n);
     fakeChain.logsByRange = [fixture];
@@ -166,15 +114,29 @@ describe.skipIf(!RUN_DB_TESTS)("DiscoveryListener — real Postgres integration"
     if (first.status !== "PROCESSED") throw new Error("expected PROCESSED");
 
     // Simulate a reorg: the chain now reports a different hash at the
-    // height we already checkpointed.
-    fakeChain.blockHashOverrides.set(first.toBlock, "0xREORGED-HASH");
+    // height we already checkpointed. This listener has only ever
+    // committed one checkpoint, so the (height,hash) history has exactly
+    // one entry — which now also disagrees with the live chain — leaving
+    // no earlier canonical ancestor to roll back to within the retained
+    // window. See reorgRecovery.dbIntegration.test.ts for the case where a
+    // deeper history lets recovery actually succeed.
+    fakeChain.setBlockHash(first.toBlock, "0xREORGED-HASH");
     fakeChain.latest = first.toBlock + 10n;
 
     const second = await listener.runOnce();
-    expect(second.status).toBe("REORG_DETECTED");
+    expect(second.status).toBe("REORG_UNRESOLVED");
 
-    // Checkpoint must not have advanced past the reorged height.
+    // Checkpoint must not have advanced past the reorged height, and the
+    // fail-closed state must be persisted for the source-health projection.
     const checkpoint = await prisma.chainIngestionCheckpoint.findUnique({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
     expect(checkpoint?.lastHeight.toString()).toBe(first.toBlock.toString());
+    expect(checkpoint?.reorgUnresolvedAt).not.toBeNull();
+
+    // Repeated detection must remain idempotent — calling it again does not
+    // throw, double-mark, or otherwise change the outcome.
+    const third = await listener.runOnce();
+    expect(third.status).toBe("REORG_UNRESOLVED");
+    const checkpointAfterRetry = await prisma.chainIngestionCheckpoint.findUnique({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
+    expect(checkpointAfterRetry?.reorgUnresolvedAt?.getTime()).toBe(checkpoint?.reorgUnresolvedAt?.getTime());
   });
 });

@@ -16,9 +16,9 @@ import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import path from "path";
 import { TradeListener, TRADE_CHECKPOINT_SOURCE } from "../tradeListener";
-import { ChainClientResult, ChainReader, RawBlockRef } from "../chainClient";
+import { DISCOVERY_CHECKPOINT_SOURCE } from "../discoveryListener";
 import { RawEvmLog } from "../ponsAdapter";
-import { RobinhoodChainConfig } from "../config";
+import { TEST_CONFIG, FakeChainReader } from "./testSupport";
 
 const RUN_DB_TESTS = process.env.PONS_RUN_DB_TESTS === "true";
 
@@ -33,55 +33,10 @@ function loadRawLog(name: string): RawEvmLog {
   return { ...raw, blockNumber: BigInt(raw.blockNumber) };
 }
 
-const TEST_CONFIG: RobinhoodChainConfig = Object.freeze({
-  chainId: 4663,
-  rpcHttpUrl: "http://unused-in-this-test.invalid",
-  rpcWsUrl: "wss://unused-in-this-test.invalid",
-  explorerUrl: "https://unused-in-this-test.invalid",
-  factoryAddress: "0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB",
-  lockerAddress: "0x736D76699C26D0d966744cAe304C000d471f7F35",
-  factoryLegacyAddress: "0x0c37a24F5D23A486FA692d1500881d698B1F77a4",
-  lockerLegacyAddress: "0x31ca5E101941A93A7DD6d0497928700625CF54B5",
-  quoteAddress: TEST_QUOTE_ADDRESS,
-  pollIntervalMs: 5_000,
-  graduationPollIntervalMs: 60_000,
-  maxBlockRangePerPoll: 2_000,
-  confirmationLagBlocks: 0,
-  freshStartLookbackBlocks: 100,
-});
-
-class FakeChainReader implements ChainReader {
-  latest: bigint;
-  blockHashOverrides = new Map<bigint, string>();
-  logsByRange: RawEvmLog[] = [];
-
-  constructor(latest: bigint) {
-    this.latest = latest;
-  }
-
-  async getBlockNumber(): Promise<ChainClientResult<bigint>> {
-    return { status: "AVAILABLE", data: this.latest, source: "fake", fetchedAt: new Date() };
-  }
-
-  async getBlockRef(blockNumber: bigint): Promise<ChainClientResult<RawBlockRef>> {
-    const hash = this.blockHashOverrides.get(blockNumber) ?? `0xhash-${blockNumber.toString()}`;
-    return { status: "AVAILABLE", data: { number: blockNumber, hash }, source: "fake", fetchedAt: new Date() };
-  }
-
-  async getLogs(params: { fromBlock: bigint; toBlock: bigint }): Promise<ChainClientResult<RawEvmLog[]>> {
-    const inRange = this.logsByRange.filter((l) => l.blockNumber >= params.fromBlock && l.blockNumber <= params.toBlock);
-    return { status: "AVAILABLE", data: inRange, source: "fake", fetchedAt: new Date() };
-  }
-
-  async readContract<T>(): Promise<ChainClientResult<T>> {
-    throw new Error("not used by TradeListener");
-  }
-}
-
 describe.skipIf(!RUN_DB_TESTS)("TradeListener — real Postgres integration", () => {
   const prisma = new PrismaClient();
 
-  async function seedTrackedToken() {
+  async function seedTrackedToken(sourceHeight = 9_019_252n) {
     await prisma.discoveredToken.upsert({
       where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: TEST_TOKEN_ADDRESS } },
       create: {
@@ -95,12 +50,23 @@ describe.skipIf(!RUN_DB_TESTS)("TradeListener — real Postgres integration", ()
         initialBuyAmount: "10000000000000000",
         isToken0: true,
         poolFee: 10_000,
-        sourceHeight: 9_019_252n,
-        sourceHash: "0xhash-9019252",
+        sourceHeight,
+        sourceHash: `0xhash-${sourceHeight.toString()}`,
         sourceTxHash: "0x92476c6f12444023711b221057dcffab166f673027479008f959ca37f5f21eb7",
         sourceIndex: 15,
       },
       update: {},
+    });
+    // Phase 7B.5A §1 — the discovery-before-trades barrier means TradeListener
+    // will not advance past whatever the discovery checkpoint reports, so
+    // every test that seeds a tracked pool directly (bypassing
+    // DiscoveryListener itself) must also seed a discovery checkpoint at
+    // least as high as the pool's own sourceHeight, with the hash
+    // FakeChainReader's default formula would produce for that height.
+    await prisma.chainIngestionCheckpoint.upsert({
+      where: { source: DISCOVERY_CHECKPOINT_SOURCE },
+      create: { source: DISCOVERY_CHECKPOINT_SOURCE, lastHeight: sourceHeight, lastHash: `0xhash-${sourceHeight.toString()}` },
+      update: { lastHeight: sourceHeight, lastHash: `0xhash-${sourceHeight.toString()}` },
     });
   }
 
@@ -108,6 +74,8 @@ describe.skipIf(!RUN_DB_TESTS)("TradeListener — real Postgres integration", ()
     await prisma.chainTrade.deleteMany({ where: { chain: CHAIN, tokenAddress: TEST_TOKEN_ADDRESS } });
     await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: TEST_TOKEN_ADDRESS } });
     await prisma.chainIngestionCheckpoint.deleteMany({ where: { source: TRADE_CHECKPOINT_SOURCE } });
+    await prisma.chainIngestionCheckpoint.deleteMany({ where: { source: DISCOVERY_CHECKPOINT_SOURCE } });
+    await prisma.chainBlockCheckpoint.deleteMany({ where: { chain: CHAIN } });
   }
 
   beforeAll(cleanup);

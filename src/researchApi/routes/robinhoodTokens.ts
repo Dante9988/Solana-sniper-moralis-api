@@ -18,6 +18,8 @@ import {
   RobinhoodTokenListQuerySchema,
   RobinhoodTradeListQuerySchema,
 } from "../contracts/robinhoodTokens";
+import { computeIngestionHealth } from "../../pons/sourceHealth";
+import { loadPonsHealthThresholds, PonsHealthThresholds } from "../../pons/config";
 
 /**
  * Prisma.Decimal#toString() renders large integers in scientific notation
@@ -39,7 +41,11 @@ function serializeToken(row: DiscoveredToken) {
     deployer: row.deployer,
     poolAddress: row.poolAddress,
     quoteAddress: row.quoteAddress,
-    supply: decimalToString(row.supply)!,
+    // Phase 7B.5A §4/§9 — null while enrichment is still PENDING (batched,
+    // bounded-concurrency getLaunchedToken() retried on later discovery
+    // ticks). Never a fabricated default.
+    supply: decimalToString(row.supply),
+    enrichmentStatus: row.enrichmentStatus,
     initialBuyAmount: decimalToString(row.initialBuyAmount)!,
     sourceHeight: row.sourceHeight.toString(),
     sourceHash: row.sourceHash,
@@ -73,11 +79,25 @@ function serializeTrade(row: ChainTrade) {
   };
 }
 
-export function createRobinhoodTokensRouter(db: PrismaClient, config: ApiConfig, deps: AuthenticateDeps): Router {
+export function createRobinhoodTokensRouter(db: PrismaClient, config: ApiConfig, deps: AuthenticateDeps, healthThresholds: PonsHealthThresholds = loadPonsHealthThresholds()): Router {
   const router = Router();
   const readAuth = createAuthenticateUnlessPublicReads(config, deps);
   const store = createRateLimiterStore(config.rateLimit);
   const readLimiter = createRateLimiter({ windowMs: 60_000, max: config.rateLimitPerMinute, keyFn: rateLimitKey, store });
+
+  // Phase 7B.5A §5 — registered before "/:tokenAddress" (same reasoning as
+  // this router being mounted before the generic /:mint router in
+  // server.ts): Express matches routes in registration order, and
+  // "/status" would otherwise be swallowed by the ":tokenAddress" param
+  // route and rejected as a malformed address.
+  router.get("/status", readAuth, readLimiter, async (req, res, next) => {
+    try {
+      const health = await computeIngestionHealth(db, healthThresholds);
+      res.json(health);
+    } catch (err) {
+      next(err);
+    }
+  });
 
   router.get("/", readAuth, readLimiter, async (req, res, next) => {
     try {
@@ -91,6 +111,10 @@ export function createRobinhoodTokensRouter(db: PrismaClient, config: ApiConfig,
       const rows = await db.discoveredToken.findMany({
         where: {
           chain: "robinhood",
+          // Phase 7B.5A §2/§9 — a row reorg recovery marked ORPHANED is no
+          // longer a canonical fact; API consumers must never mistake it
+          // for one (phase7b5a.txt §2, requirement 118).
+          canonicalStatus: "CANONICAL",
           ...(cursor ? { observedAt: { lt: new Date(cursor) } } : {}),
         },
         orderBy: { observedAt: "desc" },
@@ -121,13 +145,13 @@ export function createRobinhoodTokensRouter(db: PrismaClient, config: ApiConfig,
       const token = await db.discoveredToken.findUnique({
         where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: req.normalizedTokenAddress! } },
       });
-      if (!token) {
+      if (!token || token.canonicalStatus !== "CANONICAL") {
         sendError(res, "NOT_FOUND", "token has not been discovered", req.requestId);
         return;
       }
 
       const trades = await db.chainTrade.findMany({
-        where: { chain: "robinhood", tokenAddress: req.normalizedTokenAddress! },
+        where: { chain: "robinhood", tokenAddress: req.normalizedTokenAddress!, canonicalStatus: "CANONICAL" },
         orderBy: { sourceHeight: "desc" },
         take: limit,
       });

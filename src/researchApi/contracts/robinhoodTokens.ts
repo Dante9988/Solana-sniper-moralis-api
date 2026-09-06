@@ -20,7 +20,10 @@ export const DiscoveredTokenSchema = z
     deployer: z.string(),
     poolAddress: z.string().nullable(),
     quoteAddress: z.string(),
-    supply: z.string(),
+    /** Null while enrichment (Phase 7B.5A §4/§9) is still PENDING — never a fabricated default. */
+    supply: z.string().nullable(),
+    /** COMPLETE once getLaunchedToken() enrichment has succeeded; PENDING while it is retried on later discovery ticks. */
+    enrichmentStatus: z.enum(["COMPLETE", "PENDING"]),
     initialBuyAmount: z.string(),
     sourceHeight: z.string(),
     sourceHash: z.string(),
@@ -78,3 +81,31 @@ export const RobinhoodTokenDetailResponseSchema = z
     observedAt: z.string(),
   })
   .openapi("RobinhoodTokenDetailResponse");
+
+/** Phase 7B.5A §5 — backend-owned ingestion source-health projection (src/pons/sourceHealth.ts). Never exposes RPC credentials, raw provider URLs, stack traces, or internal database errors — see that module's redaction discipline. */
+export const IngestionHealthStatusSchema = z.enum(["LIVE", "LAGGING", "DEGRADED", "REORG_RECOVERY", "UNAVAILABLE"]);
+
+export const SourceHealthDetailSchema = z
+  .object({
+    source: z.string(),
+    status: IngestionHealthStatusSchema,
+    lastHeight: z.string().nullable(),
+    lastObservedChainHeight: z.string().nullable(),
+    blocksBehind: z.string().nullable(),
+    lastPollAt: z.string().nullable(),
+    lastSuccessAt: z.string().nullable(),
+    secondsSinceLastSuccess: z.number().int().nullable(),
+    lastError: z.string().nullable(),
+    lastErrorAt: z.string().nullable(),
+    unresolvedReorg: z.boolean(),
+  })
+  .openapi("SourceHealthDetail");
+
+export const RobinhoodStatusResponseSchema = z
+  .object({
+    status: IngestionHealthStatusSchema,
+    discovery: SourceHealthDetailSchema,
+    trades: SourceHealthDetailSchema,
+    observedAt: z.string(),
+  })
+  .openapi("RobinhoodStatusResponse");

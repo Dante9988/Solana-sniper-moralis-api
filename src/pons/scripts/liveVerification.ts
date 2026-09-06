@@ -71,7 +71,7 @@ async function main() {
       const seeded = await db.discoveredToken.findMany({ where: { chain: "robinhood" } });
       console.log(`Real rows in DiscoveredToken after live discovery run: ${seeded.length}`);
       for (const row of seeded) {
-        console.log(`  token=${row.tokenAddress} pool=${row.poolAddress} supply=${row.supply.toFixed()} txHash=${row.sourceTxHash}`);
+        console.log(`  token=${row.tokenAddress} pool=${row.poolAddress} supply=${row.supply?.toFixed() ?? "PENDING"} txHash=${row.sourceTxHash}`);
       }
 
       await db.chainIngestionCheckpoint.upsert({
