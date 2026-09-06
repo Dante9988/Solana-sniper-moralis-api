@@ -75,5 +75,22 @@ jobs:
       - name: Run tests
         run: npx vitest run
 
+      # Phase 7B.5A §10/§12 — the *.dbIntegration.test.ts suites (Pons,
+      # Pump, forensics job service, wallet verification, robinhoodTokens
+      # HTTP) are opt-in behind their own RUN_DB_TESTS flags and are
+      # otherwise skipped by "Run tests" above, even though this job's
+      # disposable Postgres (never production, never shared) is exactly
+      # the environment they need. Run them here explicitly so this
+      # coverage is real in CI, not silently skipped. --no-file-parallelism
+      # because the Pons/Pump dbIntegration files intentionally share
+      # fixture-derived row identities and race if run concurrently.
+      - name: Run opt-in DB-integration test suites (serial, disposable Postgres)
+        run: npx vitest run --no-file-parallelism
+        env:
+          PONS_RUN_DB_TESTS: "true"
+          PUMP_RUN_DB_TESTS: "true"
+          FORENSICS_RUN_DB_TESTS: "true"
+          WALLET_RUN_DB_TESTS: "true"
+
       - name: Build
         run: npm run build

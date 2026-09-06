@@ -15,13 +15,13 @@ import type { RawEvmLog } from "./ponsAdapter";
 export type ChainClientFailureCode = "TIMEOUT" | "RATE_LIMITED" | "NETWORK_ERROR" | "RPC_ERROR";
 
 export type ChainClientResult<T> =
-  | { status: "AVAILABLE"; data: T; source: string; fetchedAt: Date }
-  | { status: "UNAVAILABLE"; source: string; fetchedAt: Date; code: ChainClientFailureCode; reason: string };
+  | { status: "AVAILABLE"; data: T; source: string; fetchedAt: Date; attempts: number }
+  | { status: "UNAVAILABLE"; source: string; fetchedAt: Date; code: ChainClientFailureCode; reason: string; attempts: number };
 
 const SOURCE = "robinhood-chain-rpc";
 
-function unavailable<T>(code: ChainClientFailureCode, reason: string): ChainClientResult<T> {
-  return { status: "UNAVAILABLE", source: SOURCE, fetchedAt: new Date(), code, reason };
+function unavailable<T>(code: ChainClientFailureCode, reason: string, attempts: number): ChainClientResult<T> {
+  return { status: "UNAVAILABLE", source: SOURCE, fetchedAt: new Date(), code, reason, attempts };
 }
 
 function sleep(ms: number): Promise<void> {
@@ -117,10 +117,10 @@ export class PonsChainClient implements ChainReader {
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
       try {
         const data = await fn();
-        return { status: "AVAILABLE", data, source: SOURCE, fetchedAt: new Date() };
+        return { status: "AVAILABLE", data, source: SOURCE, fetchedAt: new Date(), attempts: attempt + 1 };
       } catch (err) {
         const { code, reason, retryable } = classifyError(err);
-        lastFailure = unavailable(code, reason);
+        lastFailure = unavailable(code, reason, attempt + 1);
         if (!retryable || attempt === this.maxRetries) break;
         await sleep(backoffDelay(attempt, this.baseRetryDelayMs, this.maxRetryDelayMs));
       }

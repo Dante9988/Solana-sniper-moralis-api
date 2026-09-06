@@ -14,6 +14,7 @@ import {
   RobinhoodTokenAddressParamSchema,
   RobinhoodTokenDetailResponseSchema,
   RobinhoodTokenListResponseSchema,
+  RobinhoodStatusResponseSchema,
 } from "./robinhoodTokens";
 import { z } from "./zodOpenApi";
 
@@ -101,6 +102,18 @@ registry.registerPath({
   responses: {
     200: { description: "Discovered token list", content: { "application/json": { schema: RobinhoodTokenListResponseSchema } } },
     400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/status",
+  summary: "Backend-owned Pons/Robinhood Chain ingestion source-health projection (Phase 7B.5A) — LIVE/LAGGING/DEGRADED/REORG_RECOVERY/UNAVAILABLE, never inferred client-side.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Ingestion source health", content: { "application/json": { schema: RobinhoodStatusResponseSchema } } },
     401: errorResponse,
   },
 });

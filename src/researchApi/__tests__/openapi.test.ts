@@ -59,4 +59,14 @@ describe("OpenAPI contract generation (phase7b1.txt §4/§7)", () => {
     const again = generateOpenApiDocument();
     expect(JSON.stringify(again)).toBe(JSON.stringify(doc));
   });
+
+  it("documents the Phase 7B.5A ingestion source-health route ahead of the generic token-detail path", () => {
+    const paths = Object.keys(doc.paths ?? {});
+    expect(paths).toEqual(expect.arrayContaining(["/api/v1/tokens/robinhood", "/api/v1/tokens/robinhood/status", "/api/v1/tokens/robinhood/{tokenAddress}"]));
+
+    type OperationWithJsonResponses = { responses: Record<string, { content: { "application/json": { schema: { $ref?: string } } } }> };
+    const statusOp = (doc.paths?.["/api/v1/tokens/robinhood/status"] as Record<string, OperationWithJsonResponses>)?.get;
+    const schemaRef = statusOp.responses["200"].content["application/json"].schema.$ref;
+    expect(schemaRef).toMatch(/RobinhoodStatusResponse/);
+  });
 });

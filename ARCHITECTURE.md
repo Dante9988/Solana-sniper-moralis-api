@@ -1,11 +1,11 @@
 # Architecture & Handoff Guide
 
-> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.4**, plus the trading/Telegram surface merged from the `main2` branch).
+> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5A**, plus the trading/Telegram surface merged from the `main2` branch).
 > Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
-**Snapshot date:** 2026-09-05 (America/Los_Angeles; Phase 7B.4 evidence files use 2026-09-06 UTC)
+**Snapshot date:** 2026-09-06 (UTC)
 **Canonical branch:** `main` (fast-forwarded to `master`'s tip in Phase 7B.1 — see §16.1; `master` still exists, unused going forward)
-**Latest commits:** `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
+**Latest commits:** `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
 
 **Stack:** TypeScript / Node (CI runs Node 20), Solana Web3.js, **viem** (Robinhood Chain HTTP RPC), Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Supabase JWT auth, Zod/OpenAPI, `ws`, Redis via `ioredis` (optional distributed rate limiting/realtime), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
@@ -30,11 +30,11 @@ Four layers share one codebase:
 
 **Implemented:** everything in the first two layers (event types, orchestrator, researchers, Prisma report store, non-blocking listener dispatch, Anthropic synthesis, Moralis compatibility cleanup, trench.bot removed from runtime, canonical asset identity, deterministic Solana forensics 5A–5E, read-only presentation HTTP API, an X API read-only capability checkpoint) plus, from `main2`: a Telegraf-based Telegram bot with real buy/sell/wallet commands, a `PumpSwapService` and a `JupiterService` trading class, a websocket/API server, PnL/top-calls/simulation reporting scripts.
 
-**Latest additions:** wallet verification and user-scoped realtime jobs; real-chain Pump.fun/PumpSwap event decoding and normalized trades; the `ChainAdapter` contract; Robinhood/Pons ingestion with discovery enrichment, raw trades, graduation polling, transactional checkpoints, reorg detection, and `/api/v1/tokens/robinhood` reads. Phase 7B.4 is completed and tested within the implementation and proof boundaries in §19.8–§19.9. Pons facts are not yet connected to the Solana intelligence/scoring pipeline.
+**Latest additions:** wallet verification and user-scoped realtime jobs; real-chain Pump.fun/PumpSwap event decoding and normalized trades; the `ChainAdapter` contract; Robinhood/Pons ingestion with discovery enrichment, raw trades, graduation polling, transactional checkpoints, and `/api/v1/tokens/robinhood` reads (Phase 7B.4); a discovery-before-trades coordination barrier, bounded automatic reorg rollback/replay, chunked pool-scaling, bounded-concurrency batch enrichment with `PENDING`-row retry, and a backend-owned `/api/v1/tokens/robinhood/status` ingestion source-health projection (Phase 7B.5A, §20). Phase 7B.4 is completed and tested within the boundaries in §19.8–§19.9; Phase 7B.5A within §20.12–§20.13. Pons facts are not yet connected to the Solana intelligence/scoring pipeline, and no OHLCV/candle aggregation exists yet — that is Phase 7B.5B (§20.14).
 
 **Not implemented yet:** Chroma/RAG, trending history, macro/news beyond the X checkpoint, intelligence → Discord/Telegram notifications, real PumpSwap AMM swap execution (Jupiter is the only working swap path). (`src/api/index.ts` authentication is implemented — bearer-token, fail-closed, off by default — see §8.3.)
 
-The new discovery foundation also leaves OHLCV aggregation, historical backfill, Pons scam/rug scoring, momentum ranking, the AI query layer, frontend work, a durable Solana adapter behind `ChainAdapter`, and automatic reorg reconciliation to later slices. Existing Pump candle/rate tables are schema foundations, not running aggregation services (§18).
+The discovery foundation still leaves OHLCV aggregation, historical backfill, Pons scam/rug scoring, momentum ranking, the AI query layer, frontend work, and a durable Solana adapter behind `ChainAdapter` to later slices (§20.14). Existing Pump candle/rate tables are schema foundations, not running aggregation services (§18). Automatic reorg reconciliation is implemented as of Phase 7B.5A (§20.2) — see §20.13 for what remains unproven against a live reorg.
 
 ---
 
@@ -1099,3 +1099,147 @@ Use the commands in §11 to run the offline tests and opt-in DB suites. The DB s
 4. **Outage behavior and diagnostics:** the RPC wrapper has typed failures/retries, but these tests do not reproduce live rate limiting/unreachable-RPC behavior. Discovery/trade timer callbacks ignore returned `UNAVAILABLE` results, API reads have no source-health/lag indicator, and console worker logging lacks Pino redaction. Verify outage behavior, report ingestion status, and redact provider error details before using credential-bearing RPC diagnostics operationally.
 5. **Prices, provenance and pagination:** stored `priceQuote` is a truncated raw-amount execution ratio, not decimal-adjusted `sqrtPriceX96` spot price or USD price. Full raw logs/block timestamps are not persisted. Cursor timestamp ties, within-block trade ordering, and trader attribution through routers remain limitations described in §19.4–§19.6.
 6. **Later product slices:** historical/legacy backfill, candles/OHLCV, Pons scam/rug scoring, trending/momentum, AI queries, frontend, and a Solana/Pump.fun `ChainAdapter` remain deferred. Required pool-context columns and existing Solana CPI identity need an explicit mapping when generalizing consumers/persistence. Worker leases, in-flight shutdown draining, verified endpoint identity, and production provider capacity also remain future hardening work.
+
+---
+
+## 20. Phase 7B.5A — hardening the Pons ingestion pipeline for candles
+
+Commit `9b2a892` implements and tests the hardening requested in [phase7b5a.txt](./phase7b5a.txt), on top of Phase 7B.4 (§19), which is complete and merged (`874166f`, fast-forwarded into `main` at `c7ec120`). This phase does not build the OHLCV/candle service itself — it closes the specific gaps §19.9 flagged as blockers for treating `ChainTrade` as an authoritative live feed: the discovery/trade race, detect-only reorg handling, an unbounded trade-polling address set, serial one-bad-token-aborts-everything enrichment, and no backend-owned health signal. Database remains the source of truth; WebSocket/events are still out of scope.
+
+### 20.1 Discovery/trade coordination — the discovery-before-trades barrier
+
+The race: the trade loop loaded its tracked-pool set and computed its own `toBlock` from the chain tip and its own checkpoint, entirely independent of discovery's progress. If the trade loop's timer fired before discovery had processed the range containing a brand-new pool's launch, the trade loop could commit a checkpoint past that pool's launch block. Since a pool can only ever appear in the tracked set after discovery persists it, the trades in the skipped range became permanently unreachable.
+
+The fix is an explicit, deterministic barrier in `TradeListener.runOnce()` (`src/pons/tradeListener.ts`), not a sleep or a lock: on every tick, before computing its scan range, the trade loop reads the discovery checkpoint and computes
+
+```
+barrierHeight = min(discoveryCheckpoint.lastHeight, earliestPendingEnrichmentHeight - 1)
+effectiveTip  = min(safeTip, barrierHeight)
+```
+
+and never advances past `effectiveTip`. `earliestPendingEnrichmentHeight` (the lowest `sourceHeight` among `CANONICAL`/`PENDING`-enrichment rows at or below the discovery checkpoint) closes a second, related gap: a pool whose `TokenLaunched` log decoded but whose `getLaunchedToken()` enrichment is still retrying (§20.4) has no `isToken0`, so the trade loop cannot yet decode its `Swap` direction — the barrier holds trade ingestion back from that pool's block instead of silently excluding just that one pool from an otherwise-advancing range. If no discovery checkpoint exists yet at all, `runOnce()` returns `WAITING_ON_DISCOVERY` rather than fresh-starting independently. This is correct by construction: discovery commits a launch's row and its own checkpoint atomically in one transaction (already true since Phase 7B.4), so any pool with `sourceHeight <= discoveryCheckpoint.lastHeight` is guaranteed already persisted by the time trade queries the tracked set for a range capped at that height — regardless of which loop's timer fires first, and safe under the existing single-worker-per-source assumption (§19.4/§19.9 — no cross-process lease is added or required by this fix).
+
+`TradeTickResult` gained `WAITING_ON_DISCOVERY` (blocked by the barrier or by no discovery baseline yet) alongside the pre-existing `UP_TO_DATE`/`NO_POOLS_TRACKED`/`PROCESSED`/`UNAVAILABLE`. `NO_POOLS_TRACKED` is still checked first, before any barrier computation, unchanged from Phase 7B.4 (nothing to do if nothing has ever been discovered), and now also requires `enrichmentStatus: COMPLETE` so a fully-pending pool set doesn't look "trackable."
+
+`src/pons/__tests__/coordinationBarrier.dbIntegration.test.ts` reproduces the historical race directly: seeds both checkpoints at height 49 with one already-tracked pool, presents a fake chain whose tip is already at 100 with a second pool's launch (block 60) and trade (block 70) both already "on-chain," then drives the trade loop's tick *before* discovery's — proving it returns `WAITING_ON_DISCOVERY` and does not advance past 49 — then drives discovery, then drives trade again and proves it resumes from exactly block 50 (no gap, no re-processing) and captures the new pool's trade. A second test proves a fresh listener instance reads the same barrier from Postgres after a simulated restart.
+
+### 20.2 Reorg recovery — bounded rollback/replay
+
+Phase 7B.4 could only detect a checkpoint-hash mismatch and halt. `src/pons/reorgRecovery.ts` (`attemptReorgRecovery`) is the real automatic response, invoked by both listeners the moment a mismatch is detected:
+
+1. Walk a new per-chain `ChainBlockCheckpoint` history table (`chain`, `height`, `hash`; `@@id([chain, height])`) newest-to-oldest, comparing each recorded hash against a fresh `getBlockRef` read, until one matches — that height is the common canonical ancestor. Both listeners write into this same table on every committed tick (`checkpointStore.recordChainBlockCheckpoint`), pruned to `PONS_REORG_MAX_DEPTH_BLOCKS` (default 500) on every write so it never grows unbounded — this *is* the configured recovery window, and exhausting it without a match is exactly the fail-closed case.
+2. If found: one transaction (a) marks every `DiscoveredToken`/`ChainTrade` row with `sourceHeight` above the ancestor `CANONICAL → ORPHANED` (rows are never deleted — `orphanedAt` is set, and orphaned launches have their `graduated`/`graduationPairedPrincipal`/`graduationThreshold`/`graduationCheckedAt` reset to unchecked, since a graduation read against a no-longer-canonical launch is unknown, not falsely "not graduated"); (b) rolls every `ChainIngestionCheckpoint` for the chain (both discovery and trades — reorg is chain-scoped, not source-scoped, so this stays consistent with the barrier in §20.1) back to `min(existing, ancestor)`; (c) prunes block-history entries above the ancestor. The next ordinary tick then replays forward from the ancestor; idempotent upserts (below) make that replay safe whether the canonical chain repeats the same facts or produces different ones.
+3. If no match is found within the retained window: `REORG_UNRESOLVED`. The listener records `reorgUnresolvedAt`/`reorgUnresolvedReason` on its checkpoint (only if not already set, preserving the original detection time) and returns without touching any row — no partial/best-effort rollback, ever.
+
+Discovery's and trade's upserts (`chain_tokenAddress` / `chain_sourceTxHash_sourceIndex`, unchanged unique keys) now also *revive* a matching `ORPHANED` row back to `CANONICAL` with the freshly observed provenance during replay, rather than leaving `update: {}` as a no-op — necessary because a reorg can relaunch the same token address or re-mine the same transaction, and a stale `ORPHANED` row must not linger as a false negative once its fact is canonical again.
+
+`DiscoveryTickResult`/`TradeTickResult` replaced the old blanket `REORG_DETECTED` with `REORG_RECOVERED { ancestorHeight }` and `REORG_UNRESOLVED { reason }`. `src/pons/__tests__/reorgRecovery.dbIntegration.test.ts` covers: a shallow reorg (finds the ancestor a few history entries back, orphans the affected token/trade, rolls back both checkpoints, prunes history); a launch revived to `CANONICAL` on replay after being orphaned, with graduation state proven reset; no common ancestor within the window (fails closed, mutates nothing, `searchedDepth` reported); repeated detection after a successful recovery (idempotent — second call finds the same ancestor, orphans/rolls back nothing further); and a simulated restart immediately after recovery (a fresh listener instance resumes cleanly from the rolled-back checkpoint). `discoveryListener.dbIntegration.test.ts`'s original reorg test now exercises the genuinely-unresolvable case (only one, now-mismatched, history entry exists) and additionally asserts idempotent repeated detection.
+
+**Not proven live:** no real Robinhood Chain reorg was observed or manufactured during this phase — see §20.8. This is bounded local mechanics proof only, per phase7b5a.txt §2's explicit instruction not to conflate the two.
+
+### 20.3 Pool-set scaling — chunked queries, not a working-set/aging model
+
+`TradeListener` now issues `eth_getLogs` in address chunks of `PONS_TRADE_POOL_CHUNK_SIZE` (default 40), fetched with bounded concurrency `PONS_TRADE_QUERY_CONCURRENCY` (default 3) via a new shared `mapWithConcurrency`/`chunk` helper (`src/pons/concurrency.ts`). **No pool is ever aged out, and no working-set/coverage model was introduced** — every `CANONICAL`, enrichment-`COMPLETE` pool is queried on every tick, full stop. This was the deliberate choice over chain-wide `topic0` filtering (option A) or a windowed/backfill-on-demand active-pool model (option C): this phase had no measured Robinhood Chain-wide Uniswap V3 Swap volume or provider address-array/rate-limit numbers to justify either alternative with evidence, and phase7b5a.txt explicitly warns against both guessing that chain-wide scanning is affordable *and* against an aging model that would make historical-completeness claims false. Chunking is the only option of the three that adds no risk to completeness while still bounding the cost of any single RPC call as the tracked-pool count grows — the honest tradeoff is that total RPC call volume per tick still scales with pool count (`⌈pools / 40⌉` calls), which is exactly why this phase also adds the metrics below rather than asserting the tradeoff is fine forever.
+
+`TradeTickResult`'s `PROCESSED` variant now reports `poolsQueried`, `rpcLogCalls` (chunk count), and `retryEvents` (chunks whose `ChainClientResult` reported `attempts > 1` — `ChainClientResult` gained an `attempts` field for exactly this). These, plus each tick's log line, are the evidence a future phase needs to decide whether/when to revisit chain-wide filtering: if `rpcLogCalls` or `retryEvents` climb in production, that is the measured evidence phase7b5a.txt asked for and this phase didn't yet have.
+
+`src/pons/__tests__/tradePoolScaling.dbIntegration.test.ts` seeds 97 tracked pools (deliberately not a multiple of the chunk size), proves exactly `⌈97/40⌉ = 3` `getLogs` calls are made, that observed concurrency never exceeds `tradeQueryConcurrency` but does exceed 1 (genuinely concurrent, not serial), and — the completeness invariant that matters most — that all 97 pools' trades are recorded, none dropped.
+
+### 20.4 Batch discovery enrichment — bounded concurrency, PENDING rows, never a fake default
+
+`getLaunchedToken()` enrichment (supply/`isToken0`/`poolFee`) for a tick's newly-decoded `TokenLaunched` logs now fans out through `mapWithConcurrency` at `PONS_ENRICHMENT_CONCURRENCY` (default 5) instead of one call at a time, and — the more important fix — a single failed enrichment call no longer aborts the whole tick. `DiscoveredToken.supply`/`isToken0`/`poolFee` became nullable (additive migration below); a token whose enrichment fails is still persisted immediately (so its `TokenLaunched` log, which only appears once in the scanned range, is never lost) with `enrichmentStatus: PENDING`, `lastEnrichmentError` set to the redacted failure reason, and `enrichmentAttempts` incremented — never a fabricated `0`/`false`/default. Every discovery tick also retries up to `PONS_ENRICHMENT_RETRY_BATCH_SIZE` (default 25) existing `PENDING` rows, oldest-`sourceHeight`-first, with the same bounded concurrency, *before* scanning new logs — this runs even on a tick that finds nothing new to scan (it happens ahead of the `fromBlock > safeTip` early return), so a backlog of pending enrichments keeps draining even during a quiet period. The trade-listener barrier (§20.1) is what keeps a `PENDING` pool from having its future trades skipped over in the meantime.
+
+`src/pons/__tests__/enrichmentBatching.dbIntegration.test.ts` proves: a 12-token launch burst enriches with observed peak concurrency `<=5` (and `>1`, proving it isn't accidentally serial) and persists all 12 as `COMPLETE`; a 5-token tick with 2 simulated enrichment failures persists all 5 (nothing discarded), the 2 failures as `PENDING` with `supply`/`isToken0`/`poolFee` left `null` and `lastEnrichmentError` set, and the discovery checkpoint still advances (a bad token never stalls the stream); and a later tick's retry pass resolves a since-fixed `PENDING` row to `COMPLETE` while leaving a still-failing one `PENDING` with `enrichmentAttempts: 2`.
+
+### 20.5 Ingestion source-health projection
+
+`src/pons/sourceHealth.ts` (`computeIngestionHealth`) is a pure read of persisted `ChainIngestionCheckpoint` metadata — never a live RPC call per computation, so checking health can never itself slow down an already-degraded feed. Both listeners now record, on every tick regardless of outcome (`checkpointStore.ts`'s `set`/`recordUpToDate`/`recordFailure`/`markReorgUnresolved`): `lastObservedChainHeight`, `lastPollAt`, `lastSuccessAt`, `lastError`/`lastErrorAt`, `lastReorgAt`, `reorgUnresolvedAt`/`reorgUnresolvedReason`. A source with no checkpoint row at all (never yet succeeded once) reports `UNAVAILABLE` by design — there is nothing to persist poll metadata against until a first successful tick creates the row.
+
+Per-source classification, in priority order: `reorgUnresolvedAt` set → `REORG_RECOVERY`; no poll or no success within `PONS_HEALTH_STALE_MS` (default 120s) → `UNAVAILABLE`; a `lastError` newer than the last success within `PONS_HEALTH_ERROR_WINDOW_MS` (default 60s) → `DEGRADED`; blocks-behind (`lastObservedChainHeight - lastHeight`) over `PONS_HEALTH_LAGGING_BLOCKS` (default 50) → `LAGGING`; else `LIVE`. The overall status is the worst-of the discovery and trade sources.
+
+Exposed at `GET /api/v1/tokens/robinhood/status` (`src/researchApi/routes/robinhoodTokens.ts`), registered ahead of the `:tokenAddress` route for the same reason this whole router is mounted ahead of the generic mint router (Express route-order precedence). Zod-defined (`RobinhoodStatusResponseSchema`/`SourceHealthDetailSchema`, `src/researchApi/contracts/robinhoodTokens.ts`) and registered in the shared OpenAPI generator. The route reuses the existing auth/rate-limit middleware and reads health thresholds via a new `loadPonsHealthThresholds()` (`src/pons/config.ts`) deliberately independent of `loadRobinhoodChainConfig()` — the read-only API process can serve this route without needing the RPC/contract settings only the worker process requires. The response never includes RPC credentials, raw provider URLs, stack traces, or internal database errors — only the redacted operational reason string a listener itself recorded (`chainClient.ts`'s `classifyError` already produced safe strings; nothing new here re-exposes a raw thrown error).
+
+`src/pons/__tests__/sourceHealth.dbIntegration.test.ts` covers all five states plus the redaction property (serialized response contains no `http(s)://` or stack-trace-shaped text). `robinhoodTokens.dbIntegration.test.ts` adds a real-HTTP check of the same route and shape, plus a redaction check at the HTTP boundary. `openapi.test.ts` asserts the route is documented ahead of the generic path and its 200 response references `RobinhoodStatusResponse`.
+
+### 20.6 Price semantics — unchanged
+
+`priceQuote` remains exactly what §19.4/§19.6 documented: a truncated raw-amount execution ratio (`abs(quoteAmount)/abs(tokenAmount)` via `decimalDivide`), not a decimal-adjusted spot or USD price. Nothing in this phase touches `ponsAdapter.ts`'s price computation or adds a normalized-price helper — phase7b5a.txt §6 permitted one only "if required solely as a pure reusable primitive," and nothing here required it.
+
+### 20.7 Logging and operational safety
+
+`src/pons/logger.ts` adds a redacting Pino instance (`ponsLogger`/`ponsComponentLogger`) — the same already-installed `pino`, not a new framework, with its own small `REDACTED_PATHS` list (kept independent of `src/researchApi/lib/logger.ts` so `src/pons/**` has no dependency on `src/researchApi/**`, preserving the architecture boundary in §20.8). `ponsWorkerMain.ts` now uses it in place of prefixed `console.*` calls. All three listeners/pollers gained `waitForIdle()`: `stop()` still just clears the timer synchronously (unchanged signature), but the worker entrypoint's shutdown handler now `await`s each loop's in-flight tick (tracked via a `currentTick` promise) before calling `db.$disconnect()`, so a `SIGINT`/`SIGTERM` during an in-flight transaction no longer risks disconnecting Prisma mid-write (transactions were already atomic, so this was not a correctness gap — it removes a needless disconnect-during-commit race and the spurious errors/replay it could cause).
+
+### 20.8 Architecture boundaries
+
+Unchanged: `src/discovery/**` stays chain-neutral, `src/pons/**` stays Robinhood/Pons-only, `src/researchApi/**` stays the only `/api/v1` surface. No execution/signing/wallet/trading/Telegram/Discord code was added anywhere in this phase. `src/pons/__tests__/executionBoundary.test.ts` is new — the same pattern as `src/forensics/__tests__/executionBoundary.test.ts` — and additionally asserts `reorgRecovery.ts`/`checkpointStore.ts` never call `.delete`/`.deleteMany` on `DiscoveredToken`, `ChainTrade`, or `ChainIngestionCheckpoint` (reconciliation only ever marks/updates, per phase7b5a.txt §2's "do not blindly delete checkpoints").
+
+### 20.9 Database changes
+
+One additive migration, `20260906192052_harden_pons_ingestion_reorg_health`:
+
+| Change | Detail |
+|---|---|
+| `DiscoveredToken.supply`/`isToken0`/`poolFee` | `NOT NULL → NULL`-able (§20.4) |
+| `DiscoveredToken`/`ChainTrade` add `canonicalStatus` (`ChainFactStatus`: `CANONICAL`\|`ORPHANED`, default `CANONICAL`) and `orphanedAt` | §20.2 |
+| `DiscoveredToken` adds `enrichmentStatus` (`EnrichmentStatus`: `COMPLETE`\|`PENDING`, default `COMPLETE`), `enrichmentAttempts` (default `0`), `lastEnrichmentAttemptAt`, `lastEnrichmentError` | §20.4 |
+| `ChainIngestionCheckpoint` adds `lastObservedChainHeight`, `lastPollAt`, `lastSuccessAt`, `lastError`, `lastErrorAt`, `lastReorgAt`, `reorgUnresolvedAt`, `reorgUnresolvedReason` | §20.5 |
+| New table `ChainBlockCheckpoint` (`chain`, `height`, `hash`, `recordedAt`; `@@id([chain, height])`) | §20.2 |
+| New indexes | `DiscoveredToken(chain, canonicalStatus, sourceHeight)`, `DiscoveredToken(chain, enrichmentStatus, sourceHeight)`, `ChainTrade(chain, canonicalStatus, sourceHeight)`, `ChainBlockCheckpoint(chain, height)` |
+
+Applied and validated against a fresh, disposable local PostgreSQL 16 container (`prisma migrate deploy` on an empty database) — never the shared development database. Existing unique keys (`DiscoveredToken`'s `[chain, tokenAddress]`, `ChainTrade`'s `[chain, sourceTxHash, sourceIndex]`) are unchanged and remain the idempotency mechanism for both ordinary replay and post-reorg revival (§20.2).
+
+### 20.10 Configuration
+
+All new settings are optional with defaults (`src/pons/config.ts`); none change what was already required to start the worker.
+
+| Setting | Default | Used by |
+|---|---|---|
+| `PONS_ENRICHMENT_CONCURRENCY` | `5` | §20.4 |
+| `PONS_ENRICHMENT_RETRY_BATCH_SIZE` | `25` | §20.4 |
+| `PONS_TRADE_POOL_CHUNK_SIZE` | `40` | §20.3 |
+| `PONS_TRADE_QUERY_CONCURRENCY` | `3` | §20.3 |
+| `PONS_REORG_MAX_DEPTH_BLOCKS` | `500` | §20.2 |
+| `PONS_HEALTH_LAGGING_BLOCKS` | `50` | §20.5 |
+| `PONS_HEALTH_STALE_MS` | `120000` | §20.5 |
+| `PONS_HEALTH_ERROR_WINDOW_MS` | `60000` | §20.5 |
+
+`.env.example` was also extended with the full Phase 7B.4 Pons block (never added at the time — §19.7 noted this gap) alongside these new settings, since this phase touched the same file anyway.
+
+### 20.11 Tests
+
+67 new/changed test cases across 12 files (all under `src/pons/__tests__/` and `src/researchApi/__tests__/`), on top of Phase 7B.4's 14: `concurrency.test.ts` (8, pure — `mapWithConcurrency`/`chunk`), `executionBoundary.test.ts` (8, new), `coordinationBarrier.dbIntegration.test.ts` (2), `reorgRecovery.dbIntegration.test.ts` (5), `enrichmentBatching.dbIntegration.test.ts` (3), `tradePoolScaling.dbIntegration.test.ts` (1), `sourceHealth.dbIntegration.test.ts` (7), `discoveryListener.dbIntegration.test.ts` (3, one rewritten for real recovery semantics), `tradeListener.dbIntegration.test.ts` (3, unchanged count, re-seeded for the new barrier), `robinhoodTokens.dbIntegration.test.ts` (8, was 4 — status route, redaction, orphan-exclusion), `openapi.test.ts` (+1). A new `src/pons/__tests__/testSupport.ts` centralizes the fake chain reader (now with per-address enrichment control, address filtering, and `attempts` reporting), real viem-ABI-encoded synthetic log builders (`makeTokenLaunchedLog`/`makeSwapLog` — not hand-typed hex, so burst/scaling tests aren't limited to the one real captured fixture), and concurrency-tracking `ChainReader` wrappers.
+
+CI (`.github/workflows/ci.yml`) previously never set any `*_RUN_DB_TESTS` flag, so every `*.dbIntegration.test.ts` file in the whole repo — Pons, Pump, forensics job service, wallet verification, this phase's new ones — silently skipped in every run despite CI's disposable Postgres being exactly the environment they need. Fixed by adding a second, serial (`--no-file-parallelism`) test step with all four flags set, run after the existing default `npx vitest run` (left untouched, so its behavior is unchanged) — this is a strict coverage increase, not a behavior change to what was already green.
+
+### 20.12 LOCALLY PROVEN — recorded evidence and reproducible checks
+
+| Evidence | What it establishes |
+|---|---|
+| `npx prisma migrate deploy` against a fresh disposable PostgreSQL 16 container (not the shared dev database) | The full migration chain, including this phase's, applies cleanly to an empty database. |
+| `npx tsc --noEmit` | Clean. |
+| `npx vitest run` (default flags, matching CI's existing step) | 69 passed / 11 skipped files, 728 passed / 39 skipped tests — up from Phase 7B.4's baseline of 67 passed / 6 skipped files, 711 passed / 17 skipped tests; nothing pre-existing broke. |
+| `npx vitest run --no-file-parallelism` with `PONS_RUN_DB_TESTS`/`PUMP_RUN_DB_TESTS`/`FORENSICS_RUN_DB_TESTS`/`WALLET_RUN_DB_TESTS=true` (matching the new CI step) | 80 passed files, 767 passed tests, zero skipped — every opt-in DB-integration suite in the repo, not just this phase's. |
+| `npm run build` | Clean. |
+| §20.1–§20.5's dedicated dbIntegration suites | The coordination barrier, reorg recovery, enrichment batching, pool-chunking, and health-projection mechanics described above, each against real PostgreSQL with a fake (non-network) chain reader. |
+| Real read-only Robinhood Chain mainnet run, `npx ts-node src/pons/scripts/liveVerification.ts` (unchanged script, still the Phase 7B.4 historical range `[9019252, 9069251]`), executed twice in immediate succession | First run: connected at live tip block 56,240,741; discovery found the same **9 tokens** and trade found the same **180 trades** Phase 7B.4's commit recorded for this exact range. Second run (tip advanced to 56,241,100, proving a live, non-cached connection): identical counts — 9 `DiscoveredToken` rows, 180 `ChainTrade` rows, no duplicates — proving idempotent upsert behavior against genuinely live chain data, not just the canned-chain dbIntegration tests. |
+| `computeIngestionHealth()` invoked directly against the checkpoint rows the live run above produced | Correctly reported `LAGGING` with `blocksBehind: "47171849"` — real lag, not a canned number, since the one-shot script advances the checkpoint only to the historical range's end while the live tip is ~47M blocks further. |
+
+### 20.13 NOT PROVEN / deferred / implementation limits
+
+1. **Live reorg recovery:** no real Robinhood Chain reorg was observed or manufactured. §20.2's rollback/replay, orphaning, graduation reset, and revival-on-replay are proven only against a fake chain reader with real Postgres. A live reorg (or an anvil/hardhat fork rewind) exercising the real path remains undone.
+2. **Live crash-mid-write proof:** as in §19.9, no checked-in harness kills the real worker process mid-transaction against live infrastructure. The atomicity argument (one Prisma `$transaction` per tick) and the restart-resumes-cleanly dbIntegration tests are the evidence; an actual `kill -9` against a live-ticking worker is not.
+3. **Live outage/rate-limit behavior:** `ChainClientResult.attempts` and the `retryEvents` metric are new and unit-provable, but no live rate-limited or intermittently-unreachable RPC endpoint was exercised end-to-end during this phase — `getLogsUnavailableOnce`/`enrichmentByAddress` failure injection in tests is a fake-chain simulation, not a live one.
+4. **Pool-set scaling at real production pool counts/RPC limits:** chunking (§20.3) was chosen without measured Robinhood Chain-wide Swap volume or the RPC provider's actual address-array/log-range limits — there was no live traffic to measure. The `poolsQueried`/`rpcLogCalls`/`retryEvents` metrics this phase adds are exactly what would let a future phase make that decision with real numbers instead of a guess.
+5. **Testnet:** unchanged from §19.9 item 1 — still no verified testnet Pons deployment available to this project.
+6. **Everything §19.9 item 6 already deferred:** candles/OHLCV (explicitly out of scope for this phase — see handoff below), historical backfill, Pons scam/rug scoring, trending/momentum, AI queries, frontend, and the Solana/Pump.fun `ChainAdapter` remain untouched.
+
+### 20.14 Handoff to Phase 7B.5B
+
+`ChainTrade` is now safe to aggregate into OHLCV candles: trades can no longer be silently skipped by the discovery/trade race (§20.1), a detected reorg either cleanly reconciles orphaned rows and rolls back checkpoints or halts the ingestion stream rather than aggregating on top of stale data (§20.2), and `canonicalStatus: CANONICAL` is the exact, already-indexed filter a candle aggregator must apply to never fold an orphaned trade into a bar. Recommended scope for 7B.5B:
+
+- Aggregate `ChainTrade` rows (filtered to `canonicalStatus: CANONICAL`) into fixed-interval OHLCV candles, keyed by `(chain, tokenAddress, interval, bucketStart)`.
+- Decide and implement real decimal-adjusted/USD pricing as its own explicit, tested primitive (§20.6 kept `priceQuote` untouched on purpose) — this is the first phase where that decision is actually load-bearing.
+- Handle a candle bucket that straddles a reorg's ancestor boundary: a bucket partially built from now-`ORPHANED` trades needs either full recomputation from `CANONICAL` rows or an explicit invalidation signal — this phase did not design that (candles didn't exist yet), and it is the one place §20.2's reconciliation model directly constrains 7B.5B's design.
+- Expose candle read routes under `/api/v1` alongside (not replacing) the existing raw trade/detail routes, reusing this phase's `canonicalStatus` filtering convention.
+- Surface candle-service-specific health (e.g., "aggregation lag" behind ingestion) as an extension of `sourceHealth.ts`'s pattern (§20.5), not a parallel mechanism.
+- Revisit pool-set scaling (§20.3) once real `poolsQueried`/`rpcLogCalls` production numbers exist.

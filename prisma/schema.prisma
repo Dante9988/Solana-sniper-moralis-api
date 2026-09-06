@@ -93,8 +93,8 @@ model WalletBalance {
 }
 
 model UserPreference {
-  id     String @id @default(uuid())
-  userId String @unique
+  id              String   @id @default(uuid())
+  userId          String   @unique
   /// A Telegram DM ALERT/NOTIFICATION opt-in only (see src/telegram/commands/togglePumpSwap.ts
   /// and src/telegram/alerts.ts). Despite the name, this never gates trade execution — no
   /// execution code path reads it. Real PumpSwap AMM swap execution is not implemented
@@ -108,9 +108,9 @@ model UserPreference {
 // --- Token Intelligence layer (read-only research/reporting; no execution) ---
 
 model TokenIntelligenceReport {
-  id                String   @id @default(uuid())
-  eventId           String   @unique
-  mint              String
+  id      String @id @default(uuid())
+  eventId String @unique
+  mint    String
 
   // token
   tokenName         String?
@@ -121,94 +121,94 @@ model TokenIntelligenceReport {
   tokenCreationTime DateTime?
 
   // socials
-  socialWebsite     String?
-  socialTwitter     String?
-  socialTelegram    String?
-  socialDiscord     String?
-  socialFindings    Json     @default("[]")
+  socialWebsite  String?
+  socialTwitter  String?
+  socialTelegram String?
+  socialDiscord  String?
+  socialFindings Json    @default("[]")
 
   // market
-  marketPrice       Float?
-  marketCap         Float?
-  marketFdv         Float?
-  marketLiquidity   Float?
-  marketVolume24h   Float?
-  marketHolders     Int?
-  marketPools       Json     @default("[]")
-  marketSources     Json     @default("[]")
+  marketPrice     Float?
+  marketCap       Float?
+  marketFdv       Float?
+  marketLiquidity Float?
+  marketVolume24h Float?
+  marketHolders   Int?
+  marketPools     Json   @default("[]")
+  marketSources   Json   @default("[]")
 
   // safety
-  safetyMintAuthority              String?
-  safetyFreezeAuthority            String?
-  safetyCreatorHoldingsPct         Float?
-  safetyTopHolderConcentrationPct  Float?
-  safetyRugCheck                   Json?
-  safetySolSniffer                 Json?
-  safetyRiskFactors                Json     @default("[]")
-  safetyConfidence                 Float    @default(0)
+  safetyMintAuthority             String?
+  safetyFreezeAuthority           String?
+  safetyCreatorHoldingsPct        Float?
+  safetyTopHolderConcentrationPct Float?
+  safetyRugCheck                  Json?
+  safetySolSniffer                Json?
+  safetyRiskFactors               Json    @default("[]")
+  safetyConfidence                Float   @default(0)
 
   // bundlesAndSnipers
-  bundleSniperPct       Float?
-  bundleBundledPct      Float?
-  bundleFindings        Json     @default("[]")
-  bundleConfidence      Float    @default(0)
+  bundleSniperPct  Float?
+  bundleBundledPct Float?
+  bundleFindings   Json   @default("[]")
+  bundleConfidence Float  @default(0)
 
   // aiAssessment
-  aiNarrative       String?
-  aiCategory        String?
-  aiRiskLevel       String   @default("UNKNOWN")
-  aiConfidence      Float    @default(0)
-  aiPositiveSignals Json     @default("[]")
-  aiRiskFactors     Json     @default("[]")
-  aiReasons         Json     @default("[]")
-  aiMissingInfo     Json     @default("[]")
-  aiDataQualityWarnings Json @default("[]")
-  aiRecommendation  String   @default("RESEARCH_ONLY")
+  aiNarrative           String?
+  aiCategory            String?
+  aiRiskLevel           String  @default("UNKNOWN")
+  aiConfidence          Float   @default(0)
+  aiPositiveSignals     Json    @default("[]")
+  aiRiskFactors         Json    @default("[]")
+  aiReasons             Json    @default("[]")
+  aiMissingInfo         Json    @default("[]")
+  aiDataQualityWarnings Json    @default("[]")
+  aiRecommendation      String  @default("RESEARCH_ONLY")
 
   // aiAssessment.meta — Anthropic provider telemetry (Phase 3)
-  aiProvider          String?
-  aiModel             String?
-  aiPromptVersion     String?
-  aiSchemaVersion     String?
-  aiLatencyMs         Int?
-  aiInputTokens       Int?
-  aiOutputTokens      Int?
-  aiCompletedAt       DateTime?
-  aiValidationStatus  String?
-  aiFailureReason     String?
+  aiProvider         String?
+  aiModel            String?
+  aiPromptVersion    String?
+  aiSchemaVersion    String?
+  aiLatencyMs        Int?
+  aiInputTokens      Int?
+  aiOutputTokens     Int?
+  aiCompletedAt      DateTime?
+  aiValidationStatus String?
+  aiFailureReason    String?
 
   // processing
-  status            String
-  startedAt         DateTime
-  completedAt       DateTime?
+  status      String
+  startedAt   DateTime
+  completedAt DateTime?
 
-  evidence          TokenIntelligenceEvidence[]
-  errors            TokenIntelligenceError[]
+  evidence TokenIntelligenceEvidence[]
+  errors   TokenIntelligenceError[]
 
   // forensics (Phase 5E) — deterministic, separate from aiAssessment.
   // Denormalized from the latest reconciled SolanaForensicsRun; the run
   // itself remains the immutable audit record, never overwritten here.
-  forensicsStatus                          String   @default("NOT_REQUESTED")
+  forensicsStatus                          String    @default("NOT_REQUESTED")
   forensicsJobId                           String?
   forensicsRunId                           String?
   forensicsAnalysisLevel                   String?
   forensicsPolicyVersion                   String?
   forensicsEligibility                     String?
   forensicsDisplaySeverity                 String?
-  forensicsReasonCodes                     Json     @default("[]")
-  forensicsRequiredEvidenceComplete        Boolean  @default(false)
-  forensicsInitialBundledAcquisitionPct    Decimal? @db.Decimal(9, 4)
-  forensicsCurrentBundleWalletHoldingsPct  Decimal? @db.Decimal(9, 4)
-  forensicsDeveloperClusterHoldingsPct     Decimal? @db.Decimal(9, 4)
-  forensicsSuspectedCoordinatedHoldingsPct Decimal? @db.Decimal(9, 4)
-  forensicsInsiderHoldingsPct              Decimal? @db.Decimal(9, 4)
-  forensicsSniperHoldingsPct               Decimal? @db.Decimal(9, 4)
-  forensicsAdjustedTop10HoldingsPct        Decimal? @db.Decimal(9, 4)
+  forensicsReasonCodes                     Json      @default("[]")
+  forensicsRequiredEvidenceComplete        Boolean   @default(false)
+  forensicsInitialBundledAcquisitionPct    Decimal?  @db.Decimal(9, 4)
+  forensicsCurrentBundleWalletHoldingsPct  Decimal?  @db.Decimal(9, 4)
+  forensicsDeveloperClusterHoldingsPct     Decimal?  @db.Decimal(9, 4)
+  forensicsSuspectedCoordinatedHoldingsPct Decimal?  @db.Decimal(9, 4)
+  forensicsInsiderHoldingsPct              Decimal?  @db.Decimal(9, 4)
+  forensicsSniperHoldingsPct               Decimal?  @db.Decimal(9, 4)
+  forensicsAdjustedTop10HoldingsPct        Decimal?  @db.Decimal(9, 4)
   forensicsCompletedAt                     DateTime?
   forensicsReconciledAt                    DateTime?
 
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([mint])
   @@index([status])
@@ -218,25 +218,25 @@ model TokenIntelligenceReport {
 }
 
 model TokenIntelligenceEvidence {
-  id         String   @id @default(uuid())
-  reportId   String
-  report     TokenIntelligenceReport @relation(fields: [reportId], references: [id])
-  category   String
-  payload    Json
-  createdAt  DateTime @default(now())
+  id        String                  @id @default(uuid())
+  reportId  String
+  report    TokenIntelligenceReport @relation(fields: [reportId], references: [id])
+  category  String
+  payload   Json
+  createdAt DateTime                @default(now())
 
   @@index([reportId])
   @@index([category])
 }
 
 model TokenIntelligenceError {
-  id         String   @id @default(uuid())
-  reportId   String
-  report     TokenIntelligenceReport @relation(fields: [reportId], references: [id])
-  worker     String
-  message    String
-  fatal      Boolean  @default(false)
-  createdAt  DateTime @default(now())
+  id        String                  @id @default(uuid())
+  reportId  String
+  report    TokenIntelligenceReport @relation(fields: [reportId], references: [id])
+  worker    String
+  message   String
+  fatal     Boolean                 @default(false)
+  createdAt DateTime                @default(now())
 
   @@index([reportId])
   @@index([worker])
@@ -254,7 +254,7 @@ model Asset {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  observations AssetObservation[]
+  observations  AssetObservation[]
   forensicsJobs SolanaForensicsJob[]
 
   @@unique([chainId, normalizedAddress])
@@ -294,39 +294,39 @@ model AssetObservation {
 // Not wired into the active listener or the Phase 1-4 intelligence tables.
 
 model SolanaForensicsJob {
-  id                String    @id @default(uuid())
+  id                 String  @id @default(uuid())
   /// Stable identity for idempotency: solana-mainnet + normalized mint +
   /// discovery signature/event identity + analysis level + policy version.
   /// Never rely on a nullable composite unique for this.
-  jobKey            String    @unique
-  assetId           String
-  asset             Asset     @relation(fields: [assetId], references: [id])
-  mint              String
-  eventId           String?
+  jobKey             String  @unique
+  assetId            String
+  asset              Asset   @relation(fields: [assetId], references: [id])
+  mint               String
+  eventId            String?
   discoverySignature String?
-  discoverySource   String
-  analysisLevel     String
-  policyVersion     String
+  discoverySource    String
+  analysisLevel      String
+  policyVersion      String
 
-  status            String    @default("PENDING")
-  priority          Int       @default(0)
-  attemptCount      Int       @default(0)
-  maxAttempts       Int       @default(5)
-  availableAt       DateTime  @default(now())
+  status       String   @default("PENDING")
+  priority     Int      @default(0)
+  attemptCount Int      @default(0)
+  maxAttempts  Int      @default(5)
+  availableAt  DateTime @default(now())
 
-  leaseOwner        String?
-  leaseExpiresAt    DateTime?
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
 
-  startedAt         DateTime?
-  completedAt       DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
 
-  lastErrorCode     String?
-  lastErrorMessage  String?
+  lastErrorCode    String?
+  lastErrorMessage String?
 
-  runs              SolanaForensicsRun[]
+  runs SolanaForensicsRun[]
 
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status, availableAt])
   @@index([mint])
@@ -334,7 +334,7 @@ model SolanaForensicsJob {
 }
 
 model SolanaForensicsRun {
-  id            String   @id @default(uuid())
+  id            String             @id @default(uuid())
   jobId         String
   job           SolanaForensicsJob @relation(fields: [jobId], references: [id])
   assetId       String
@@ -367,12 +367,12 @@ model SolanaForensicsRun {
   adjustedTop10Pct               Decimal? @db.Decimal(9, 4)
   largestNonSystemHolderPct      Decimal? @db.Decimal(9, 4)
 
-  holderCount             Int?
-  holderAccountsAnalyzed  Int?
-  transactionsAnalyzed    Int?
-  walletsAnalyzed         Int?
-  estimatedCreditsUsed    Int?
-  requestCount            Int?
+  holderCount            Int?
+  holderAccountsAnalyzed Int?
+  transactionsAnalyzed   Int?
+  walletsAnalyzed        Int?
+  estimatedCreditsUsed   Int?
+  requestCount           Int?
 
   reachedConfiguredLimit Boolean @default(false)
   budgetExhausted        Boolean @default(false)
@@ -383,14 +383,14 @@ model SolanaForensicsRun {
   /// evidence rows below).
   reportJson Json
 
-  evidence     SolanaForensicsEvidence[]
-  clusters     SolanaWalletCluster[]
-  errors       SolanaForensicsError[]
-  eligibility  SolanaTokenEligibilityAssessment?
+  evidence    SolanaForensicsEvidence[]
+  clusters    SolanaWalletCluster[]
+  errors      SolanaForensicsError[]
+  eligibility SolanaTokenEligibilityAssessment?
 
   startedAt   DateTime
   completedAt DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   // Reconciliation bookkeeping (Phase 5E) — operational metadata about
   // syncing this run into TokenIntelligenceReport, not forensic content.
@@ -407,7 +407,7 @@ model SolanaForensicsRun {
 }
 
 model SolanaForensicsEvidence {
-  id          String   @id @default(uuid())
+  id          String             @id @default(uuid())
   runId       String
   run         SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   /// The in-memory ForensicEvidence.id — unique within a run, not globally.
@@ -417,69 +417,69 @@ model SolanaForensicsEvidence {
   source      String
   signature   String?
   slot        Int?
-  wallets     Json     @default("[]")
+  wallets     Json               @default("[]")
   amounts     Json?
   retrievedAt DateTime
-  createdAt   DateTime @default(now())
+  createdAt   DateTime           @default(now())
 
   @@unique([runId, evidenceKey])
   @@index([runId, category])
 }
 
 model SolanaWalletCluster {
-  id          String   @id @default(uuid())
-  runId       String
-  run         SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  id             String                      @id @default(uuid())
+  runId          String
+  run            SolanaForensicsRun          @relation(fields: [runId], references: [id], onDelete: Cascade)
   /// The in-memory WalletCluster.id — unique within a run, not globally.
-  clusterKey  String
+  clusterKey     String
   classification String
-  confidence  Decimal  @db.Decimal(4, 3)
-  reasonCodes Json     @default("[]")
-  members     SolanaWalletClusterMember[]
-  createdAt   DateTime @default(now())
+  confidence     Decimal                     @db.Decimal(4, 3)
+  reasonCodes    Json                        @default("[]")
+  members        SolanaWalletClusterMember[]
+  createdAt      DateTime                    @default(now())
 
   @@unique([runId, clusterKey])
   @@index([runId, classification])
 }
 
 model SolanaWalletClusterMember {
-  id        String   @id @default(uuid())
+  id        String              @id @default(uuid())
   clusterId String
   cluster   SolanaWalletCluster @relation(fields: [clusterId], references: [id], onDelete: Cascade)
   wallet    String
-  createdAt DateTime @default(now())
+  createdAt DateTime            @default(now())
 
   @@unique([clusterId, wallet])
   @@index([wallet])
 }
 
 model SolanaTokenEligibilityAssessment {
-  id                     String   @id @default(uuid())
-  runId                  String   @unique
-  run                    SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  mint                   String
-  eligibility            String
-  displaySeverity        String
-  reasonCodes            Json     @default("[]")
-  evaluatedMetrics       Json     @default("{}")
+  id                       String             @id @default(uuid())
+  runId                    String             @unique
+  run                      SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  mint                     String
+  eligibility              String
+  displaySeverity          String
+  reasonCodes              Json               @default("[]")
+  evaluatedMetrics         Json               @default("{}")
   requiredEvidenceComplete Boolean
-  policyVersion          String
-  evaluatedAt            DateTime
-  createdAt              DateTime @default(now())
+  policyVersion            String
+  evaluatedAt              DateTime
+  createdAt                DateTime           @default(now())
 
   @@index([mint, createdAt])
   @@index([eligibility])
 }
 
 model SolanaForensicsError {
-  id        String   @id @default(uuid())
-  runId     String
-  run       SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  stage     String
-  message   String
-  retryable Boolean  @default(false)
+  id         String             @id @default(uuid())
+  runId      String
+  run        SolanaForensicsRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  stage      String
+  message    String
+  retryable  Boolean            @default(false)
   occurredAt DateTime
-  createdAt DateTime @default(now())
+  createdAt  DateTime           @default(now())
 
   @@index([runId])
 }
@@ -582,7 +582,7 @@ model UserScanRequest {
 //     18-fractional-digit range.
 
 model PumpLifecycleEvent {
-  id                    String   @id @default(uuid())
+  id                    String    @id @default(uuid())
   mint                  String
   eventType             String // created | completed | migration_initiated | pumpswap_pool_created | pumpswap_pool_ready
   emittingProgram       String
@@ -601,7 +601,7 @@ model PumpLifecycleEvent {
   /// carries one — kept distinct from blockTime and never substituted for
   /// it (CANDLESTICK_CHART.md requires blockTime specifically).
   eventTime             DateTime?
-  payloadVersion        Int      @default(1)
+  payloadVersion        Int       @default(1)
   /// Canonicalized: every bigint/BN-typed field pre-converted to a decimal
   /// string before this is written — never a raw JS number for a monetary
   /// or reserve value.
@@ -612,7 +612,7 @@ model PumpLifecycleEvent {
   /// live stream | historical backfill | block reconciliation — distinct
   /// ingestion paths must still deduplicate through the identity below.
   source                String
-  observedAt            DateTime @default(now())
+  observedAt            DateTime  @default(now())
 
   @@unique([signature, outerInstructionIndex, innerPosition, emittingProgram])
   @@index([mint, slot, outerTxPosition, outerInstructionIndex, innerPosition])
@@ -629,7 +629,7 @@ model TokenLifecycleState {
 }
 
 model PumpTrade {
-  id                    String   @id @default(uuid())
+  id                    String    @id @default(uuid())
   venue                 String // pump | pumpswap
   source                String // live stream | historical backfill | block reconciliation
   mint                  String
@@ -643,11 +643,11 @@ model PumpTrade {
   blockTime             DateTime
   eventTime             DateTime?
   side                  String // buy | sell
-  tokenAmount           Decimal  @db.Decimal(24, 0)
-  quoteAmount           Decimal  @db.Decimal(24, 0)
+  tokenAmount           Decimal   @db.Decimal(24, 0)
+  quoteAmount           Decimal   @db.Decimal(24, 0)
   trader                String
   status                String // provisional | final | orphaned
-  observedAt            DateTime @default(now())
+  observedAt            DateTime  @default(now())
 
   @@unique([signature, outerInstructionIndex, innerPosition, emittingProgram])
   @@index([mint, blockTime])
@@ -723,61 +723,98 @@ model SolUsdRate {
 // up to uint256's real max, which is exactly 78 decimal digits.
 // ---------------------------------------------------------------------------
 
+/// Phase 7B.5A §2/§9 — CANONICAL rows are current chain facts; ORPHANED rows
+/// were reconciled off the canonical chain by reorg recovery (reorgRecovery.ts)
+/// and are retained (never deleted) for audit but must never be read as
+/// current facts by any API route or aggregation.
+enum ChainFactStatus {
+  CANONICAL
+  ORPHANED
+}
+
+/// Phase 7B.5A §4/§9 — COMPLETE once getLaunchedToken() enrichment (supply/
+/// isToken0/poolFee) has succeeded; PENDING when the TokenLaunched log itself
+/// was decoded and persisted (so the fact is never lost) but enrichment RPC
+/// failed and is retried on a later discovery tick. Never fabricate a default
+/// for a PENDING row's enrichment fields.
+enum EnrichmentStatus {
+  COMPLETE
+  PENDING
+}
+
 model DiscoveredToken {
-  id                        String    @id @default(uuid())
+  id                        String           @id @default(uuid())
   chain                     String // "robinhood" | "solana" (ChainId)
   venue                     String // "pons" | "pumpfun"
   tokenAddress              String
   deployer                  String
   poolAddress               String?
   quoteAddress              String
-  supply                    Decimal   @db.Decimal(78, 0)
-  initialBuyAmount          Decimal   @db.Decimal(78, 0)
+  supply                    Decimal?         @db.Decimal(78, 0)
+  initialBuyAmount          Decimal          @db.Decimal(78, 0)
   /// From the same getLaunchedToken() enrichment read as supply -- needed by
   /// the trade listener to interpret Swap's signed amount0/amount1 without
-  /// an extra RPC call per trade.
-  isToken0                  Boolean
-  poolFee                   Int
+  /// an extra RPC call per trade. Null while enrichmentStatus is PENDING.
+  isToken0                  Boolean?
+  poolFee                   Int?
+  /// Phase 7B.5A §4 — batched/bounded-concurrency enrichment can leave a
+  /// launch PENDING after a bad RPC read; the trade listener must not track
+  /// this pool until enrichment completes (discoveryListener.ts's barrier).
+  enrichmentStatus          EnrichmentStatus @default(COMPLETE)
+  enrichmentAttempts        Int              @default(0)
+  lastEnrichmentAttemptAt   DateTime?
+  lastEnrichmentError       String?
   sourceHeight              BigInt
   sourceHash                String
   sourceTxHash              String
   sourceIndex               Int
-  observedAt                DateTime  @default(now())
+  observedAt                DateTime         @default(now())
+  /// Phase 7B.5A §2/§9 — set by reorgRecovery.ts when this launch's block is
+  /// no longer canonical. Rows are never deleted, only marked, so orphaned
+  /// history stays auditable; every read route filters canonicalStatus.
+  canonicalStatus           ChainFactStatus  @default(CANONICAL)
+  orphanedAt                DateTime?
   /// Populated by the graduation poller (§4.6), a scheduled read, never an
   /// event — Pons has no migration/graduation event. Null until first polled.
-  graduated                 Boolean   @default(false)
-  graduationPairedPrincipal Decimal?  @db.Decimal(78, 0)
-  graduationThreshold       Decimal?  @db.Decimal(78, 0)
+  graduated                 Boolean          @default(false)
+  graduationPairedPrincipal Decimal?         @db.Decimal(78, 0)
+  graduationThreshold       Decimal?         @db.Decimal(78, 0)
   graduationCheckedAt       DateTime?
 
   @@unique([chain, tokenAddress])
   @@index([chain, observedAt])
   @@index([chain, graduated])
   @@index([chain, poolAddress])
+  @@index([chain, canonicalStatus, sourceHeight])
+  @@index([chain, enrichmentStatus, sourceHeight])
 }
 
 model ChainTrade {
-  id           String   @id @default(uuid())
-  chain        String
-  venue        String
-  tokenAddress String
-  poolAddress  String?
-  side         String // buy | sell
-  tokenAmount  Decimal  @db.Decimal(78, 0)
-  quoteAmount  Decimal  @db.Decimal(78, 0)
-  quoteAddress String
-  priceQuote   Decimal  @db.Decimal(60, 18)
-  trader       String
-  sourceHeight BigInt
-  sourceHash   String
-  sourceTxHash String
-  sourceIndex  Int
-  observedAt   DateTime @default(now())
+  id              String          @id @default(uuid())
+  chain           String
+  venue           String
+  tokenAddress    String
+  poolAddress     String?
+  side            String // buy | sell
+  tokenAmount     Decimal         @db.Decimal(78, 0)
+  quoteAmount     Decimal         @db.Decimal(78, 0)
+  quoteAddress    String
+  priceQuote      Decimal         @db.Decimal(60, 18)
+  trader          String
+  sourceHeight    BigInt
+  sourceHash      String
+  sourceTxHash    String
+  sourceIndex     Int
+  observedAt      DateTime        @default(now())
+  /// Phase 7B.5A §2/§9 — same reorg bookkeeping as DiscoveredToken.
+  canonicalStatus ChainFactStatus @default(CANONICAL)
+  orphanedAt      DateTime?
 
   /// One log/instruction produces at most one trade fact — the EVM analog
   /// of PumpTrade's @@unique([signature, outerInstructionIndex, ...]).
   @@unique([chain, sourceTxHash, sourceIndex])
   @@index([chain, tokenAddress, sourceHeight])
+  @@index([chain, canonicalStatus, sourceHeight])
 }
 
 /// Persists last-processed chain position per independent ingestion source
@@ -785,9 +822,43 @@ model ChainTrade {
 /// resumes from here rather than re-scanning from genesis or silently
 /// skipping the gap. Nothing in this repo implemented this before Phase
 /// 7B.4 (confirmed by grep during Step 0) -- this table is the fix.
+///
+/// Phase 7B.5A §5/§9 extends this with the persisted, backend-owned facts the
+/// source-health projection (sourceHealth.ts) reads — never inferred from a
+/// live RPC call per API request, and never derived in the browser.
 model ChainIngestionCheckpoint {
-  source      String   @id
-  lastHeight  BigInt
-  lastHash    String
-  updatedAt   DateTime @updatedAt
+  source                  String    @id
+  lastHeight              BigInt
+  lastHash                String
+  updatedAt               DateTime  @updatedAt
+  /// Chain tip observed on the most recent poll (successful or not) — the
+  /// basis for the health projection's block-lag figure.
+  lastObservedChainHeight BigInt?
+  lastPollAt              DateTime?
+  lastSuccessAt           DateTime?
+  lastError               String?
+  lastErrorAt             DateTime?
+  lastReorgAt             DateTime?
+  /// Non-null while a detected reorg's common ancestor could not be found
+  /// within the configured recovery window — the ingestion stream is halted
+  /// (fail-closed) until this clears, either by a later tick finding an
+  /// ancestor or by manual operator intervention.
+  reorgUnresolvedAt       DateTime?
+  reorgUnresolvedReason   String?
+}
+
+/// Phase 7B.5A §2 — a bounded, per-chain history of committed (height, hash)
+/// pairs, independent of either listener's single-point checkpoint. Reorg
+/// recovery (reorgRecovery.ts) walks this newest-to-oldest, comparing each
+/// recorded hash against the live chain, to find the common canonical
+/// ancestor within a bounded configured window (PONS_REORG_MAX_DEPTH_BLOCKS).
+/// Pruned to that same window on every write so it never grows unbounded.
+model ChainBlockCheckpoint {
+  chain      String
+  height     BigInt
+  hash       String
+  recordedAt DateTime @default(now())
+
+  @@id([chain, height])
+  @@index([chain, height])
 }

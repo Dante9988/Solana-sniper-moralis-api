@@ -126,3 +126,152 @@ describe.skipIf(!RUN_DB_TESTS)("GET /api/v1/tokens/robinhood — real Postgres +
     expect(res.body.error.code).toBe("INVALID_ADDRESS");
   });
 });
+
+describe.skipIf(!RUN_DB_TESTS)("GET /api/v1/tokens/robinhood/status — real Postgres + real HTTP (Phase 7B.5A §5)", () => {
+  const prisma = new PrismaClient();
+  const DISCOVERY_SOURCE = "robinhood:pons:discovery";
+  const TRADE_SOURCE = "robinhood:pons:trades";
+
+  async function cleanup() {
+    await prisma.chainIngestionCheckpoint.deleteMany({ where: { source: { in: [DISCOVERY_SOURCE, TRADE_SOURCE] } } });
+  }
+
+  beforeAll(cleanup);
+  afterAll(async () => {
+    await cleanup();
+    await prisma.$disconnect();
+  });
+
+  it("is registered ahead of the generic :tokenAddress route and returns the health projection shape, not a 400/404", async () => {
+    const app = buildApp(prisma);
+    const res = await request(app).get("/api/v1/tokens/robinhood/status");
+
+    expect(res.status).toBe(200);
+    expect(["LIVE", "LAGGING", "DEGRADED", "REORG_RECOVERY", "UNAVAILABLE"]).toContain(res.body.status);
+    expect(res.body.discovery.source).toBe(DISCOVERY_SOURCE);
+    expect(res.body.trades.source).toBe(TRADE_SOURCE);
+    expect(typeof res.body.observedAt).toBe("string");
+  });
+
+  it("never leaks RPC credentials, raw provider URLs, stack traces, or internal DB error text", async () => {
+    await prisma.chainIngestionCheckpoint.create({
+      data: {
+        source: DISCOVERY_SOURCE,
+        lastHeight: 1n,
+        lastHash: "0xh",
+        lastError: "getBlockNumber: TIMEOUT after 8000ms",
+        lastErrorAt: new Date(),
+      },
+    });
+    const app = buildApp(prisma);
+    const res = await request(app).get("/api/v1/tokens/robinhood/status");
+
+    expect(res.status).toBe(200);
+    const serialized = JSON.stringify(res.body);
+    expect(serialized).not.toMatch(/https?:\/\//);
+    expect(serialized).not.toMatch(/postgres(?:ql)?:\/\//);
+    expect(serialized).not.toMatch(/api[_-]?key/i);
+  });
+});
+
+describe.skipIf(!RUN_DB_TESTS)("orphaned rows never surface as canonical facts through the read routes (Phase 7B.5A §2/§9)", () => {
+  const prisma = new PrismaClient();
+  const ORPHANED_TOKEN = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+  const ORPHANED_POOL = "0xbeefdeadbeefdeadbeefdeadbeefdeadbeefdead";
+
+  async function cleanup() {
+    await prisma.chainTrade.deleteMany({ where: { chain: CHAIN, tokenAddress: { in: [ORPHANED_TOKEN, TOKEN_ADDRESS] } } });
+    await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: { in: [ORPHANED_TOKEN, TOKEN_ADDRESS] } } });
+  }
+
+  beforeAll(async () => {
+    await cleanup();
+    // The first describe block's afterAll already deleted TOKEN_ADDRESS —
+    // this block needs a still-canonical token of its own to prove an
+    // orphaned trade is excluded from an otherwise-healthy token's detail.
+    await prisma.discoveredToken.create({
+      data: {
+        chain: CHAIN,
+        venue: "pons",
+        tokenAddress: TOKEN_ADDRESS,
+        deployer: "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
+        poolAddress: POOL_ADDRESS,
+        quoteAddress: QUOTE_ADDRESS,
+        supply: "1000000000000000000000000000",
+        initialBuyAmount: "10000000000000000",
+        isToken0: true,
+        poolFee: 10_000,
+        sourceHeight: 9_019_252n,
+        sourceHash: "0xhash-9019252",
+        sourceTxHash: TX_HASH,
+        sourceIndex: 15,
+      },
+    });
+  });
+  afterAll(async () => {
+    await cleanup();
+    await prisma.$disconnect();
+  });
+
+  it("excludes an ORPHANED token from the list and returns 404 for its detail route", async () => {
+    await prisma.discoveredToken.create({
+      data: {
+        chain: CHAIN,
+        venue: "pons",
+        tokenAddress: ORPHANED_TOKEN,
+        deployer: "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
+        poolAddress: ORPHANED_POOL,
+        quoteAddress: QUOTE_ADDRESS,
+        supply: "1",
+        initialBuyAmount: "0",
+        isToken0: true,
+        poolFee: 3_000,
+        sourceHeight: 1n,
+        sourceHash: "0xhash-1",
+        sourceTxHash: "0x" + "cd".repeat(32),
+        sourceIndex: 0,
+        canonicalStatus: "ORPHANED",
+        orphanedAt: new Date(),
+      },
+    });
+
+    const app = buildApp(prisma);
+    const listRes = await request(app).get("/api/v1/tokens/robinhood");
+    expect(listRes.status).toBe(200);
+    expect(listRes.body.tokens.some((t: { tokenAddress: string }) => t.tokenAddress === ORPHANED_TOKEN)).toBe(false);
+
+    const detailRes = await request(app).get(`/api/v1/tokens/robinhood/${ORPHANED_TOKEN}`);
+    expect(detailRes.status).toBe(404);
+  });
+
+  it("excludes an ORPHANED trade from a still-canonical token's trade list", async () => {
+    const orphanedTradeTx = "0x" + "ef".repeat(32);
+    await prisma.chainTrade.create({
+      data: {
+        chain: CHAIN,
+        venue: "pons",
+        tokenAddress: TOKEN_ADDRESS,
+        poolAddress: POOL_ADDRESS,
+        side: "sell",
+        tokenAmount: "1",
+        quoteAmount: "1",
+        quoteAddress: QUOTE_ADDRESS,
+        priceQuote: "1",
+        trader: "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
+        sourceHeight: 999_999n,
+        sourceHash: "0xhash-999999",
+        sourceTxHash: orphanedTradeTx,
+        sourceIndex: 0,
+        canonicalStatus: "ORPHANED",
+        orphanedAt: new Date(),
+      },
+    });
+
+    const app = buildApp(prisma);
+    const res = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN_ADDRESS}`);
+    expect(res.status).toBe(200);
+    expect(res.body.trades.some((t: { sourceTxHash: string }) => t.sourceTxHash === orphanedTradeTx)).toBe(false);
+
+    await prisma.chainTrade.deleteMany({ where: { chain: CHAIN, sourceTxHash: orphanedTradeTx } });
+  });
+});

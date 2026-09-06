@@ -84,6 +84,25 @@ export interface RobinhoodChainConfig {
   readonly confirmationLagBlocks: number;
   /** How many blocks back of the chain tip a *fresh* (no checkpoint) listener starts from. Historical backfill from genesis/legacy-factory activation is explicitly out of scope for this phase (phase7b4.txt "Explicitly out of scope"). */
   readonly freshStartLookbackBlocks: number;
+
+  // --- Phase 7B.5A additions ---
+
+  /** Bounded concurrency for getLaunchedToken() enrichment fan-out during a launch burst (§4). Never unbounded Promise.all. */
+  readonly enrichmentConcurrency: number;
+  /** How many PENDING-enrichment rows a single discovery tick retries, bounded so a large backlog can't turn one tick into an unbounded RPC burst. */
+  readonly enrichmentRetryBatchSize: number;
+  /** Max pool addresses per eth_getLogs call for trade polling (§3) — chunked rather than one ever-growing address array. */
+  readonly tradePoolChunkSize: number;
+  /** Bounded concurrency across those chunked eth_getLogs calls. */
+  readonly tradeQueryConcurrency: number;
+  /** How many recent (height,hash) checkpoints reorg recovery is willing to search backward through to find a common canonical ancestor (§2). Exceeding this without a match is a fail-closed REORG_UNRESOLVED. */
+  readonly reorgMaxDepthBlocks: number;
+  /** Source-health projection (§5): blocks behind the observed chain tip before a source is LAGGING rather than LIVE. */
+  readonly healthLaggingBlocks: number;
+  /** Source-health projection: how long a loop can go without a successful tick before it's reported UNAVAILABLE rather than merely DEGRADED. */
+  readonly healthStaleMs: number;
+  /** Source-health projection: how recently a recorded error must have occurred (with no success since) to report DEGRADED. */
+  readonly healthErrorWindowMs: number;
 }
 
 export function loadRobinhoodChainConfig(env: NodeJS.ProcessEnv = process.env): RobinhoodChainConfig {
@@ -102,5 +121,31 @@ export function loadRobinhoodChainConfig(env: NodeJS.ProcessEnv = process.env): 
     maxBlockRangePerPoll: parsePositiveInt(env, "PONS_MAX_BLOCK_RANGE_PER_POLL", 2_000),
     confirmationLagBlocks: parsePositiveInt(env, "PONS_CONFIRMATION_LAG_BLOCKS", 5),
     freshStartLookbackBlocks: parsePositiveInt(env, "PONS_FRESH_START_LOOKBACK_BLOCKS", 1_000),
+    enrichmentConcurrency: parsePositiveInt(env, "PONS_ENRICHMENT_CONCURRENCY", 5),
+    enrichmentRetryBatchSize: parsePositiveInt(env, "PONS_ENRICHMENT_RETRY_BATCH_SIZE", 25),
+    tradePoolChunkSize: parsePositiveInt(env, "PONS_TRADE_POOL_CHUNK_SIZE", 40),
+    tradeQueryConcurrency: parsePositiveInt(env, "PONS_TRADE_QUERY_CONCURRENCY", 3),
+    reorgMaxDepthBlocks: parsePositiveInt(env, "PONS_REORG_MAX_DEPTH_BLOCKS", 500),
+    healthLaggingBlocks: parsePositiveInt(env, "PONS_HEALTH_LAGGING_BLOCKS", 50),
+    healthStaleMs: parsePositiveInt(env, "PONS_HEALTH_STALE_MS", 120_000),
+    healthErrorWindowMs: parsePositiveInt(env, "PONS_HEALTH_ERROR_WINDOW_MS", 60_000),
+  });
+}
+
+export type PonsHealthThresholds = Pick<RobinhoodChainConfig, "healthLaggingBlocks" | "healthStaleMs" | "healthErrorWindowMs">;
+
+/**
+ * The `/api/v1/tokens/robinhood/status` route (§5) needs only these three
+ * tunables, never the RPC/contract settings `loadRobinhoodChainConfig`
+ * requires — the read-only API process must be able to boot and serve a
+ * health projection even in a deployment where it doesn't itself run the
+ * ingestion worker (and therefore has no ROBINHOOD_RPC_HTTPS/PONS_FACTORY/
+ * etc. configured).
+ */
+export function loadPonsHealthThresholds(env: NodeJS.ProcessEnv = process.env): PonsHealthThresholds {
+  return Object.freeze({
+    healthLaggingBlocks: parsePositiveInt(env, "PONS_HEALTH_LAGGING_BLOCKS", 50),
+    healthStaleMs: parsePositiveInt(env, "PONS_HEALTH_STALE_MS", 120_000),
+    healthErrorWindowMs: parsePositiveInt(env, "PONS_HEALTH_ERROR_WINDOW_MS", 60_000),
   });
 }
