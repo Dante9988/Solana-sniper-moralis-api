@@ -237,6 +237,23 @@ export class TradeListener {
       return { status: "UNAVAILABLE", reason: `getBlockRef(toBlock): ${toBlockRef.reason}` };
     }
 
+    // Phase 7B.5B §1 — the real source-chain block time, not DB insertion
+    // time or API observation time. Deduplicated/cached per unique block
+    // height touched by this tick's trades (never one RPC read per trade):
+    // most ticks' trades cluster into a handful of blocks, so this is at
+    // most one getBlockRef() call per distinct height. toBlock's own ref is
+    // already fetched above and reused here rather than re-requested.
+    const heightTimestamps = new Map<string, Date>([[toBlock.toString(), new Date(Number(toBlockRef.data.timestamp) * 1000)]]);
+    const uniqueTradeHeights = [...new Set(trades.map((t) => t.provenance.sourceHeight))].filter((h) => !heightTimestamps.has(h));
+    for (const heightStr of uniqueTradeHeights) {
+      const ref = await this.chainClient.getBlockRef(BigInt(heightStr));
+      if (ref.status === "UNAVAILABLE") {
+        await checkpointStore.recordFailure(TRADE_CHECKPOINT_SOURCE, `getBlockRef(timestamp @ ${heightStr}): ${ref.reason}`);
+        return { status: "UNAVAILABLE", reason: `getBlockRef(timestamp @ ${heightStr}): ${ref.reason}` };
+      }
+      heightTimestamps.set(heightStr, new Date(Number(ref.data.timestamp) * 1000));
+    }
+
     await this.db.$transaction(async (tx) => {
       for (const trade of trades) {
         // Same case-normalization rationale as discoveryListener.ts — keep
@@ -260,15 +277,24 @@ export class TradeListener {
             sourceTxHash: trade.provenance.sourceTxHash,
             sourceIndex: trade.provenance.sourceIndex,
             observedAt: new Date(trade.observedAt),
+            sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null,
           },
           // §2/§9 — revive a same-(txHash,logIndex) row that had been
           // orphaned by reorg recovery back to canonical on replay (see
-          // discoveryListener.ts's upsert for the same rationale).
-          update: { canonicalStatus: "CANONICAL", orphanedAt: null },
+          // discoveryListener.ts's upsert for the same rationale). Also
+          // refresh sourceTimestamp on revival — a replayed canonical block
+          // can have a different real timestamp than whatever this row had
+          // (if any) from before it was orphaned.
+          update: { canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null },
         });
       }
       const checkpointStoreTx = new CheckpointStore(tx);
-      await checkpointStoreTx.set(TRADE_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight);
+      await checkpointStoreTx.set(
+        TRADE_CHECKPOINT_SOURCE,
+        { lastHeight: toBlock, lastHash: toBlockRef.data.hash },
+        observedChainHeight,
+        heightTimestamps.get(toBlock.toString())
+      );
       await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
       // See discoveryListener.ts's matching comment — Prisma's 5s default
       // interactive-transaction timeout doesn't scale with how many trades

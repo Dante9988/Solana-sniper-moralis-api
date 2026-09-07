@@ -41,6 +41,8 @@ export type ReorgRecoveryResult =
       orphanedTokens: number;
       orphanedTrades: number;
       rolledBackSources: string[];
+      /** Phase 7B.5B §9 — distinct tokens a CandleInvalidation row was written for in this same transaction. */
+      candlesInvalidated: number;
     }
   | { status: "UNRESOLVED"; searchedDepth: number; reason: string }
   | { status: "UNAVAILABLE"; reason: string };
@@ -68,7 +70,7 @@ export async function attemptReorgRecovery(deps: ReorgRecoveryDeps): Promise<Reo
     return { status: "UNAVAILABLE", reason: "no checkpoint history recorded for this chain yet — cannot search for a common ancestor" };
   }
 
-  let ancestor: { height: bigint; hash: string } | null = null;
+  let ancestor: { height: bigint; hash: string; timestamp: bigint } | null = null;
   let searched = 0;
   for (const entry of history) {
     searched += 1;
@@ -77,7 +79,7 @@ export async function attemptReorgRecovery(deps: ReorgRecoveryDeps): Promise<Reo
       return { status: "UNAVAILABLE", reason: `getBlockRef(${entry.height.toString()}) during ancestor search: ${live.reason}` };
     }
     if (live.data.hash.toLowerCase() === entry.hash.toLowerCase()) {
-      ancestor = { height: entry.height, hash: live.data.hash };
+      ancestor = { height: entry.height, hash: live.data.hash, timestamp: live.data.timestamp };
       break;
     }
   }
@@ -90,9 +92,24 @@ export async function attemptReorgRecovery(deps: ReorgRecoveryDeps): Promise<Reo
     };
   }
 
-  const { height: ancestorHeight, hash: ancestorHash } = ancestor;
+  const { height: ancestorHeight, hash: ancestorHash, timestamp: ancestorTimestamp } = ancestor;
+  const ancestorTime = new Date(Number(ancestorTimestamp) * 1000);
 
   const outcome = await deps.db.$transaction(async (tx) => {
+    // Phase 7B.5B §9 — capture exactly which tokens are about to lose
+    // canonical trades *before* orphaning them, so the CandleInvalidation
+    // rows below are written in the same transaction as the orphaning
+    // itself (a crash between the two cannot happen — either both land or
+    // neither does). Using ancestorTime (rather than trying to find the
+    // first orphaned block's own timestamp) is a deliberately conservative
+    // lower bound: it can cause one extra bucket to be recomputed
+    // needlessly, but can never miss one.
+    const affectedTokens = await tx.chainTrade.findMany({
+      where: { chain: deps.chain, canonicalStatus: "CANONICAL", sourceHeight: { gt: ancestorHeight } },
+      select: { tokenAddress: true },
+      distinct: ["tokenAddress"],
+    });
+
     const orphanedTokens = await tx.discoveredToken.updateMany({
       where: { chain: deps.chain, canonicalStatus: "CANONICAL", sourceHeight: { gt: ancestorHeight } },
       data: {
@@ -111,6 +128,18 @@ export async function attemptReorgRecovery(deps: ReorgRecoveryDeps): Promise<Reo
       where: { chain: deps.chain, canonicalStatus: "CANONICAL", sourceHeight: { gt: ancestorHeight } },
       data: { canonicalStatus: "ORPHANED", orphanedAt: new Date() },
     });
+
+    // Phase 7B.5B §9 — one durable invalidation record per affected token.
+    // The candle worker (src/candles/invalidation.ts) processes unprocessed
+    // rows by fully recomputing every bucket at/after this timestamp from
+    // `ChainTrade WHERE canonicalStatus = CANONICAL` — never incremental
+    // arithmetic. Left unprocessed (never deleted here) until the worker
+    // marks it `processedAt` — durable across a worker restart.
+    if (affectedTokens.length > 0) {
+      await tx.candleInvalidation.createMany({
+        data: affectedTokens.map((t) => ({ chain: deps.chain, tokenAddress: t.tokenAddress, invalidatedFromTimestamp: ancestorTime })),
+      });
+    }
 
     const checkpoints = await tx.chainIngestionCheckpoint.findMany({ where: { source: { startsWith: `${deps.chain}:` } } });
     const rolledBackSources: string[] = [];
@@ -142,7 +171,7 @@ export async function attemptReorgRecovery(deps: ReorgRecoveryDeps): Promise<Reo
 
     await tx.chainBlockCheckpoint.deleteMany({ where: { chain: deps.chain, height: { gt: ancestorHeight } } });
 
-    return { orphanedTokens: orphanedTokens.count, orphanedTrades: orphanedTrades.count, rolledBackSources };
+    return { orphanedTokens: orphanedTokens.count, orphanedTrades: orphanedTrades.count, rolledBackSources, candlesInvalidated: affectedTokens.length };
   });
 
   return { status: "RECOVERED", ancestorHeight, ancestorHash, ...outcome };

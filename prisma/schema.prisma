@@ -929,8 +929,14 @@ model MarketCandle {
   high              Decimal          @db.Decimal(60, 18)
   low               Decimal          @db.Decimal(60, 18)
   close             Decimal          @db.Decimal(60, 18)
-  volumeToken       Decimal          @db.Decimal(78, 0)
-  volumeQuote       Decimal          @db.Decimal(78, 0)
+  /// Normalized (decimal-adjusted) sums, NOT raw uint256 amounts — every
+  /// value in this row is self-contained/directly presentable without a
+  /// caller needing to re-join DiscoveredToken.tokenDecimals/quoteDecimals.
+  /// 78 total digits with 18 fractional keeps headroom for a fully-diluted
+  /// 1e27-raw-unit supply (Pons's observed real supply magnitude, abi.ts)
+  /// normalized down by up to 18 decimals.
+  volumeToken       Decimal          @db.Decimal(78, 18)
+  volumeQuote       Decimal          @db.Decimal(78, 18)
   /// Null unless a verified historical quote->USD rate was actually applied
   /// to every trade in this bucket (§3) — never partially estimated.
   volumeUsd         Decimal?         @db.Decimal(38, 8)
@@ -989,4 +995,24 @@ model CandleAggregationCheckpoint {
   updatedAt        DateTime @updatedAt
 
   @@id([chain, tokenAddress])
+}
+
+/// Phase 7B.5B §8/§15/§17 — one row per chain: the candle worker's own
+/// whole-tick operational summary, independent of any single token's
+/// CandleAggregationCheckpoint. This is what candleHealth.ts (the §15
+/// extension of sourceHealth.ts's pattern) and the §17 performance report
+/// read — never inferred from scanning every per-token checkpoint on every
+/// health request.
+model CandleWorkerRunState {
+  chain                      String    @id
+  lastTickAt                 DateTime?
+  lastSuccessAt              DateTime?
+  lastError                  String?
+  lastErrorAt                DateTime?
+  lastTokensProcessed        Int?
+  lastCandlesWritten         Int?
+  lastBucketsRecomputed      Int?
+  lastInvalidationsProcessed Int?
+  lastTickDurationMs         Int?
+  updatedAt                  DateTime  @updatedAt
 }

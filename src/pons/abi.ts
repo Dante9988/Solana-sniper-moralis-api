@@ -107,6 +107,29 @@ export const PONS_FACTORY_ABI = [
 ] as const satisfies Abi;
 
 /**
+ * Phase 7B.5B §2 — the standard ERC-20 `decimals()` view function (EIP-20,
+ * https://eips.ethereum.org/EIPS/eip-20, selector `0x313ce567`). Used to
+ * verify each Pons-launched token's and WETH_QUOTE's real decimal count
+ * rather than assuming 18 (phase7b5b.txt §2: "Never simply assume 18
+ * decimals because this is an EVM chain"). This is the universal ERC-20
+ * interface, not a Pons-specific contract — no separate on-chain
+ * verification step is needed the way abi.ts's Pons-specific fragments
+ * above required one; every ERC-20 token on Robinhood Chain (an EVM chain)
+ * is expected to implement it, and a token that reverts/fails this call is
+ * treated as decimals-unresolved (fail closed — see
+ * src/candles/decimalsResolver.ts), never defaulted to 18.
+ */
+export const ERC20_ABI = [
+  {
+    type: "function",
+    name: "decimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint8" }],
+  },
+] as const satisfies Abi;
+
+/**
  * Standard Uniswap V3 pool Swap event. Public, stable, identical on every
  * chain V3 has been deployed to — but still verified on-chain above rather
  * than trusted from memory, per this repo's protocol rule.

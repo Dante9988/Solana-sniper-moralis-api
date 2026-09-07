@@ -16,6 +16,7 @@ import {
   RobinhoodTokenListResponseSchema,
   RobinhoodStatusResponseSchema,
 } from "./robinhoodTokens";
+import { CandleHistoryResponseSchema } from "./candles";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -127,6 +128,21 @@ registry.registerPath({
   request: { params: RobinhoodTokenAddressParamSchema },
   responses: {
     200: { description: "Token detail with trades", content: { "application/json": { schema: RobinhoodTokenDetailResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/candles",
+  summary: "Materialized OHLCV candle history for a Robinhood/Pons token (Phase 7B.5B) — reads PostgreSQL only, never Robinhood RPC inline.",
+  tags: ["robinhood-chain", "candles"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Candle history", content: { "application/json": { schema: CandleHistoryResponseSchema } } },
     400: errorResponse,
     401: errorResponse,
     404: errorResponse,

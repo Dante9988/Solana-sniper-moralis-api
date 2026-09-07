@@ -1,11 +1,11 @@
 # Architecture & Handoff Guide
 
-> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5A**, plus the trading/Telegram surface merged from the `main2` branch).
+> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, plus the trading/Telegram surface merged from the `main2` branch).
 > Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
-**Snapshot date:** 2026-09-06 (UTC)
+**Snapshot date:** 2026-09-07 (UTC)
 **Canonical branch:** `main` (fast-forwarded to `master`'s tip in Phase 7B.1 — see §16.1; `master` still exists, unused going forward)
-**Latest commits:** `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
+**Latest commits:** Phase 7B.5B (candle/OHLCV service backed by canonical `ChainTrade` — §21; branch `feature/phase-7b5b-canonical-ohlcv`, see §21.19 for the exact commit SHA), `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
 
 **Stack:** TypeScript / Node (CI runs Node 20), Solana Web3.js, **viem** (Robinhood Chain HTTP RPC), Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Supabase JWT auth, Zod/OpenAPI, `ws`, Redis via `ioredis` (optional distributed rate limiting/realtime), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
@@ -30,11 +30,11 @@ Four layers share one codebase:
 
 **Implemented:** everything in the first two layers (event types, orchestrator, researchers, Prisma report store, non-blocking listener dispatch, Anthropic synthesis, Moralis compatibility cleanup, trench.bot removed from runtime, canonical asset identity, deterministic Solana forensics 5A–5E, read-only presentation HTTP API, an X API read-only capability checkpoint) plus, from `main2`: a Telegraf-based Telegram bot with real buy/sell/wallet commands, a `PumpSwapService` and a `JupiterService` trading class, a websocket/API server, PnL/top-calls/simulation reporting scripts.
 
-**Latest additions:** wallet verification and user-scoped realtime jobs; real-chain Pump.fun/PumpSwap event decoding and normalized trades; the `ChainAdapter` contract; Robinhood/Pons ingestion with discovery enrichment, raw trades, graduation polling, transactional checkpoints, and `/api/v1/tokens/robinhood` reads (Phase 7B.4); a discovery-before-trades coordination barrier, bounded automatic reorg rollback/replay, chunked pool-scaling, bounded-concurrency batch enrichment with `PENDING`-row retry, and a backend-owned `/api/v1/tokens/robinhood/status` ingestion source-health projection (Phase 7B.5A, §20). Phase 7B.4 is completed and tested within the boundaries in §19.8–§19.9; Phase 7B.5A within §20.12–§20.13. Pons facts are not yet connected to the Solana intelligence/scoring pipeline, and no OHLCV/candle aggregation exists yet — that is Phase 7B.5B (§20.14).
+**Latest additions:** wallet verification and user-scoped realtime jobs; real-chain Pump.fun/PumpSwap event decoding and normalized trades; the `ChainAdapter` contract; Robinhood/Pons ingestion with discovery enrichment, raw trades, graduation polling, transactional checkpoints, and `/api/v1/tokens/robinhood` reads (Phase 7B.4); a discovery-before-trades coordination barrier, bounded automatic reorg rollback/replay, chunked pool-scaling, bounded-concurrency batch enrichment with `PENDING`-row retry, and a backend-owned `/api/v1/tokens/robinhood/status` ingestion source-health projection (Phase 7B.5A, §20). Phase 7B.4 is completed and tested within the boundaries in §19.8–§19.9; Phase 7B.5A within §20.12–§20.13; and now, **the first candle/OHLCV service**: a chain-neutral aggregation engine, a `MarketCandle` materialization, an independently runnable `candles:worker`, reorg-safe full-bucket recomputation driven by the same `reorgRecovery.ts` transaction, `GET /api/v1/tokens/robinhood/:tokenAddress/candles`, and an optional `token.candle.updated` realtime event — Phase 7B.5B, §21, tested and proven within the boundaries in §21.19–§21.20. Pons facts are still not connected to the Solana intelligence/scoring pipeline.
 
 **Not implemented yet:** Chroma/RAG, trending history, macro/news beyond the X checkpoint, intelligence → Discord/Telegram notifications, real PumpSwap AMM swap execution (Jupiter is the only working swap path). (`src/api/index.ts` authentication is implemented — bearer-token, fail-closed, off by default — see §8.3.)
 
-The discovery foundation still leaves OHLCV aggregation, historical backfill, Pons scam/rug scoring, momentum ranking, the AI query layer, frontend work, and a durable Solana adapter behind `ChainAdapter` to later slices (§20.14). Existing Pump candle/rate tables are schema foundations, not running aggregation services (§18). Automatic reorg reconciliation is implemented as of Phase 7B.5A (§20.2) — see §20.13 for what remains unproven against a live reorg.
+The discovery foundation still leaves historical/legacy-factory backfill, Pons scam/rug scoring, momentum ranking, the AI query layer, frontend candle-chart integration (Phase 7B.5C), and a durable Solana adapter behind `ChainAdapter` to later slices. OHLCV/candle aggregation for Robinhood/Pons is now implemented (§21) — the *existing Pump candle/rate tables* (`PumpCandle`/`PumpCandleRevision`/`SolUsdRate`, §18) remain schema foundations only, not running aggregation services; Phase 7B.5B's `MarketCandle`/`CandleInvalidation`/`CandleAggregationCheckpoint`/`CandleWorkerRunState` tables are new and chain-neutral, not a repurposing of those Solana-shaped ones. Automatic reorg reconciliation is implemented as of Phase 7B.5A (§20.2) — see §20.13 for what remains unproven against a live reorg; Phase 7B.5B's candle invalidation is layered directly on top of that same reconciliation transaction (§21.10).
 
 ---
 
@@ -1250,3 +1250,273 @@ CI (`.github/workflows/ci.yml`) previously never set any `*_RUN_DB_TESTS` flag, 
 - Expose candle read routes under `/api/v1` alongside (not replacing) the existing raw trade/detail routes, reusing this phase's `canonicalStatus` filtering convention.
 - Surface candle-service-specific health (e.g., "aggregation lag" behind ingestion) as an extension of `sourceHealth.ts`'s pattern (§20.5), not a parallel mechanism.
 - Revisit pool-set scaling (§20.3) once real `poolsQueried`/`rpcLogCalls` production numbers exist.
+
+---
+
+## 21. Phase 7B.5B — the first candle/OHLCV service
+
+Implements [phase7b5b.txt](./phase7b5b.txt) on top of Phase 7B.5A (§20), which is complete and merged. This phase does not touch the frontend, does not fabricate historical USD prices, and does not weaken any Phase 7B.5A ingestion/reorg guarantee — it adds a new, read-derive-persist-only domain (`src/candles/**`) plus a thin Pons-specific adapter (`src/pons/candleFeed.ts`, `src/candles/decimalsResolver.ts`) that turns already-canonical `ChainTrade` rows into materialized OHLCV candles. Database remains the source of truth; the API still never calls Robinhood RPC to serve a request.
+
+### 21.1 Target pipeline and where each piece lives
+
+```
+Robinhood Chain (real logs)
+  → Pons ingestion (pons:worker, unchanged in this phase except the two additive changes in §21.2)
+  → canonical ChainTrade (PostgreSQL)
+  → src/pons/candleFeed.ts        (Pons-specific adapter boundary: verified decimals, optional USD rate)
+  → src/candles/aggregate.ts      (pure, chain-neutral OHLCV aggregation)
+  → src/candles/persistCandles.ts (idempotent MarketCandle upserts)
+  → candles:worker (independent process, src/candles/scripts/candlesWorkerMain.ts)
+  → PostgreSQL MarketCandle
+  → GET /api/v1/tokens/robinhood/:tokenAddress/candles (src/researchApi/routes/robinhoodTokens.ts)
+  → existing OnlyPump chart (Phase 7B.5C, not built in this phase)
+```
+
+`src/candles/**` is the chain-neutral core: `aggregate.ts`, `types.ts`, `resolutions.ts`, `finality.ts`, `usdPricing.ts` know nothing about Pons, EVM, `viem`, or Prisma models named `ChainTrade`/`DiscoveredToken` (proven by `src/candles/__tests__/executionBoundary.test.ts`). Everything Robinhood/Pons-specific — reading `ChainTrade`, resolving verified decimals, optionally attaching a USD rate — happens once, at the adapter boundary (`src/pons/candleFeed.ts`), exactly as phase7b5b.txt §4 asked. A future Solana/Pump.fun candle feed would implement the same `CandleTradeInput[]`-producing shape from Pump.fun's own normalized trades and hand it to the identical `aggregateTrades()`; nothing in `src/candles/**` would change.
+
+### 21.2 Source-time semantics
+
+`ChainTrade.sourceTimestamp` (additive, nullable `DateTime`) is the real source-chain block time — never DB insertion time or API observation time. `TradeListener.runOnce()` (`src/pons/tradeListener.ts`) resolves it for every trade in a tick: it collects the distinct `sourceHeight` values among that tick's decoded trades, calls `chainClient.getBlockRef(height)` **once per unique height** (deduplicated/cached in a local `Map` for the tick — never one redundant RPC read per trade, per phase7b5b.txt §1), and reuses the `toBlock` ref it was already fetching for the checkpoint commit rather than requesting it twice. If any needed block's timestamp can't be resolved, the whole tick fails closed (`UNAVAILABLE`, nothing committed) — the same discipline the existing `getBlockRef(toBlock)` failure path already used.
+
+`RawBlockRef` (`src/pons/chainClient.ts`) gained a `timestamp: bigint` field (the block's own `timestamp`, Unix seconds) — additive to every existing `getBlockRef()` call site, including `reorgRecovery.ts`'s ancestor search, which is what lets §21.10 below capture a real ancestor timestamp with no second RPC round trip.
+
+`ChainIngestionCheckpoint.lastHeightTimestamp` (additive, nullable) is the **trade** checkpoint's confirmed chain time only — discovery's checkpoint never sets it (`CheckpointStore.set()`'s new fourth parameter is only ever passed by `tradeListener.ts`). This is the one fact `src/candles/finality.ts` needs to know "ingestion has safely progressed beyond bucket X" (§21.9) without ever consulting wall-clock time.
+
+**Backfill for pre-existing rows:** `npm run pons:backfill-timestamps` (`src/pons/scripts/backfillTradeTimestamps.ts`) resolves `sourceTimestamp` for any `ChainTrade` row that predates this phase (`sourceTimestamp: null`), in bounded batches (500 rows/batch, one `getBlockRef` per distinct height in the batch), never fabricating a value it can't resolve — a row it can't resolve is simply left `null` for a later run. `src/pons/candleFeed.ts` never reads a row with `sourceTimestamp: null` (excluded by its own query filter) — an unresolved row simply cannot contribute to a candle, exactly per phase7b5b.txt §1's "Do not fabricate timestamps for rows that cannot be resolved."
+
+### 21.3 Source-order semantics
+
+**Audited and proven, not assumed:** `ChainTrade.sourceIndex` is the EVM `logIndex` from the decoded `Swap` event (`ponsAdapter.ts`'s `raw.log.logIndex`, itself viem's own `log.logIndex`). The EVM assigns log indexes sequentially and uniquely across **every** log in a block — in the exact order transactions execute and emit logs — never scoped to one transaction and never reused; this is a standard, universally-relied-upon EVM property (the same one every block explorer and indexer uses to order events within a block). `sourceHeight` (the block number) breaks ties across blocks; `sourceIndex` breaks ties within one block; together `(sourceHeight, sourceIndex)` is therefore a genuine total order over any set of trades from this chain — no additional ordering column was needed.
+
+`src/candles/aggregate.ts` establishes this order itself, once, via `Array#sort` on `(sourceHeight, sourceIndex)` — it never trusts input order, Prisma row order, insertion order, or `sourceTimestamp` ties (multiple trades in the same block share one block timestamp, so timestamp alone cannot order them). `src/candles/__tests__/aggregate.test.ts`'s *"orders multiple swaps in the same block by sourceIndex (EVM logIndex), never insertion order"* test proves this directly: two trades with the same `sourceHeight` are passed to `aggregateTrades()` in reverse-`sourceIndex` order, and the resulting candle's `open`/`close` still resolve correctly by `sourceIndex`, not array position. `src/candles/__tests__/candleAggregationService.dbIntegration.test.ts` reproduces the same proof against real PostgreSQL, seeding the higher-`sourceIndex` row first.
+
+### 21.4 Normalized execution price
+
+`src/discovery/normalizedPrice.ts` (chain-neutral, alongside `decimalDivide`) is the primitive phase7b5b.txt §2 asked for, kept entirely separate from `ChainTrade.priceQuote` (raw ratio, untouched — §20.6's promise held):
+
+```
+normalizeAmount(rawAmount, decimals)      = rawAmount / 10^decimals
+
+computeNormalizedPrice(quoteAmountRaw, quoteDecimals, tokenAmountRaw, tokenDecimals)
+    = (quoteAmountRaw / 10^quoteDecimals) / (tokenAmountRaw / 10^tokenDecimals)
+    = (quoteAmountRaw * 10^tokenDecimals) / (tokenAmountRaw * 10^quoteDecimals)
+```
+
+computed as **one** decimal-safe BigInt division (`decimalDivide`, scale 18) — never two separately-rounded intermediate divisions. `tokenAmountRaw = 0` (the only zero-denominator case `ponsAdapter.decodeTrade` can ever produce — it already refuses to decode a zero-token-amount swap) safely returns `"0"` rather than throwing, matching `decimalDivide`'s existing zero-division protection.
+
+`src/discovery/__tests__/normalizedPrice.test.ts` (14 tests) proves this against representative 6/9/18-decimal combinations (a 6-decimal quote against an 18-decimal token, a 9-decimal token against an 18-decimal quote, mixed 6/9), a round-trip through the new `parseDecimalToScaledBigInt`/`formatScaledBigInt` fixed-point helpers (`src/discovery/decimal.ts`), and — the Phase 7B.4 regression this phase was warned not to reintroduce — that very large/very small values format without scientific notation.
+
+### 21.5 Token/quote decimal provenance
+
+**Never assumed to be 18.** `src/pons/abi.ts` gained the standard ERC-20 `decimals()` view function fragment (universal EIP-20 interface, selector `0x313ce567` — no separate on-chain verification needed the way the Pons-specific fragments above it required, since every ERC-20 token on an EVM chain is expected to implement it). `src/candles/decimalsResolver.ts`'s `resolveTokenDecimals()` reads it for both the token and its quote asset via `readContract`, caches the result on `DiscoveredToken.tokenDecimals`/`quoteDecimals` (additive nullable `Int` columns), and treats a reverted/malformed response as **unresolved** — never a fabricated default. A token whose decimals can't be resolved contributes no candles until a later tick succeeds (fail closed, surfaced as a per-tick error in the candle worker's summary/health, never silently defaulted).
+
+**Deliberate architectural choice — decimals resolution lives in the candle worker, not `discoveryListener.ts`.** Phase 7B.5A's launch-enrichment pipeline (`EnrichmentStatus`, bounded-concurrency batch enrichment, `PENDING`-row retry — §20.4) is already implemented and exhaustively tested end-to-end. Folding `decimals()` into that exact machinery would change what `EnrichmentStatus: COMPLETE` means and risk regressing a proven pipeline for a concern it was never designed around. Instead, `resolveTokenDecimals()` is its own small, independent, idempotent, DB-cached read step — the "Robinhood/Pons-specific enrichment... at the adapter boundary" phase7b5b.txt §4 asked for — run only by `candles:worker`, using its own read-only RPC client. `discoveryListener.ts` and `tradeListener.ts` are **untouched** by this decision (their own extensive dbIntegration test suites, §20.11, all remain green unmodified — see §21.19).
+
+### 21.6 Chain-neutral candle domain
+
+`src/candles/aggregate.ts`'s `aggregateTrades(trades, resolutions)` is a pure function: `CandleTradeInput[]` in, `Map<CandleResolutionId, CandleBucket[]>` out, no I/O, no Prisma, no `viem`. It:
+
+1. Sorts once by `(sourceHeight, sourceIndex)` (§21.3) — the only ordering step, shared by every resolution.
+2. For each resolution, buckets by the deterministic UTC boundary `bucketStart = floor(unixSeconds / intervalSeconds) * intervalSeconds` (`src/candles/resolutions.ts`) — no local timezone math anywhere.
+3. Computes open (first trade), close (last trade), high/low (extrema), token/quote volume (sums of the already-normalized, always-positive amounts), USD volume (sum **only** if every trade in the bucket had a non-null USD amount — never partially estimated), trade count, and distinct-trader count, using the fixed-point BigInt helpers from §21.4 throughout (never a JS float).
+4. **Emits a bucket only for an interval that had at least one trade** — "no-trade interval = no candle" (phase7b5b.txt §5), proven directly by `src/candles/__tests__/aggregate.test.ts` and by the dbIntegration suite seeding an ORPHANED-only bucket and asserting zero `MarketCandle` rows.
+
+Honest chain/venue vocabulary, not the frontend's Solana-era terms: rows carry `chain`/`venue`/`tokenAddress`/`quoteAddress`, never `mint`, and `venue` is `"pons"`, never `"pump"`/`"pumpswap"`/`"mixed"` (phase7b5b.txt §4/§13). Phase 7B.5C is expected to adapt the frontend contract to this, not the other way around.
+
+### 21.7 Supported resolutions and trader-count semantics
+
+All seven existing chart resolutions: `1s 5s 15s 1m 5m 15m 1h` (`src/candles/resolutions.ts`'s `CANDLE_RESOLUTIONS`, matching only-pump-me's `candle.ts` verbatim). Stored via a Prisma enum (`S1|S5|S15|M1|M5|M15|H1` — not legal starting with a digit) and mapped losslessly to/from the string literals at every domain/API boundary (`resolutionIdToDb`/`resolutionDbToId`).
+
+**`uniqueTraders` is `COUNT(DISTINCT ChainTrade.trader)` within the bucket — the observed swap recipient/router-facing address, not a verified ultimate economic trader** (phase7b5b.txt §6, unchanged limitation already documented for `ChainTrade.trader` itself in §19.4/§19.6). This phase does not strengthen that claim; the API response carries an explicit `uniqueTraderSemantics` string saying exactly this, and `Candle.trades`/`uniqueTraders` are otherwise the same field names/meaning the frontend contract already expects.
+
+### 21.8 Schema and migrations
+
+One additive migration, `20260907015813_add_candle_domain` (applied cleanly, in sequence after `20260906192052_harden_pons_ingestion_reorg_health`, against a fresh disposable PostgreSQL 16 container — never the shared dev database — see §21.19):
+
+| Change | Detail |
+|---|---|
+| `ChainTrade.sourceTimestamp` | New nullable `DateTime` (§21.2) |
+| `ChainIngestionCheckpoint.lastHeightTimestamp` | New nullable `DateTime`, set only by the trade checkpoint (§21.2) |
+| `DiscoveredToken.tokenDecimals`/`quoteDecimals` | New nullable `Int` columns (§21.5) |
+| New enums `CandleResolution` (`S1..H1`), `CandleStatus` (`PROVISIONAL`\|`FINAL`) | §21.7/§21.9 |
+| New table `MarketCandle` | `(chain, tokenAddress, resolution, bucketStart)` unique + indexed identity; `open/high/low/close Decimal(60,18)` (normalized price); `volumeToken/volumeQuote Decimal(78,18)` (normalized, self-contained — never raw uint256, so a reader never needs to re-join `DiscoveredToken` decimals to interpret a row); `volumeUsd Decimal(38,8)?`; `tradeCount`/`uniqueTraders Int`; `status CandleStatus`; `firstSourceHeight`/`lastSourceHeight BigInt` (diagnostic, not identity); `revision Int` (bumped only when a row's values genuinely change — §21.13's realtime sequencing) |
+| New table `CandleInvalidation` | `(chain, tokenAddress, invalidatedFromTimestamp, processedAt?)` — durable, append-only reorg-invalidation record (§21.10) |
+| New table `CandleAggregationCheckpoint` | `(chain, tokenAddress)` primary key; `lastSourceHeight`/`lastSourceIndex` — per-token forward-progress marker, independent of the Pons trade checkpoint |
+| New table `CandleWorkerRunState` | One row per chain — whole-tick operational summary (§21.14/§21.15) |
+
+Existing `ChainTrade`/`DiscoveredToken`/`ChainIngestionCheckpoint` unique keys, indexes, and every Phase 7B.4/7B.5A column are unchanged. `MarketCandle`/`CandleInvalidation`/`CandleAggregationCheckpoint` are never deleted from by the candle domain's own reorg-recovery-adjacent code (only `deleteCandlesFrom` in `persistCandles.ts`, which removes **only its own derived candle rows**, never `ChainTrade`/`DiscoveredToken` — proven by `src/candles/__tests__/executionBoundary.test.ts`).
+
+### 21.9 Aggregation algorithm and the recompute engine (forward progress, backfill, and reorg invalidation share one function)
+
+**One recompute engine, not three.** `src/candles/recompute.ts`'s `recomputeCandlesFromTimestamp()` is the ONLY place candles are ever written from trades. It:
+
+1. Aligns the requested `fromTimestamp` down to the coarsest resolution's own bucket boundary (1h) — so every finer-resolution bucket inside that hour is also cleanly covered by the same window, never split.
+2. Deletes every existing `MarketCandle` row for that token at or after the aligned start, across **all** resolutions (`deleteCandlesFrom`) — the clean-slate half.
+3. Loads canonical (`canonicalStatus: CANONICAL`, `sourceTimestamp` not null) trades in that window via `src/pons/candleFeed.ts` (bounded page size, reports `truncated` rather than silently dropping trades past the cap).
+4. Calls the pure `aggregateTrades()` (§21.6) and persists via `persistCandleBuckets()` (idempotent upsert, revision bump only on a genuine value change — §21.13).
+
+This single function serves three different callers with three different justifications for calling it, each in `src/candles/candleAggregationService.ts`:
+
+- **Ordinary forward progress** (§21.11): a token with a `CandleAggregationCheckpoint` gets a small window, starting from the earliest genuinely-new canonical trade since the checkpoint — a cheap, steady-state no-op when nothing changed.
+- **Historical backfill/rebuild** (phase7b5b.txt §11): a token with **no** checkpoint yet gets `fromTimestamp = epoch(0)` — the exact same function, naturally bounded/paginated across ticks by the same trade-page cap, restart-safe and idempotent for free. This is explicitly scoped to rebuilding from `ChainTrade` rows this project **already has** — it never fetches additional history from the chain (that remains the separate, still-deferred legacy-factory backfill project, phase7b5b.txt §11's "keep these concepts separate").
+- **Reorg invalidation** (§21.10 below): the recompute window starts at the reorg's own ancestor timestamp.
+
+Sharing one function is a deliberate simplification over three separately-argued code paths: "fully recompute the affected window from canonical trades" is the single invariant phase7b5b.txt §9 asked for, and it is now literally one function, not three implementations of the same idea that could drift apart.
+
+### 21.10 Reorg-safe candle recomputation (mandatory, phase7b5b.txt §9)
+
+**Never incremental arithmetic.** No code anywhere in `src/candles/**` subtracts an orphaned trade's contribution from an existing candle — every affected bucket is always fully rebuilt from `ChainTrade WHERE canonicalStatus = CANONICAL` via §21.9's recompute engine.
+
+**Invalidation is written in the same transaction as the orphaning itself.** `src/pons/reorgRecovery.ts`'s `attemptReorgRecovery()` — the exact, unmodified-in-behavior Phase 7B.5A algorithm (§20.2) — gained one additive step inside its existing `$transaction`: immediately before orphaning `ChainTrade` rows above the ancestor height, it captures the distinct `tokenAddress` values about to lose canonical trades, then (after orphaning) writes one `CandleInvalidation` row per affected token with `invalidatedFromTimestamp = ` the real ancestor block's own timestamp (captured from the same `getBlockRef` call the ancestor search already made — §21.2's `RawBlockRef.timestamp` addition — no second RPC round trip). Using the ancestor's own timestamp as a conservative lower bound can cause one extra bucket to be recomputed unnecessarily; it can never miss one. A crash between orphaning trades and writing the invalidation record cannot happen — they commit atomically or not at all.
+
+**Convergence.** The candle worker processes unprocessed `CandleInvalidation` rows **before** any forward progress on any token, every tick (`processInvalidations()` in `candleAggregationService.ts`), grouping multiple pending rows for the same token into one recompute call (`min(invalidatedFromTimestamp)`). After a successful recompute: if any canonical trade remained in the window, `CandleAggregationCheckpoint` is set to that trade's `(sourceHeight, sourceIndex)`; if the window is now genuinely empty (everything in it was orphaned and nothing has replayed back to canonical yet), the checkpoint is **deleted** rather than left pointing at now-orphaned history — the next forward tick then treats the token as a fresh full recompute, which is exactly what correctly picks up a later-revived trade regardless of its height (proven directly — see below). The `CandleInvalidation` rows are marked `processedAt` only after a successful recompute; a `DECIMALS_UNAVAILABLE` failure leaves them unprocessed for a later tick (durable, restart-safe — survives a worker crash between detection and recompute).
+
+**Provisional/final interaction.** `determineCandleStatus()` (§21.11) checks `unresolvedReorg` as an independent, first-priority condition — an unresolved reorg on either the discovery or trade checkpoint (`reorgUnresolvedAt` set) forces every bucket to `PROVISIONAL`, and the cheap finality-promotion sweep (§21.11) skips entirely while unresolved, so **no bucket can become newly FINAL while a reorg is unresolved**, independent of how much confirmed time has otherwise passed.
+
+**Tested against the real Phase 7B.5A reorg-recovery algorithm** (`src/candles/__tests__/reorgInvalidation.dbIntegration.test.ts`, real PostgreSQL, calling the actual unmodified `attemptReorgRecovery()`):
+
+- a bucket with multiple trades where one becomes orphaned → the whole bucket is recomputed, excluding exactly the orphaned trade's contribution to open/high/low/close/volume;
+- a reorg spanning two adjacent 1h buckets → both buckets are correctly recomputed (the coarsest-boundary-aligned window covers the whole affected range in one pass);
+- a trade orphaned and later canonically revived on replay (the same `chain_sourceTxHash_sourceIndex` upsert reviving `canonicalStatus: CANONICAL`, exactly what `tradeListener.ts` does on replay) → the candle converges back to including it, via the "checkpoint deleted on empty window → next tick does a fresh full recompute" mechanism above;
+- after convergence, every persisted candle across every resolution is checked and never reflects the orphaned-only outlier value.
+
+### 21.11 Provisional vs. final — the exact invariant
+
+```
+status(bucket) = FINAL   iff   NOT unresolvedReorg
+                            AND tradeCheckpoint.lastHeightTimestamp is known
+                            AND tradeCheckpoint.lastHeightTimestamp >= bucketStart + resolutionSeconds
+                 else PROVISIONAL
+```
+
+(`src/candles/finality.ts`'s `determineCandleStatus()`.) **Never** "wall clock moved past the bucket end" — the only evidence used is the Pons **trade** checkpoint's own confirmed chain time (`ChainIngestionCheckpoint.lastHeightTimestamp`, §21.2), which only ever advances after the trade listener commits a real, `PONS_CONFIRMATION_LAG_BLOCKS`-lagged block range — itself already a safe/confirmed-progress signal, not the live tip. If that evidence is missing entirely (trade listener has never yet ticked), the bucket stays `PROVISIONAL` indefinitely rather than defaulting to anything else.
+
+**A bucket can become final without new trades for that specific token.** Finality is purely a function of `(bucketStart, resolution, checkpoint state)` — never of whether a given token saw new trades. `runCandleAggregationTick()` therefore runs a separate, cheap, bounded sweep every tick (`promoteFinalizedCandles()` — one `updateMany` per resolution, never per-row/per-token) that flips any eligible `PROVISIONAL` row to `FINAL` directly, independent of forward/invalidation processing. This does not bump `revision` (a pure status flip, not a value change) and is not published as a realtime event — a documented, deliberate simplification (§21.13/§21.20 discusses what this defers).
+
+Tested directly and in isolation (`src/candles/__tests__/finality.test.ts`, pure unit tests: no checkpoint evidence → provisional; confirmed progress before/at/after the bucket end; unresolved reorg overrides everything; resolution width changes the threshold) and end-to-end (`candleAggregationService.dbIntegration.test.ts`'s *"provisional/final transition"* test: a bucket starts provisional with no checkpoint, becomes final once confirmed progress passes its end **on a later tick with no new trades for that token**, and reverts to provisional the moment an unresolved reorg is recorded even with confirmed progress far past the bucket).
+
+### 21.12 Worker lifecycle
+
+`npm run candles:worker` (`src/candles/scripts/candlesWorkerMain.ts`) — a separate process from `pons:worker` and `api`, matching the target pipeline in §21.1. Every tick: process pending invalidations (§21.10, bounded to `CANDLES_MAX_INVALIDATION_TOKENS_PER_TICK` distinct tokens), forward-process a bounded batch of tokens (`CANDLES_MAX_FORWARD_TOKENS_PER_TICK`), sweep finality promotions (§21.11), record a `CandleWorkerRunState` summary (§21.14), sleep `CANDLES_POLL_INTERVAL_MS`. Restart-safe and idempotent (every write path is upsert-or-full-recompute — proven directly by dedicated "restart idempotency"/"rebuild idempotency" tests, §21.19, and by a real worker-process restart against live mainnet data, §21.18). Never holds an unbounded in-memory trade history (`recompute.ts`'s `cap` bounds every trade page). Graceful `SIGINT`/`SIGTERM`: awaits the in-flight tick before disconnecting Prisma, same pattern as `ponsWorkerMain.ts`.
+
+**Single-replica only, documented explicitly** (phase7b5b.txt §8 requires this be stated, not implied): like `pons:worker`, this process has no lease/partitioning mechanism. Two replicas would double-process (idempotent writes make this safe from a *correctness* standpoint, but wastes RPC calls and could interleave a token's recompute+checkpoint-advance non-atomically across processes) — do not run more than one instance per chain/database. This is explicitly deferred Kubernetes-readiness work, not built in this phase (phase7b5b.txt: "the process boundary merely needs to be Kubernetes-ready later").
+
+Needs read-only Robinhood RPC access (the same `ROBINHOOD_RPC_HTTPS`/`PONS_*`/`WETH_QUOTE` env as `pons:worker`) — not to ingest facts (it never writes `DiscoveredToken`/`ChainTrade`), but because `decimalsResolver.ts` resolves each token's verified `decimals()` lazily (§21.5). The `/api/v1` process itself still never calls RPC to serve a candle request (§21.13) — only this worker does, and only for decimals.
+
+### 21.13 API contract
+
+`GET /api/v1/tokens/robinhood/:tokenAddress/candles` (`src/researchApi/routes/robinhoodTokens.ts`, registered on the same router as the existing token/trade/status routes; contracts in `src/researchApi/contracts/candles.ts`, registered in the shared OpenAPI generator). Reads `MarketCandle` only — never Robinhood RPC inline.
+
+Query: `resolution` (required, one of the seven — §21.7), `from`/`to` (optional Unix seconds, `from > to` → `400 BAD_REQUEST`), `limit` (1–1000, default 500), `cursor` (opaque, the next Unix second to resume strictly at-or-after — ascending pagination).
+
+Response, in full: `chain`, `venue`, `tokenAddress`, `quoteAddress`, `resolution`, `candles[]` (`startTime` Unix seconds, `open/high/low/close/volumeToken/volumeQuote` decimal-safe strings via Prisma `Decimal#toFixed()` — never scientific notation, `volumeUsd` string-or-null, `trades`, `uniqueTraders`, `status: "provisional"|"final"`, `updatedAt`), `nextCursor` (Unix seconds or `null`), `observedAt`, `freshness` (`live|lagging|degraded|reorg_recovery|unavailable` — the worse of candle-aggregation health §21.14 and upstream Pons ingestion health §20.5, never inferred client-side), `pricingBasis` (a human-readable description of what open/high/low/close actually are — §21.4), `uniqueTraderSemantics` (§21.7's exact caveat, in every response, not just documentation), and `usd: { available, provider, note }` (§21.5's honest USD-availability status).
+
+Candles are returned **ascending by `bucketStart`** — the documented, deterministic order for chart rendering and cursor-forward backfill merging (phase7b5b.txt §12). Malformed address → `400 INVALID_ADDRESS` (reusing `validateRobinhoodAddress`); invalid resolution/time range → `400 BAD_REQUEST` (reusing the standard error envelope); undiscovered token → `404 NOT_FOUND`; a resolution/range with genuinely no candles → `200` with an empty `candles` array (not an error). All of this proven with real PostgreSQL + real Express + real `supertest` HTTP requests, no mocked DB layer (`src/researchApi/__tests__/robinhoodCandles.dbIntegration.test.ts`).
+
+### 21.14 Realtime contract (implemented, within the existing Phase 7B.2 model)
+
+Inspected Phase 7B.2's realtime architecture first (§17.3–§17.5) — this reuses the exact same `EventBus`/WebSocket infrastructure, not a second WebSocket server. A new event type, `token.candle.updated` (`RealtimeEventType.TOKEN_CANDLE_UPDATED`), published via a new `publishCandleEvent()` (`src/researchApi/realtime/eventPublisher.ts`) to a new channel convention `candle:{chain}:{tokenAddress}:{resolution}` (`candleChannel()`), carrying the exact fields phase7b5b.txt §14 required: stable event identity (the existing envelope's `version`/`eventId`), token address, chain, resolution, a **complete** latest candle snapshot (same shape as the REST `Candle`), a deterministic sequence (`MarketCandle.revision`), and an observed timestamp.
+
+**Subscription model — a deliberately narrow, documented extension, not a rewrite.** Candle data is public market data, not user-owned, unlike the existing `subscribe`/`unsubscribe` (job-key, gated by `userOwnsJob`). Two new client message types, `subscribeCandles`/`unsubscribeCandles` (`{chain, tokenAddress, resolution}`, schema-validated against the same seven resolutions), were added to `websocketServer.ts`'s existing message handler with **no additional ownership check** — the read-access boundary is identical to the REST route's: the WebSocket connection itself is already authenticated (a ticket only issues from an authenticated `POST /api/v1/realtime/tickets` call), which is the same gate REST candle reads sit behind. This was assessed as a narrow, backward-compatible addition (new message types, new channel helper, no change to the existing job-subscription code path or its security model) rather than "a major unrelated rewrite of the Phase 7B.2 WebSocket authorization/subscription model" phase7b5b.txt §14 said to avoid — so it was implemented, not stopped short at a documented-only contract.
+
+**Emitted sparingly, by design.** The candle worker publishes `token.candle.updated` **only** from steady-state forward progress (never from bulk backfill or reorg-driven recompute — those touch potentially many historical buckets and are not "live" news), and only for the single most-recently-changed bucket per resolution per tick — never every bucket that changed. The provisional→final sweep (§21.11) does not publish an event at all (a pure status flip, no revision bump).
+
+**Realtime is an optimization only.** REST reconciliation (`GET .../candles`) is authoritative after any disconnect/reconnect — nothing in the realtime path is required for correctness, and `MarketCandle.revision` lets a client detect and discard an out-of-order/duplicate event on its own.
+
+Not implemented: dedicated automated tests for the WebSocket candle-subscription wire protocol itself (the existing `websocketServer.test.ts`/realtime suites were not extended with a candle-specific subscribe/reconnect test in this phase — see §21.20). The event contract, channel convention, and publish-gating logic above are implemented and exercised indirectly by the candle worker's realtime call (`onCandleUpdated`) in `candlesWorkerMain.ts`, but a dedicated WS-level test is deferred.
+
+### 21.15 Candle service health
+
+`src/candles/health.ts` extends `sourceHealth.ts`'s pattern (§20.5) — same vocabulary (`LIVE|LAGGING|DEGRADED|REORG_RECOVERY|UNAVAILABLE`), same "pure read of already-persisted state, never a live probe per request" discipline — rather than a parallel mechanism. `CandleWorkerRunState` (one row per chain, §21.8) is written once per tick (`recordCandleWorkerRunState`/`recordCandleWorkerFailure`) with the whole-tick summary: `lastTickAt`/`lastSuccessAt`/`lastError`/`lastErrorAt`, `lastTokensProcessed`, `lastCandlesWritten`, `lastBucketsRecomputed`, `lastInvalidationsProcessed`, `lastTickDurationMs`.
+
+`computeCandleHealth()` classifies, in priority order: no run-state row ever written → `UNAVAILABLE`; last tick older than `CANDLES_HEALTH_STALE_MS` → `UNAVAILABLE` (the loop itself appears stopped); any `CandleInvalidation` rows still unprocessed → `REORG_RECOVERY`; the most recent tick recorded a per-token error within `CANDLES_HEALTH_ERROR_WINDOW_MS` → `DEGRADED`; last successful tick older than `CANDLES_HEALTH_LAGGING_MS` → `LAGGING`; else `LIVE`. Exposed as the candle-aggregation half of the API response's `freshness` field (§21.13, combined with `sourceHealth.ts`'s ingestion health — the worse of the two wins), read via `loadCandleHealthThresholds()`, deliberately independent of `loadRobinhoodChainConfig()` so the read-only API process can serve `freshness` without needing the RPC/contract settings only the worker requires (same reasoning as `loadPonsHealthThresholds()`, §20.5).
+
+**Documented simplification — `LAGGING` is not yet a precise measurement of aggregation lag behind Pons trade ingestion.** It is currently "the worker's last successful tick isn't recent," a deliberately simple proxy. A true version (comparing the latest processed trade's `sourceTimestamp` against the trade checkpoint's own confirmed height) is future work; the raw per-tick counters this projection already exposes are exactly the evidence a future phase would use to build it — the same "measure before building it" discipline §20.3 used for pool-set scaling.
+
+### 21.16 Decimal serialization and performance
+
+Every accounting value crosses every boundary (aggregation math, persistence, API JSON) as a decimal-safe string or a fixed-point `BigInt` — never a JS float for accounting (phase7b5b.txt §16). `src/discovery/decimal.ts`'s `parseDecimalToScaledBigInt`/`formatScaledBigInt` are the shared fixed-point primitives (scale 18 throughout the candle domain); the API route uses Prisma `Decimal#toFixed()`, the same discipline §19.6/§20's routes already established, never a bare `.toString()` (which the Phase 7B.4 regression proved can emit scientific notation). Tested directly: very small prices (`0.000000000000000001`), very large volumes (60-integer-digit values, the `Decimal(78,18)` column's actual ceiling), 18-decimal exact round-trips, and zero-division protection (`decimalDivide`'s existing `"0"`-on-zero-denominator behavior, reused unchanged) — `src/discovery/__tests__/normalizedPrice.test.ts`, and confirmed against real mainnet-derived values in §21.18.
+
+Performance counters reported every tick (`CandleWorkerRunState`, §21.15): canonical trades processed, candles inserted/updated (`persistCandleBuckets`'s `inserted`/`updated`/`unchanged` split — an unchanged bucket is never rewritten, never bumps `revision`), buckets recomputed, invalidations processed, tick duration. Bounded DB page sizes throughout (`CANDLES_TRADE_PAGE_CAP` per recompute call, `CANDLES_MAX_FORWARD_TOKENS_PER_TICK`/`CANDLES_MAX_INVALIDATION_TOKENS_PER_TICK` per tick); `persistCandleBuckets` batches writes in chunks of 200 within their own transactions rather than one unbounded transaction over an arbitrary candle set — deliberately **not** repeating Phase 7B.5A's "sequentially upsert everything inside one large interactive transaction" pattern (phase7b5b.txt §17 explicitly warned against copying that merely because §20.7 raised its timeout). No N+1 read pattern: decimals are DB-cached per token (checked before any RPC call) and quote-decimals are additionally memoized in-process per tick (nearly every Pons token shares one `WETH_QUOTE`). `npm audit fix --force` was not run.
+
+### 21.17 Tests
+
+New test files (unit + real-PostgreSQL dbIntegration, following this repo's existing conventions exactly — `describe.skipIf(!RUN_DB_TESTS)`, opt-in via `CANDLES_RUN_DB_TESTS=true`):
+
+| File | Coverage |
+|---|---|
+| `src/discovery/__tests__/normalizedPrice.test.ts` (14) | Normalized amount/price formula, 6/9/18-decimal combinations, fixed-point round-trip, no scientific notation, zero-division protection |
+| `src/candles/__tests__/aggregate.test.ts` (12) | Every resolution, deterministic UTC bucket boundaries, open/high/low/close correctness regardless of input order, same-block `sourceIndex` ordering, volume sums, USD-volume all-or-nothing, distinct-trader counting, no-trade-interval = no candle, 18-decimal precision |
+| `src/candles/__tests__/finality.test.ts` (6) | The exact provisional/final invariant in isolation, including the unresolved-reorg override |
+| `src/candles/__tests__/health.test.ts` (8) | Every `CandleHealthStatus` classification, priority ordering (`REORG_RECOVERY` over `DEGRADED`), self-healing on a clean tick |
+| `src/candles/__tests__/usdPricing.test.ts` (2) | `NullQuoteUsdRateProvider` always reports UNAVAILABLE, never a fabricated rate; no raw URL in its name |
+| `src/candles/__tests__/executionBoundary.test.ts` (6) | No execution/signing/trading/wallet reachability; `aggregate.ts`/`types.ts`/`resolutions.ts` are Pons/EVM-free; never deletes `ChainTrade`/`DiscoveredToken`; worker only starts inside `main()` |
+| `src/candles/__tests__/candleAggregationService.dbIntegration.test.ts` (9) | BUY/SELL + non-18-decimal normalization end-to-end against real Postgres, ORPHANED exclusion, no-candle-for-no-trades, the full provisional→final→reverts-under-unresolved-reorg transition, restart idempotency (fresh `PrismaClient`, zero new writes, `revision` unchanged), rebuild idempotency (checkpoint deleted, recompute converges to identical values), same-block ordering, decimals-unavailable fail-closed |
+| `src/candles/__tests__/reorgInvalidation.dbIntegration.test.ts` (4) | The real, unmodified `attemptReorgRecovery()` → `CandleInvalidation` → recompute → convergence pipeline: mid-bucket orphaning, a reorg crossing a candle boundary, orphan-then-revival convergence, and a whole-history sweep proving no orphan-only value survives across every resolution |
+| `src/researchApi/__tests__/robinhoodCandles.dbIntegration.test.ts` (8) | Real HTTP + real Postgres: valid history with decimal-safe serialization, invalid resolution, invalid time range, malformed address, 404 for an undiscovered token, empty legitimate result, deterministic cursor pagination, OpenAPI registration |
+
+All existing Phase 7B.4/7B.5A tests remain green, unmodified in behavior (only `src/pons/__tests__/testSupport.ts`'s `FakeChainReader.getBlockRef` gained a deterministic fake `timestamp` field, required by `RawBlockRef`'s additive field — no existing assertion reads it).
+
+**Exact counts, this phase's final run:**
+
+- Default suite (`npx vitest run`): **90 test files (75 passed, 15 skipped), 837 tests (776 passed, 61 skipped)** — up from Phase 7B.5A's baseline of 69 passed/11 skipped files (80 total), 728 passed/39 skipped tests (767 total).
+- Opt-in DB-integration suite (`npx vitest run --no-file-parallelism`, `PONS_RUN_DB_TESTS=PUMP_RUN_DB_TESTS=FORENSICS_RUN_DB_TESTS=WALLET_RUN_DB_TESTS=CANDLES_RUN_DB_TESTS=true`): **89 passed / 1 skipped files (90 total), 836 passed / 1 skipped tests (837 total)** — the one skip is `reorgRecovery.anvilFork.test.ts`, gated by its own separate flag.
+- Real-anvil reorg proof (`PONS_RUN_ANVIL_REORG_TEST=true npx vitest run src/pons/__tests__/reorgRecovery.anvilFork.test.ts`): **1 passed** — proving `chainClient.ts`'s new `RawBlockRef.timestamp` field and `reorgRecovery.ts`'s new `CandleInvalidation`-writing step did not regress the real-node reorg proof.
+- `npx tsc --noEmit`: clean.
+- `npm run build`: clean.
+
+### 21.18 Real infrastructure proof
+
+Ran the existing Pons live-verification harness (`npx ts-node src/pons/scripts/liveVerification.ts`, unchanged script) against a fresh disposable PostgreSQL 16 container and real Robinhood Chain mainnet RPC — the same historical range Phase 7B.4/7B.5A already validated (`[9019252, 9069251]`). Result: identical to the prior phases' recorded counts — **9 real `DiscoveredToken` rows, 180 real `ChainTrade` rows**, and — new in this phase — **all 180 trades got a real, RPC-resolved `sourceTimestamp`** (e.g. block `9019252` → `2026-07-13T22:16:02.000Z`), proving §21.2's per-tick timestamp resolution against genuinely live infrastructure, not just the fake-chain dbIntegration tests.
+
+Then ran `npm run candles:worker` (real process, real mainnet RPC for decimals resolution, real PostgreSQL) against that data:
+
+- **First tick:** 9 tokens forward-processed, **552 real candles written** across all seven resolutions (`S1: 152, S5: 136, S15: 116, M1: 72, M5: 37, M15: 24, H1: 15`), decimals genuinely resolved via real `decimals()` calls against Robinhood Chain mainnet (both the sampled token and `WETH_QUOTE` returned `18`).
+- **Every subsequent tick (7 more, over 30s):** `0 token(s) forward-processed, 0 candle(s) written` — steady state, no duplicate volume, no duplicate rows.
+- **Full process restart** (fresh `PrismaClient`, fresh RPC connection, `SIGTERM` after the first run, new process started): first tick after restart reported `0 token(s) forward-processed, 0 candle(s) written` — resumed cleanly from persisted `CandleAggregationCheckpoint` rows, and the total `MarketCandle` row count was confirmed unchanged (552 before and after) — restart convergence proven against real infrastructure, not a scripted fake.
+- **Real HTTP response:** started the real Express app (`createApiServer`) against the same live-verified database and issued a real HTTP `GET` to `/api/v1/tokens/robinhood/0xbf71e7594725d0b537e151a9de8158b24a44fad3/candles` at `1h`, `5m`, and `1m` resolutions — all returned correctly-shaped, decimal-safe (non-exponential) JSON, one `FINAL` and one `PROVISIONAL` bucket at `1h` (provisional/final correctly derived from the one-shot verification run's own checkpoint state — see the honesty note below), and consistent trade counts across resolutions (the `1h` bucket's constituent `5m`/`1m` buckets' `trades` sum to the same total).
+- **Manual cross-check of a sample candle against its underlying canonical trades:** the `1m` candle at `startTime=1783981380` (3 trades) was independently recomputed by hand from the raw `ChainTrade` rows (`tokenAmount`/`quoteAmount`, both 18 decimals, verified via real `decimals()` reads) using the exact formula in §21.4 — `open`, `close`, `high`, `low`, `volumeToken`, and `volumeQuote` all matched the API's reported values exactly, digit for digit (`open: 0.000000001396464423`, `volumeToken: 33124569.974242984704180741`, etc.).
+
+**Honesty notes, not overclaimed:**
+
+- This is a **one-shot historical verification run**, not a continuously-polling production deployment — the API response's overall `freshness` correctly reported `unavailable` (Pons ingestion health, §20.5, correctly considers a one-shot checkpoint stale relative to wall-clock `PONS_HEALTH_STALE_MS`), which is honest, expected behavior for this verification methodology, not a defect.
+- **USD pricing was not exercised** — `usd.available: false` throughout, exactly as designed (§21.5's `NullQuoteUsdRateProvider`); no historical-rate source was invoked because none exists in this environment.
+- **No real Robinhood Chain reorg was observed or forced** during this run (mainnet reorgs cannot safely be manufactured — same rule as §20.8/§20.13). §21.10's reorg-invalidation pipeline is proven against the real, unmodified `reorgRecovery.ts` algorithm with real PostgreSQL (§21.9's dbIntegration suite) and, transitively, against the real-anvil reorg proof (§21.17) that the same `getBlockRef`/`reorgRecovery.ts` code path this phase extended still passes — but "a real Robinhood Chain reorg specifically recomputing real mainnet candles" was not and could not responsibly be observed.
+- No real WebSocket client exercised the `token.candle.updated` event against this live data in this verification run (§21.14/§21.20) — the realtime contract's shape and publish-gating logic were verified by direct function-level testing and code inspection, not a live subscriber.
+
+### 21.19 LOCALLY PROVEN — recorded evidence and reproducible checks
+
+| Evidence | What it establishes |
+|---|---|
+| `npx prisma migrate deploy` against a fresh disposable PostgreSQL 16 container (twice, on two separate containers) | The full migration chain, including `20260907015813_add_candle_domain`, applies cleanly to an empty database |
+| `npx prisma validate` / `npx prisma generate` | Schema is valid; client generates cleanly |
+| `npx tsc --noEmit` | Clean |
+| `npx vitest run` | 75 passed / 15 skipped files (90), 776 passed / 61 skipped tests (837) |
+| `npx vitest run --no-file-parallelism` with all five `*_RUN_DB_TESTS` flags | 89 passed / 1 skipped files (90), 836 passed / 1 skipped tests (837) — every opt-in DB-integration suite in the whole repo, not just this phase's |
+| `PONS_RUN_ANVIL_REORG_TEST=true npx vitest run src/pons/__tests__/reorgRecovery.anvilFork.test.ts` | The real-node reorg proof still passes unmodified against this phase's `chainClient.ts`/`reorgRecovery.ts` changes |
+| `npm run build` | Clean |
+| §21.9/§21.10's dedicated dbIntegration suites | Forward aggregation, backfill-via-recompute, and reorg invalidation/recompute mechanics, each against real PostgreSQL |
+| §21.18's real mainnet run (`liveVerification.ts` + `candles:worker` + real HTTP) | Real Robinhood logs → canonical `ChainTrade` (with real resolved `sourceTimestamp`) → candle worker (with real resolved `decimals()`) → 552 persisted real candles → real `/api/v1/.../candles` HTTP responses across 3 resolutions → idempotent repeat ticks (0 duplicate writes) → clean process restart convergence (552 candles, unchanged) → one sample candle manually verified digit-for-digit against its underlying trades |
+
+### 21.20 NOT PROVEN / deferred / implementation limits
+
+1. **USD pricing has no real historical source.** `NullQuoteUsdRateProvider` is the only implementation; every `volumeUsd`/`usd.available` in this phase is honestly `null`/`false`. The interface (`QuoteUsdRateProvider`) is ready for a real implementation (e.g. a time-aligned Chainlink round query, or a paid historical-price API with the provenance this codebase's external-protocol rule would require) — that production source decision is unmade, deliberately, per phase7b5b.txt §3's explicit instruction not to invent one.
+2. **`LAGGING` candle health is a simplified proxy** ("worker hasn't ticked recently"), not yet a precise measurement of aggregation lag behind Pons trade ingestion specifically — see §21.15's documented-simplification note.
+3. **No dedicated WebSocket-level test for `subscribeCandles`/`token.candle.updated`.** The event contract and publish-gating logic (§21.14) are implemented and exercised via the candle worker's `onCandleUpdated` call path, but a `websocketServer.test.ts`-style test subscribing a real WS client, asserting reconnect-relies-on-REST, and checking no cross-user/security regression was not added in this phase.
+4. **No real Robinhood Chain mainnet reorg was observed or forced** — §21.10's reorg-invalidation pipeline is proven against the real Phase 7B.5A `reorgRecovery.ts` algorithm (real PostgreSQL) and the real-anvil-node proof (§21.17), not against Robinhood Chain's own consensus forking, which cannot responsibly be tested any other way (same rule as §20.8/§20.13).
+5. **Single-worker-per-database only** (§21.12) — no lease/partitioning mechanism; running two `candles:worker` replicas against the same database is not supported, only "not incorrect" (idempotent writes) but wasteful and not interleaving-safe for checkpoint advancement.
+6. **Live crash-mid-tick proof.** As with `pons:worker` (§20.13 item 2), no checked-in harness `kill -9`s a live-ticking `candles:worker` process; the atomicity argument (`persistCandleBuckets`'s chunked transactions, `recomputeCandlesFromTimestamp`'s delete-then-reinsert-in-order) and the dbIntegration restart-idempotency tests are the evidence, not an actual process kill.
+7. **Production-scale token-count/RPC-limit numbers.** `CANDLES_MAX_FORWARD_TOKENS_PER_TICK`/`CANDLES_TRADE_PAGE_CAP` defaults were chosen without measured production trade volume, the same "no guessing, measure first" caveat §20.3 already applies to Pons trade-pool scaling — the per-tick counters this phase adds (§21.15/§21.16) are what a future phase would use to tune them with real numbers.
+8. **Testnet.** Unchanged from §19.9/§20.13 — no verified testnet Pons deployment is available to this project, so no testnet-specific candle proof exists either.
+9. **Legacy-factory / pre-`PONS_FACTORY`-activation historical backfill** remains explicitly out of scope (phase7b5b.txt §11's "keep these concepts separate," reaffirmed here) — §21.9's backfill only ever rebuilds from `ChainTrade` rows this project already has, never fetches additional history from the chain.
+
+### 21.21 Handoff to Phase 7B.5C (frontend)
+
+Recommended scope, in the exact order the backend now supports it:
+
+- Replace `adapters/fixtureCandleGateway.ts` with a real `CandleDataGateway` implementation calling `GET /api/v1/tokens/robinhood/:tokenAddress/candles` (§21.13) — the response shape already matches `CandleHistoryResponse` closely (`candles[]`, `nextCursor`, `observedAt`, a `freshness`-like field), but is **chain/venue-explicit** (`chain`, `venue`, `tokenAddress`, `quoteAddress`) rather than using `mint`/`source: pump|pumpswap|mixed` — the frontend adapter is the layer that should map this onto (or extend) its existing `Candle`/`CandleHistoryResponse` types, not the other way around (phase7b5b.txt §13's instruction, honored by not forcing Solana vocabulary into this backend).
+- Wire `subscribe(mint, resolution, ...)` to the new `subscribeCandles`/`token.candle.updated` WebSocket contract (§21.14) for a Robinhood-chart context, keeping the existing REST-reconciliation-on-reconnect behavior the frontend contract already documents (`CandleDataGateway`'s own docs already say this — no frontend behavior change needed there, only a new gateway implementation).
+- The frontend's `SolUsdRatePoint`/`getSolUsdHistory` concept has no Robinhood/WETH equivalent yet (§21.20 item 1) — the chart should render quote-denominated (WETH) prices only for Robinhood tokens until a real historical USD source exists; `usd.available: false` in every response today is the signal to gate any USD toggle off entirely, not estimate one.
+- `uniqueTraders` must be labeled/tooltipped with the exact caveat the API already returns in `uniqueTraderSemantics` (§21.7) — "observed swap recipients," not verified unique users — if the frontend surfaces this number at all for Robinhood tokens.
+- `status: "provisional"|"final"` should drive the same visual treatment (if any) the frontend already has planned for Pump.fun candles — the semantics now match exactly (§21.11), just derived from Robinhood-specific ingestion checkpoints instead of Solana slots.
+- Do not build this against a fixture — real historical data for the 9 real tokens discovered in §21.18's live run is available in any environment that runs `liveVerification.ts` + `candles:worker` against the same historical range, for real integration testing.

@@ -64,6 +64,16 @@ export interface ChainClientOptions {
 export interface RawBlockRef {
   readonly number: bigint;
   readonly hash: string;
+  /**
+   * Phase 7B.5B §1 — the block's own `timestamp` field (Unix seconds), the
+   * real source-chain time. Every existing getBlockRef() caller already
+   * fetches a full block; this is additive so tradeListener.ts's per-tick
+   * timestamp resolution (deduplicated/cached per unique height, never one
+   * RPC read per trade — phase7b5b.txt §1) and reorgRecovery.ts's
+   * ancestor-timestamp capture (for CandleInvalidation, §9) can reuse the
+   * exact same call instead of a second RPC round trip.
+   */
+  readonly timestamp: bigint;
 }
 
 /**
@@ -142,7 +152,7 @@ export class PonsChainClient implements ChainReader {
   async getBlockRef(blockNumber: bigint): Promise<ChainClientResult<RawBlockRef>> {
     return this.withRetry(async () => {
       const block = await this.client.getBlock({ blockNumber });
-      return { number: block.number, hash: block.hash };
+      return { number: block.number, hash: block.hash, timestamp: block.timestamp };
     });
   }
 
