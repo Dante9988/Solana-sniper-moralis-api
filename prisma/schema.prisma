@@ -764,6 +764,12 @@ model DiscoveredToken {
   enrichmentAttempts        Int              @default(0)
   lastEnrichmentAttemptAt   DateTime?
   lastEnrichmentError       String?
+  /// Phase 7B.5B §2 — verified on-chain via decimals(), never assumed to be
+  /// 18 just because this is an EVM chain. Part of the same enrichment unit
+  /// as supply/isToken0/poolFee: null (and enrichmentStatus PENDING) until
+  /// a real decimals() read succeeds for both this token and quoteAddress.
+  tokenDecimals             Int?
+  quoteDecimals             Int?
   sourceHeight              BigInt
   sourceHash                String
   sourceTxHash              String
@@ -806,6 +812,14 @@ model ChainTrade {
   sourceTxHash    String
   sourceIndex     Int
   observedAt      DateTime        @default(now())
+  /// Phase 7B.5B §1 — the real source-chain block time (from the block's own
+  /// `timestamp` field), never DB insertion time or API observation time.
+  /// Nullable because it is an additive column: rows persisted before this
+  /// phase (none exist in any real deployment yet, but the column must stay
+  /// safe for any environment that already has trade rows) have no value
+  /// until backfilled (scripts/backfillTradeTimestamps.ts) — until then such
+  /// a row cannot contribute to a candle (fail closed, never fabricated).
+  sourceTimestamp DateTime?
   /// Phase 7B.5A §2/§9 — same reorg bookkeeping as DiscoveredToken.
   canonicalStatus ChainFactStatus @default(CANONICAL)
   orphanedAt      DateTime?
@@ -815,6 +829,9 @@ model ChainTrade {
   @@unique([chain, sourceTxHash, sourceIndex])
   @@index([chain, tokenAddress, sourceHeight])
   @@index([chain, canonicalStatus, sourceHeight])
+  /// Phase 7B.5B — the candle aggregator's own read pattern: "canonical
+  /// trades for this token, in source order, after my checkpoint."
+  @@index([chain, tokenAddress, canonicalStatus, sourceHeight, sourceIndex])
 }
 
 /// Persists last-processed chain position per independent ingestion source
@@ -834,6 +851,11 @@ model ChainIngestionCheckpoint {
   /// Chain tip observed on the most recent poll (successful or not) — the
   /// basis for the health projection's block-lag figure.
   lastObservedChainHeight BigInt?
+  /// Phase 7B.5B §10 — the real source-chain block time of `lastHeight`
+  /// (the trade source only; discovery never sets this). A candle bucket
+  /// may only become FINAL once this has moved past the bucket's end —
+  /// "ingestion has safely progressed beyond it," never wall-clock time.
+  lastHeightTimestamp     DateTime?
   lastPollAt              DateTime?
   lastSuccessAt           DateTime?
   lastError               String?
@@ -861,4 +883,110 @@ model ChainBlockCheckpoint {
 
   @@id([chain, height])
   @@index([chain, height])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7B.5B — chain-neutral candle/OHLCV domain, backed by canonical
+// ChainTrade rows. See ARCHITECTURE.md §21 for the full design; the short
+// version: the aggregation algorithm (src/candles/aggregate.ts) is pure and
+// knows nothing about Pons/EVM, only the normalized inputs these tables and
+// src/discovery/types.ts already define.
+// ---------------------------------------------------------------------------
+
+/// Deliberately not named "1s"/"5s"/etc (not a legal Prisma/TS identifier) —
+/// src/candles/resolutions.ts maps these to/from the chain-neutral string
+/// literals the API and (eventually) the frontend actually use.
+enum CandleResolution {
+  S1
+  S5
+  S15
+  M1
+  M5
+  M15
+  H1
+}
+
+enum CandleStatus {
+  PROVISIONAL
+  FINAL
+}
+
+/// Materialized OHLCV candle. Identity is stable and idempotent:
+/// (chain, tokenAddress, resolution, bucketStart). A row exists only for a
+/// bucket that had at least one CANONICAL trade — no fake flat candles for
+/// a quiet interval (phase7b5b.txt §5: "No-trade interval = no candle").
+model MarketCandle {
+  id                String           @id @default(uuid())
+  chain             String
+  venue             String
+  tokenAddress      String
+  quoteAddress      String
+  resolution        CandleResolution
+  bucketStart       DateTime
+  /// Normalized (decimal-adjusted) execution price — see
+  /// src/discovery/normalizedPrice.ts. Never the raw priceQuote ratio.
+  open              Decimal          @db.Decimal(60, 18)
+  high              Decimal          @db.Decimal(60, 18)
+  low               Decimal          @db.Decimal(60, 18)
+  close             Decimal          @db.Decimal(60, 18)
+  volumeToken       Decimal          @db.Decimal(78, 0)
+  volumeQuote       Decimal          @db.Decimal(78, 0)
+  /// Null unless a verified historical quote->USD rate was actually applied
+  /// to every trade in this bucket (§3) — never partially estimated.
+  volumeUsd         Decimal?         @db.Decimal(38, 8)
+  tradeCount        Int
+  /// Distinct observed `ChainTrade.trader` values in this bucket — a swap
+  /// recipient/router-facing address, not necessarily the ultimate economic
+  /// user (§6). Never presented as a stronger "unique user" claim.
+  uniqueTraders     Int
+  status            CandleStatus
+  /// Inclusive [firstSourceHeight, lastSourceHeight] of the canonical
+  /// trades this bucket was built from — diagnostic only, not part of this
+  /// row's identity (a reorg recompute can change these for the same
+  /// bucket).
+  firstSourceHeight BigInt
+  lastSourceHeight  BigInt
+  /// Bumped every time this row's values change (initial write = 1) — lets
+  /// a realtime consumer (§14) detect and ignore an out-of-order update.
+  revision          Int              @default(1)
+  updatedAt         DateTime         @updatedAt
+  createdAt         DateTime         @default(now())
+
+  @@unique([chain, tokenAddress, resolution, bucketStart])
+  @@index([chain, tokenAddress, resolution, bucketStart])
+}
+
+/// Phase 7B.5B §9 — reorg-safe candle invalidation. Written inside the same
+/// transaction reorgRecovery.ts uses to orphan ChainTrade rows (one row per
+/// affected tokenAddress), so a crash between orphaning trades and
+/// invalidating their candles cannot happen. The candle worker processes
+/// unprocessed rows by fully recomputing every bucket at or after
+/// `invalidatedFromTimestamp` from `ChainTrade WHERE canonicalStatus =
+/// CANONICAL` — never incremental arithmetic (OHLC is not safely
+/// reversible by subtraction).
+model CandleInvalidation {
+  id                       String    @id @default(uuid())
+  chain                    String
+  tokenAddress             String
+  invalidatedFromTimestamp DateTime
+  createdAt                DateTime  @default(now())
+  processedAt              DateTime?
+
+  @@index([chain, processedAt])
+  @@index([chain, tokenAddress, processedAt])
+}
+
+/// Phase 7B.5B §7/§8 — the candle worker's own per-token ingestion
+/// progress, independent of the Pons trade checkpoint. Identity is (chain,
+/// tokenAddress): the worker's next tick for a token resumes strictly
+/// after (lastSourceHeight, lastSourceIndex) — the same height-then-index
+/// total order the aggregator itself uses (§1).
+model CandleAggregationCheckpoint {
+  chain            String
+  tokenAddress     String
+  lastSourceHeight BigInt
+  lastSourceIndex  Int
+  updatedAt        DateTime @updatedAt
+
+  @@id([chain, tokenAddress])
 }
