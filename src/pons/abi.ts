@@ -127,6 +127,41 @@ export const ERC20_ABI = [
     inputs: [],
     outputs: [{ name: "", type: "uint8" }],
   },
+  /**
+   * Phase 7D §1 — Pons V2's `getLaunchedToken()` struct has no `supply`
+   * field (unlike V1's — verified on-chain, see abiV2.ts), so V2 enrichment
+   * reads this standard EIP-20 view instead. Universal ERC-20 interface,
+   * not Pons-specific — same no-separate-verification rationale as
+   * `decimals` above.
+   */
+  {
+    type: "function",
+    name: "totalSupply",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  /**
+   * Phase 7D §1 (metadata) — standard EIP-20 name()/symbol(), used instead
+   * of any off-chain metadata service (Moralis is unavailable/not desired —
+   * see discoveryV2Listener.ts) since these are guaranteed by the ERC-20
+   * standard and already verified live for the example token ("Bundle Cat"
+   * / "BUN").
+   */
+  {
+    type: "function",
+    name: "name",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
+  {
+    type: "function",
+    name: "symbol",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "string" }],
+  },
 ] as const satisfies Abi;
 
 /**

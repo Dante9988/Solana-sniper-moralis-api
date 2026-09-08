@@ -12,6 +12,17 @@ export const RobinhoodTokenAddressParamSchema = z
   })
   .openapi("RobinhoodTokenAddressParam");
 
+/** Phase 7D §1 — Pons V2 metadata socials, decoded from the launch transaction itself (never contract storage — see abiV2.ts). Any field may be an empty string if the launcher left it blank; the whole object is null-valued (all fields null) when richMetadataStatus is "UNAVAILABLE". */
+export const TokenSocialsSchema = z
+  .object({
+    website: z.string().nullable(),
+    twitter: z.string().nullable(),
+    telegram: z.string().nullable(),
+    discord: z.string().nullable(),
+    farcaster: z.string().nullable(),
+  })
+  .openapi("TokenSocials");
+
 export const DiscoveredTokenSchema = z
   .object({
     chain: z.literal("robinhood"),
@@ -19,7 +30,17 @@ export const DiscoveredTokenSchema = z
     tokenAddress: z.string(),
     deployer: z.string(),
     poolAddress: z.string().nullable(),
+    /** Phase 7D §3 — Pons V2's bonding-curve contract address (pre-graduation). Null for V1/other venues. */
+    curveAddress: z.string().nullable(),
     quoteAddress: z.string(),
+    /** Standard ERC-20 name()/symbol() — same enrichment tick as supply. Null while enrichment is PENDING. */
+    name: z.string().nullable(),
+    symbol: z.string().nullable(),
+    logoUrl: z.string().nullable(),
+    description: z.string().nullable(),
+    socials: TokenSocialsSchema,
+    /** "FOUND" | "UNAVAILABLE" | null (V1 tokens, which have no metadata pipeline yet) — a one-shot outcome, never retried once set (see discoveryV2Listener.ts). */
+    richMetadataStatus: z.enum(["FOUND", "UNAVAILABLE"]).nullable(),
     /** Null while enrichment (Phase 7B.5A §4/§9) is still PENDING — never a fabricated default. */
     supply: z.string().nullable(),
     /** COMPLETE once getLaunchedToken() enrichment has succeeded; PENDING while it is retried on later discovery ticks. */
@@ -31,9 +52,16 @@ export const DiscoveredTokenSchema = z
     sourceIndex: z.number().int(),
     observedAt: z.string(),
     graduated: z.boolean(),
+    /** V1 only (polled graduationStatus()) — stay null for Pons V2 rows. */
     graduationPairedPrincipal: z.string().nullable(),
     graduationThreshold: z.string().nullable(),
     graduationCheckedAt: z.string().nullable(),
+    /** Phase 7D §2 — Pons V2's event-sourced graduation (PoolGraduated), never polled. Null until it fires. */
+    graduationPositionId: z.string().nullable(),
+    graduationTokenAmount: z.string().nullable(),
+    graduationPairTokenAmount: z.string().nullable(),
+    /** The Uniswap V4 PoolId, captured from the Initialize log accompanying graduation. Null until then. */
+    poolId: z.string().nullable(),
   })
   .openapi("DiscoveredToken");
 
@@ -43,6 +71,8 @@ export const ChainTradeSchema = z
     venue: z.string(),
     tokenAddress: z.string(),
     poolAddress: z.string().nullable(),
+    /** Phase 7D §2 — set instead of poolAddress for Uniswap V4 trades (no discrete per-pool contract — singleton PoolManager keyed by PoolId). */
+    poolId: z.string().nullable(),
     side: z.enum(["buy", "sell"]),
     tokenAmount: z.string(),
     quoteAmount: z.string(),

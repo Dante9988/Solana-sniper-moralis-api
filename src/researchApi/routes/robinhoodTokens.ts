@@ -45,7 +45,25 @@ function serializeToken(row: DiscoveredToken) {
     tokenAddress: row.tokenAddress,
     deployer: row.deployer,
     poolAddress: row.poolAddress,
+    curveAddress: row.curveAddress,
     quoteAddress: row.quoteAddress,
+    // Phase 7D §1 — name()/symbol() are guaranteed by the ERC-20 standard
+    // and enrich alongside supply; logo/description/socials are decoded
+    // from the launch transaction itself (never contract storage — see
+    // abiV2.ts) and may legitimately be unavailable (richMetadataStatus)
+    // for a launch routed through an unverified intermediary.
+    name: row.name,
+    symbol: row.symbol,
+    logoUrl: row.logoUrl,
+    description: row.description,
+    socials: {
+      website: row.socialWebsite,
+      twitter: row.socialTwitter,
+      telegram: row.socialTelegram,
+      discord: row.socialDiscord,
+      farcaster: row.socialFarcaster,
+    },
+    richMetadataStatus: row.richMetadataStatus,
     // Phase 7B.5A §4/§9 — null while enrichment is still PENDING (batched,
     // bounded-concurrency getLaunchedToken() retried on later discovery
     // ticks). Never a fabricated default.
@@ -61,6 +79,13 @@ function serializeToken(row: DiscoveredToken) {
     graduationPairedPrincipal: decimalToString(row.graduationPairedPrincipal),
     graduationThreshold: decimalToString(row.graduationThreshold),
     graduationCheckedAt: row.graduationCheckedAt?.toISOString() ?? null,
+    // Phase 7D §2 — event-sourced V2 graduation (never polled — see
+    // graduationPairedPrincipal/graduationThreshold above for V1's
+    // poll-only equivalents, which stay null for V2 rows).
+    graduationPositionId: decimalToString(row.graduationPositionId),
+    graduationTokenAmount: decimalToString(row.graduationTokenAmount),
+    graduationPairTokenAmount: decimalToString(row.graduationPairTokenAmount),
+    poolId: row.poolId,
   };
 }
 
@@ -70,6 +95,7 @@ function serializeTrade(row: ChainTrade) {
     venue: row.venue,
     tokenAddress: row.tokenAddress,
     poolAddress: row.poolAddress,
+    poolId: row.poolId,
     side: row.side,
     tokenAmount: decimalToString(row.tokenAmount)!,
     quoteAmount: decimalToString(row.quoteAmount)!,

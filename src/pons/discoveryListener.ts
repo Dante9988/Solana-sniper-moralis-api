@@ -357,16 +357,24 @@ export class DiscoveryListener {
     this.stopping = false;
     const tick = async () => {
       if (this.stopping) return;
+      let result: DiscoveryTickResult | undefined;
       this.currentTick = (async () => {
         try {
-          await this.runOnce();
+          result = await this.runOnce();
         } catch (err) {
           this.logger.error(`Discovery listener tick threw unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
         }
       })();
       await this.currentTick;
       if (!this.stopping) {
-        this.timer = setTimeout(tick, this.config.pollIntervalMs);
+        // Phase 7D — don't wait the full poll interval when this tick
+        // processed a full range but hasn't reached the tip yet (a small
+        // free-tier eth_getLogs range cap means one tick often can't);
+        // otherwise catch-up is strictly slower than new-block production
+        // on a fast chain. Only wait once genuinely UP_TO_DATE (or backing
+        // off from a real error).
+        const delay = result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs;
+        this.timer = setTimeout(tick, delay);
       }
     };
     this.timer = setTimeout(tick, 0);

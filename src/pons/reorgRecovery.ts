@@ -121,6 +121,45 @@ export async function attemptReorgRecovery(deps: ReorgRecoveryDeps): Promise<Reo
         graduationPairedPrincipal: null,
         graduationThreshold: null,
         graduationCheckedAt: null,
+        // Phase 7D §3 — same rationale, for Pons V2's event-sourced
+        // graduation fields. Always already null for non-V2 rows, so this
+        // is a no-op for V1/other venues.
+        graduationPositionId: null,
+        graduationTokenAmount: null,
+        graduationPairTokenAmount: null,
+        graduationSourceHeight: null,
+        graduationSourceHash: null,
+        graduationSourceTxHash: null,
+        // Phase 7D §2 — the Uniswap V4 pool identity is equally a fact of
+        // the (possibly no-longer-canonical) graduation event, not of the
+        // token itself; reset alongside it. name/symbol/logoUrl/
+        // description/socials are deliberately NOT reset here — those are
+        // properties of the token contract/launch call itself (same
+        // address, same immutable facts) regardless of which fork wins.
+        poolId: null,
+      },
+    });
+
+    // Phase 7D §2/§3 — a token can be launched well before ancestorHeight
+    // (so the updateMany above never touches its row, correctly — the
+    // launch itself is still canonical) but graduate *after* it. Pons V2's
+    // graduation is event-sourced and never re-polled once set (unlike
+    // V1's graduationPoller, which re-reads graduationStatus() every tick
+    // regardless), so a reorg that invalidates only the graduation
+    // transaction would otherwise leave a stale graduated=true/poolId on
+    // an un-orphaned, still-canonical row. A separate query, keyed on
+    // graduationSourceHeight rather than sourceHeight, closes that gap.
+    await tx.discoveredToken.updateMany({
+      where: { chain: deps.chain, canonicalStatus: "CANONICAL", graduationSourceHeight: { gt: ancestorHeight } },
+      data: {
+        graduated: false,
+        graduationPositionId: null,
+        graduationTokenAmount: null,
+        graduationPairTokenAmount: null,
+        graduationSourceHeight: null,
+        graduationSourceHash: null,
+        graduationSourceTxHash: null,
+        poolId: null,
       },
     });
 

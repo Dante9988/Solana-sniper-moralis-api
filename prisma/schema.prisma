@@ -749,7 +749,35 @@ model DiscoveredToken {
   tokenAddress              String
   deployer                  String
   poolAddress               String?
+  /// Phase 7D §3 — Pons V2's bonding-curve contract address, carried
+  /// straight off the TokenLaunched event (no enrichment RPC needed). Null
+  /// for every other venue/version, including Pons V1.
+  curveAddress              String?
   quoteAddress              String
+  /// Phase 7D §1 (metadata) — standard ERC-20 name()/symbol(), fetched in
+  /// the same enrichment tick as supply (discoveryV2Listener.ts). Not
+  /// Moralis-sourced (no key / not paid for) — this is a plain on-chain
+  /// read, same reliability class as decimals()/totalSupply().
+  name                      String?
+  symbol                    String?
+  /// Phase 7D §1 (metadata) — logo/description/socials are NOT contract
+  /// storage; they're arguments to PonsV2LaunchFactory.launchToken(...)
+  /// (verified ABI — see abiV2.ts), decoded from the launch transaction
+  /// itself. `richMetadataStatus` is a one-shot outcome ("FOUND" |
+  /// "UNAVAILABLE"), not a retry-until-success field like
+  /// enrichmentStatus: a launch tx that doesn't directly call launchToken
+  /// (routed through an unverified bundler/router) will never start
+  /// matching on retry, so there is nothing to gain by re-attempting.
+  /// `richMetadataSource` records how it was found, for debugging/honesty.
+  logoUrl                   String?
+  description               String?
+  socialWebsite             String?
+  socialTwitter             String?
+  socialTelegram            String?
+  socialDiscord             String?
+  socialFarcaster           String?
+  richMetadataStatus        String?
+  richMetadataSource        String?
   supply                    Decimal?         @db.Decimal(78, 0)
   initialBuyAmount          Decimal          @db.Decimal(78, 0)
   /// From the same getLaunchedToken() enrichment read as supply -- needed by
@@ -781,11 +809,34 @@ model DiscoveredToken {
   canonicalStatus           ChainFactStatus  @default(CANONICAL)
   orphanedAt                DateTime?
   /// Populated by the graduation poller (§4.6), a scheduled read, never an
-  /// event — Pons has no migration/graduation event. Null until first polled.
+  /// event — Pons V1 has no migration/graduation event. Null until first
+  /// polled. For Pons V2 (venue "pons_v2"), `graduated` is instead set
+  /// directly and atomically from a real PoolGraduated event by
+  /// DiscoveryV2Listener (Phase 7D §6) — these two poll-only fields stay
+  /// null for V2 rows; see the graduationPositionId/.../graduationSource*
+  /// fields below for V2's equivalent, event-sourced data.
   graduated                 Boolean          @default(false)
   graduationPairedPrincipal Decimal?         @db.Decimal(78, 0)
   graduationThreshold       Decimal?         @db.Decimal(78, 0)
   graduationCheckedAt       DateTime?
+  /// Phase 7D §3 — Pons V2's migration to Uniswap V4, event-sourced from
+  /// PoolGraduated (never polled — see abiV2.ts). positionId is the
+  /// Uniswap V4 position/lock identifier (e.g. the NFT minted into
+  /// PonsV2LaunchLocker); tokenAmount/pairTokenAmount are the exact
+  /// amounts migrated into that position. Null until PoolGraduated fires;
+  /// reset to null by reorgRecovery.ts if this token's launch is orphaned.
+  graduationPositionId      Decimal?         @db.Decimal(78, 0)
+  graduationTokenAmount     Decimal?         @db.Decimal(78, 0)
+  graduationPairTokenAmount Decimal?         @db.Decimal(78, 0)
+  graduationSourceHeight    BigInt?
+  graduationSourceHash      String?
+  graduationSourceTxHash    String?
+  /// Phase 7D §2 (transaction history) — the Uniswap V4 PoolId, captured
+  /// from the Initialize log that always accompanies PoolGraduated in the
+  /// same transaction (never hand-computed via keccak256(PoolKey) — see
+  /// abiV2.ts). Null until graduation. isToken0 above is reused for V2 too
+  /// once poolId is set: true when this token is Initialize's currency0.
+  poolId                    String?
 
   @@unique([chain, tokenAddress])
   @@index([chain, observedAt])
@@ -801,6 +852,10 @@ model ChainTrade {
   venue           String
   tokenAddress    String
   poolAddress     String?
+  /// Phase 7D §2 — Uniswap V4 has no discrete per-pool contract address
+  /// (singleton PoolManager, keyed by PoolId) — V2 trades set this instead
+  /// of poolAddress; V1/other venues leave it null.
+  poolId          String?
   side            String // buy | sell
   tokenAmount     Decimal         @db.Decimal(78, 0)
   quoteAmount     Decimal         @db.Decimal(78, 0)
