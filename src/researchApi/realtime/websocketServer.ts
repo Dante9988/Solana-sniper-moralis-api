@@ -19,14 +19,23 @@ import { z } from "../contracts/zodOpenApi";
 import { userOwnsJob } from "../../services/scanOwnershipService";
 import { EventBus } from "./eventBus";
 import { createRealtimeEvent } from "./eventEnvelope";
-import { jobChannel } from "./eventPublisher";
+import { candleChannel, jobChannel } from "./eventPublisher";
 import { TicketStore } from "./ticketStore";
+import { CANDLE_RESOLUTIONS } from "../../candles/resolutions";
 
 export const REALTIME_PATH = "/api/v1/realtime";
 
 const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), jobKey: z.string().min(1).max(512) }),
   z.object({ type: z.literal("unsubscribe"), jobKey: z.string().min(1).max(512) }),
+  // Phase 7B.5B §14 — candle subscriptions are public market data, not
+  // user-owned (unlike job subscriptions above): no userOwnsJob-style
+  // ownership check, only schema validation. The WebSocket connection
+  // itself is already authenticated (a ticket only issues to an
+  // authenticated REST caller — realtimeTickets.ts) — that is the same
+  // read-access boundary the REST candle route enforces, never weaker.
+  z.object({ type: z.literal("subscribeCandles"), chain: z.string().min(1).max(64), tokenAddress: z.string().min(1).max(128), resolution: z.enum(CANDLE_RESOLUTIONS as [string, ...string[]]) }),
+  z.object({ type: z.literal("unsubscribeCandles"), chain: z.string().min(1).max(64), tokenAddress: z.string().min(1).max(128), resolution: z.enum(CANDLE_RESOLUTIONS as [string, ...string[]]) }),
 ]);
 
 function isAllowedOrigin(origin: string | undefined, config: ApiConfig): boolean {
@@ -115,6 +124,25 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
     await unsubscribe();
   }
 
+  async function handleSubscribeCandles(conn: ConnectionState, chain: string, tokenAddress: string, resolution: string): Promise<void> {
+    const key = candleChannel(chain, tokenAddress, resolution as never);
+    if (conn.subscriptions.has(key)) return; // idempotent
+    if (conn.subscriptions.size >= config.realtime.maxSubscriptionsPerConnection) {
+      sendError(conn.socket, "SUBSCRIPTION_LIMIT", "Too many active subscriptions on this connection.");
+      return;
+    }
+    const unsubscribe = await deps.eventBus.subscribe(key, (event) => sendJson(conn.socket, event));
+    conn.subscriptions.set(key, unsubscribe);
+  }
+
+  async function handleUnsubscribeCandles(conn: ConnectionState, chain: string, tokenAddress: string, resolution: string): Promise<void> {
+    const key = candleChannel(chain, tokenAddress, resolution as never);
+    const unsubscribe = conn.subscriptions.get(key);
+    if (!unsubscribe) return;
+    conn.subscriptions.delete(key);
+    await unsubscribe();
+  }
+
   wss.on("connection", (socket: WebSocket, _req: IncomingMessage, userId: string) => {
     const conn: ConnectionState = { userId, socket, isAlive: true, subscriptions: new Map() };
     allConnections.add(conn);
@@ -144,8 +172,12 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
       }
       if (result.data.type === "subscribe") {
         void handleSubscribe(conn, result.data.jobKey);
-      } else {
+      } else if (result.data.type === "unsubscribe") {
         void handleUnsubscribe(conn, result.data.jobKey);
+      } else if (result.data.type === "subscribeCandles") {
+        void handleSubscribeCandles(conn, result.data.chain, result.data.tokenAddress, result.data.resolution);
+      } else {
+        void handleUnsubscribeCandles(conn, result.data.chain, result.data.tokenAddress, result.data.resolution);
       }
     });
 

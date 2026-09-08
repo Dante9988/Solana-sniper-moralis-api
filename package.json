@@ -33,10 +33,13 @@
     "forensics:fixture": "ts-node src/forensics/scripts/forensicsFixtureMain.ts",
     "forensics:integration-fixture": "ts-node src/forensics/scripts/forensicsIntegrationFixtureMain.ts",
     "pons:worker": "ts-node src/pons/scripts/ponsWorkerMain.ts",
+    "pons:backfill-timestamps": "ts-node src/pons/scripts/backfillTradeTimestamps.ts",
+    "candles:worker": "ts-node src/candles/scripts/candlesWorkerMain.ts",
     "x:smoke": "ts-node src/x/smoke.ts",
     "api": "ts-node src/researchApi/server.ts",
     "openapi:generate": "ts-node src/researchApi/scripts/generateOpenApiDocument.ts",
-    "test:api-v1": "vitest run src/researchApi"
+    "test:api-v1": "vitest run src/researchApi",
+    "test:candles": "vitest run src/candles src/discovery"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",

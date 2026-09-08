@@ -75,12 +75,18 @@ export class FakeChainReader implements ChainReader {
     return ok(this.latest);
   }
 
+  /** height (as string) -> timestamp override, for tests that need to control real-time ordering/finality math precisely. Every other height gets a deterministic, monotonically-increasing-with-height fake timestamp (Phase 7B.5B). */
+  blockTimestampOverrides = new Map<string, bigint>();
+
   async getBlockRef(blockNumber: bigint): Promise<ChainClientResult<RawBlockRef>> {
     if (this.getBlockRefUnavailableHeights.has(blockNumber.toString())) {
       return fail(`simulated getBlockRef failure at ${blockNumber.toString()}`);
     }
     const hash = this.blockHashOverrides.get(blockNumber.toString()) ?? `0xhash-${blockNumber.toString()}`;
-    return ok({ number: blockNumber, hash });
+    // Deterministic, monotonic-with-height fake timestamp (12s per block,
+    // like real EVM chains roughly average) unless a test overrides it.
+    const timestamp = this.blockTimestampOverrides.get(blockNumber.toString()) ?? 1_700_000_000n + blockNumber * 12n;
+    return ok({ number: blockNumber, hash, timestamp });
   }
 
   async getLogs(params: { address: string | string[]; event: AbiEvent; fromBlock: bigint; toBlock: bigint }): Promise<ChainClientResult<RawEvmLog[]>> {

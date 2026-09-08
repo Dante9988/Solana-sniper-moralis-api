@@ -16,6 +16,8 @@ export const RealtimeEventType = {
   SCAN_COMPLETED: "scan.completed",
   SCAN_FAILED: "scan.failed",
   TOKEN_REPORT_UPDATED: "token.report.updated",
+  /** Phase 7B.5B §14 — a candle worker "steady-state forward progress" update, never emitted for bulk backfill/reorg recompute. Realtime is an optimization only; REST reconciliation (GET .../candles) is authoritative after any disconnect. */
+  TOKEN_CANDLE_UPDATED: "token.candle.updated",
 } as const;
 
 export type RealtimeEventType = (typeof RealtimeEventType)[keyof typeof RealtimeEventType];
@@ -27,6 +29,7 @@ const RealtimeEventTypeSchema = z.enum([
   RealtimeEventType.SCAN_COMPLETED,
   RealtimeEventType.SCAN_FAILED,
   RealtimeEventType.TOKEN_REPORT_UPDATED,
+  RealtimeEventType.TOKEN_CANDLE_UPDATED,
 ]);
 
 export const RealtimeEventEnvelopeSchema = z

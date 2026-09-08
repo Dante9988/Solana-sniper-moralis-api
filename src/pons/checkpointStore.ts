@@ -22,6 +22,13 @@ export interface Checkpoint {
   readonly lastHash: string;
 }
 
+/** Phase 7B.5B §10 — the trade checkpoint's own confirmed source-chain time (never wall clock), read by src/candles/finality.ts to decide whether a bucket can become FINAL. */
+export interface CheckpointFinalityState {
+  readonly lastHeight: bigint;
+  readonly lastHeightTimestamp: Date | null;
+  readonly reorgUnresolvedAt: Date | null;
+}
+
 export interface CheckpointHealthState {
   readonly lastHeight: bigint;
   readonly lastHash: string;
@@ -70,8 +77,15 @@ export class CheckpointStore {
    * callers that need atomicity with other writes should construct a
    * CheckpointStore from a `tx` client inside `prisma.$transaction`. Also
    * records a successful poll (§5 health metadata).
+   *
+   * `lastHeightTimestamp` (Phase 7B.5B §10) is the real source-chain time of
+   * `checkpoint.lastHeight` — set only by the trade listener (see
+   * ChainIngestionCheckpoint.lastHeightTimestamp's schema comment: "the
+   * trade source only; discovery never sets this"), since it is the trade
+   * checkpoint's confirmed progress that gates a candle bucket becoming
+   * FINAL (src/candles/finality.ts), never discovery's.
    */
-  async set(source: string, checkpoint: Checkpoint, observedChainHeight?: bigint): Promise<void> {
+  async set(source: string, checkpoint: Checkpoint, observedChainHeight?: bigint, lastHeightTimestamp?: Date): Promise<void> {
     const now = new Date();
     await this.db.chainIngestionCheckpoint.upsert({
       where: { source },
@@ -80,6 +94,7 @@ export class CheckpointStore {
         lastHeight: checkpoint.lastHeight,
         lastHash: checkpoint.lastHash,
         lastObservedChainHeight: observedChainHeight ?? null,
+        lastHeightTimestamp: lastHeightTimestamp ?? null,
         lastPollAt: now,
         lastSuccessAt: now,
       },
@@ -87,12 +102,20 @@ export class CheckpointStore {
         lastHeight: checkpoint.lastHeight,
         lastHash: checkpoint.lastHash,
         lastObservedChainHeight: observedChainHeight ?? undefined,
+        lastHeightTimestamp: lastHeightTimestamp ?? undefined,
         lastPollAt: now,
         lastSuccessAt: now,
         lastError: null,
         lastErrorAt: null,
       },
     });
+  }
+
+  /** Phase 7B.5B §10 — read just what candle finality needs from a source's checkpoint, without pulling in the full health-state shape. */
+  async getFinalityState(source: string): Promise<CheckpointFinalityState | null> {
+    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source } });
+    if (!row) return null;
+    return { lastHeight: row.lastHeight, lastHeightTimestamp: row.lastHeightTimestamp, reorgUnresolvedAt: row.reorgUnresolvedAt };
   }
 
   /**

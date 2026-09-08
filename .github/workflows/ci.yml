@@ -91,6 +91,10 @@ jobs:
           PUMP_RUN_DB_TESTS: "true"
           FORENSICS_RUN_DB_TESTS: "true"
           WALLET_RUN_DB_TESTS: "true"
+          # Phase 7B.5B — candle domain dbIntegration suites (aggregation
+          # service, reorg-invalidation recompute, candle API route), same
+          # opt-in convention as the flags above.
+          CANDLES_RUN_DB_TESTS: "true"
 
       # Phase 7B.5A follow-up — reorgRecovery.dbIntegration.test.ts proves
       # the recovery algorithm against a scripted fake chain reader; this
