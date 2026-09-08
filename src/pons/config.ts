@@ -135,6 +135,29 @@ export function loadRobinhoodChainConfig(env: NodeJS.ProcessEnv = process.env): 
 export type PonsHealthThresholds = Pick<RobinhoodChainConfig, "healthLaggingBlocks" | "healthStaleMs" | "healthErrorWindowMs">;
 
 /**
+ * Phase 7D §2 — Pons V2 (Uniswap V4 graduation) is a separate, additive
+ * protocol generation from V1 (see abiV2.ts). Deliberately its own narrow
+ * loader, mirroring loadPonsHealthThresholds below, rather than folded into
+ * loadRobinhoodChainConfig: that loader throws if anything required is
+ * missing, so a deployment that hasn't set PONS_V2_FACTORY yet must still
+ * be able to run the V1 discovery/trade/graduation loops untouched. The
+ * locker/graduationExecutor/memeHook/buybackVault/poolManager/
+ * positionManager addresses are deliberately NOT config here — the V2
+ * factory exposes each as a view function (verified live, see abiV2.ts's
+ * header), so DiscoveryV2Listener resolves and caches them at startup
+ * instead of risking stale hardcoded addresses.
+ */
+export interface PonsV2Config {
+  readonly factoryAddress: string;
+}
+
+export function loadPonsV2Config(env: NodeJS.ProcessEnv = process.env): PonsV2Config {
+  return Object.freeze({
+    factoryAddress: requireAddress(env, "PONS_V2_FACTORY"),
+  });
+}
+
+/**
  * The `/api/v1/tokens/robinhood/status` route (§5) needs only these three
  * tunables, never the RPC/contract settings `loadRobinhoodChainConfig`
  * requires — the read-only API process must be able to boot and serve a

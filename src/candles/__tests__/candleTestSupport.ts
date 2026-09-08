@@ -30,6 +30,9 @@ export class CandleFakeChainReader implements ChainReader {
   getLogs(params: Parameters<ChainReader["getLogs"]>[0]) {
     return this.inner.getLogs(params);
   }
+  getTransaction(hash: string) {
+    return this.inner.getTransaction(hash);
+  }
 
   async readContract<T>(params: { address: string; abi: Abi; functionName: string; args: readonly unknown[] }): Promise<ChainClientResult<T>> {
     if (params.functionName === "decimals") {

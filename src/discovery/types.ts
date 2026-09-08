@@ -77,6 +77,28 @@ export interface NormalizedTradeExecuted {
   readonly observedAt: string;
 }
 
+/**
+ * Phase 7D §4 — a token's migration from a bonding curve onto a real AMM
+ * pool, when the venue reports it as a discrete on-chain event rather than
+ * a polled read. Kept separate from NormalizedGraduationStatus below
+ * (which documents the opposite case — no event, poll only) and out of
+ * ChainAdapter's two-method shape for now: this is the first venue with an
+ * event-sourced graduation, and widening that shared seam is a larger,
+ * separate decision than adding this one additive type.
+ */
+export interface NormalizedTokenGraduated {
+  readonly kind: "tokenGraduated";
+  readonly chain: ChainId;
+  readonly venue: string;
+  readonly tokenAddress: string;
+  /** The AMM position/lock identifier minted at graduation (e.g. a Uniswap V4 position NFT's tokenId). */
+  readonly positionId: DecimalString;
+  readonly tokenAmount: DecimalString;
+  readonly pairTokenAmount: DecimalString;
+  readonly provenance: ChainProvenance;
+  readonly observedAt: string;
+}
+
 export type NormalizedChainEvent = NormalizedTokenDiscovered | NormalizedTradeExecuted;
 
 /**

@@ -84,14 +84,22 @@ export interface RawBlockRef {
  * TypeScript, so this interface is the deliberate seam, mirroring
  * ForensicsWorkerDependencies.createRpcClient's injectability.
  */
+/** Phase 7D §1 (metadata) — the minimal fields discoveryV2Listener.ts needs to attempt a direct-call metadata decode: was this transaction's top-level call itself the launch, and if so what was its calldata. */
+export interface RawTransaction {
+  readonly to: string | null;
+  readonly input: string;
+}
+
 export interface ChainReader {
   getBlockNumber(): Promise<ChainClientResult<bigint>>;
   getBlockRef(blockNumber: bigint): Promise<ChainClientResult<RawBlockRef>>;
+  getTransaction(hash: string): Promise<ChainClientResult<RawTransaction>>;
   getLogs(params: {
     address: string | string[];
     event: import("viem").AbiEvent;
     fromBlock: bigint;
     toBlock: bigint;
+    args?: Record<string, unknown>;
   }): Promise<ChainClientResult<RawEvmLog[]>>;
   readContract<T>(params: { address: string; abi: Abi; functionName: string; args: readonly unknown[] }): Promise<ChainClientResult<T>>;
 }
@@ -156,6 +164,13 @@ export class PonsChainClient implements ChainReader {
     });
   }
 
+  async getTransaction(hash: string): Promise<ChainClientResult<RawTransaction>> {
+    return this.withRetry(async () => {
+      const tx = await this.client.getTransaction({ hash: hash as `0x${string}` });
+      return { to: tx.to ?? null, input: tx.input };
+    });
+  }
+
   /**
    * viem v2's getLogs only accepts an AbiEvent (`event`/`args`), not a raw
    * topics array — this wrapper's job is exactly to turn "which event, on
@@ -168,11 +183,14 @@ export class PonsChainClient implements ChainReader {
     event: import("viem").AbiEvent;
     fromBlock: bigint;
     toBlock: bigint;
+    /** Phase 7D §2 — server-side indexed-arg filtering (e.g. an array of Uniswap V4 PoolIds on the singleton PoolManager), passed straight through to viem's own `args`. Optional — omitted entirely for every existing caller. */
+    args?: Record<string, unknown>;
   }): Promise<ChainClientResult<RawEvmLog[]>> {
     return this.withRetry(async () => {
       const logs = await this.client.getLogs({
         address: params.address as `0x${string}` | `0x${string}`[],
         event: params.event,
+        args: params.args as never,
         fromBlock: params.fromBlock,
         toBlock: params.toBlock,
       });

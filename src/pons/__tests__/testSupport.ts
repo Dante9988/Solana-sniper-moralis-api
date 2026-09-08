@@ -108,6 +108,13 @@ export class FakeChainReader implements ChainReader {
     }
     return ok(resolved as unknown as T);
   }
+
+  /** height (as string) -> RawTransaction override; unset hashes return an empty/non-matching transaction (input "0x", to null) rather than throwing, so a test that doesn't care about metadata decoding never has to configure this. */
+  transactionsByHash = new Map<string, { to: string | null; input: string }>();
+
+  async getTransaction(hash: string): Promise<ChainClientResult<{ to: string | null; input: string }>> {
+    return ok(this.transactionsByHash.get(hash.toLowerCase()) ?? { to: null, input: "0x" });
+  }
 }
 
 let addressCounter = 1;
@@ -192,6 +199,7 @@ export function withReadContractConcurrencyTracking(reader: ChainReader, onPeak:
   return {
     getBlockNumber: () => reader.getBlockNumber(),
     getBlockRef: (blockNumber) => reader.getBlockRef(blockNumber),
+    getTransaction: (hash) => reader.getTransaction(hash),
     getLogs: (params) => reader.getLogs(params),
     async readContract<T>(params: { address: string; abi: import("viem").Abi; functionName: string; args: readonly unknown[] }): Promise<ChainClientResult<T>> {
       current += 1;
@@ -213,6 +221,7 @@ export function withGetLogsConcurrencyTracking(reader: ChainReader, onPeak: (pea
   return {
     getBlockNumber: () => reader.getBlockNumber(),
     getBlockRef: (blockNumber) => reader.getBlockRef(blockNumber),
+    getTransaction: (hash) => reader.getTransaction(hash),
     async readContract<T>(params: { address: string; abi: import("viem").Abi; functionName: string; args: readonly unknown[] }): Promise<ChainClientResult<T>> {
       return reader.readContract<T>(params);
     },
