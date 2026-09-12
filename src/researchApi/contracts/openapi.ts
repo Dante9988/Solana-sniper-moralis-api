@@ -17,6 +17,7 @@ import {
   RobinhoodStatusResponseSchema,
 } from "./robinhoodTokens";
 import { CandleHistoryResponseSchema } from "./candles";
+import { CalloutListResponseSchema } from "./callouts";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -245,6 +246,34 @@ registry.registerPath({
   request: { params: JobKeyParamSchema },
   responses: {
     200: { description: "Job status", content: { "application/json": { schema: z.object({ jobKey: z.string(), status: z.string() }).passthrough() } } },
+    401: errorResponse,
+    404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/callouts",
+  summary: "Verified PnL callouts the tracker has already shared, best first (Phase 7F.2).",
+  tags: ["callouts"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { query: z.object({ limit: z.coerce.number().int().min(1).max(100).optional() }) },
+  responses: {
+    200: { description: "Verified callout list", content: { "application/json": { schema: CalloutListResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/callouts/{mint}",
+  summary: "Verified callout history for one token (Phase 7F.2).",
+  tags: ["callouts"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: MintParamSchema },
+  responses: {
+    200: { description: "Verified callout list", content: { "application/json": { schema: CalloutListResponseSchema } } },
     401: errorResponse,
     404: errorResponse,
   },

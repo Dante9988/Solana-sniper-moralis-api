@@ -1,6 +1,6 @@
 # Architecture & Handoff Guide
 
-> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, plus the trading/Telegram surface merged from the `main2` branch).
+> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, **7F.2**, plus the trading/Telegram surface merged from the `main2` branch).
 > Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
 **Snapshot date:** 2026-09-07 (UTC)
@@ -12,6 +12,8 @@
 ---
 
 ## ⚠️ 0. Read this before running `npm run dev`
+
+> **Phase 7F.2 update (§22):** three startup defects were fixed here — a Telegram bot token printed to stdout on every boot (**rotate any token that booted the old code**), every periodic check registered twice so **each PnL card posted to Discord twice**, and a second `client.login()` in `main()` that hung forever and silently skipped everything after it. Running this repo locally with the *production* `TELEGRAM_BOT_TOKEN` will also fight the production instance for Telegram's polling lock (`409 Conflict`); use a separate test bot or leave Telegram unset.
 
 This section exists because the single most important fact about the current state of this repository does not fit anywhere else without getting lost: `npm run dev` starts a live Telegram trading bot alongside everything it already did. **As of this snapshot, that bot is non-custodial** (trades are approved in the user's own wallet app — see §8.2) **and its trading commands are allowlisted** (§8.6); its HTTP server (`src/api/index.ts`) is **off by default** and, when enabled, requires a bearer token on every `/api/*` route (§8.3). Full detail is in §8 — read it before changing any of that, and definitely before running with `API_ENABLED=true` on a network-reachable host.
 
@@ -1520,3 +1522,66 @@ Recommended scope, in the exact order the backend now supports it:
 - `uniqueTraders` must be labeled/tooltipped with the exact caveat the API already returns in `uniqueTraderSemantics` (§21.7) — "observed swap recipients," not verified unique users — if the frontend surfaces this number at all for Robinhood tokens.
 - `status: "provisional"|"final"` should drive the same visual treatment (if any) the frontend already has planned for Pump.fun candles — the semantics now match exactly (§21.11), just derived from Robinhood-specific ingestion checkpoints instead of Solana slots.
 - Do not build this against a fixture — real historical data for the 9 real tokens discovered in §21.18's live run is available in any environment that runs `liveVerification.ts` + `candles:worker` against the same historical range, for real integration testing.
+
+---
+
+## 22. Phase 7F.2 — verified callouts, PnL sharing, and three startup bugs
+
+**Branch:** `feature/phase-7f2-callouts-pnl-sharing`
+**Scope:** make the PnL card a first-class, single-sourced artifact; expose the callouts it produces over `/api/v1`; and fix three defects in `npm run dev` startup that this work surfaced.
+
+### 22.1 Why this phase exists
+
+PnL sharing was already the most externally visible thing this backend does — the tracker renders a card and posts it to Discord/Telegram whenever a call crosses +50%. But it existed only as a side effect of the tracker loop: the renderer was duplicated, the results were never queryable, and the OnlyPump UI rendered a `ComingSoonPanel` pointing at this repo. This phase closes that loop.
+
+### 22.2 The three startup bugs (fix these before anything else)
+
+All three were live in `npm run dev`. They are listed in the order they must be understood, because each one masked the next.
+
+1. **The Telegram bot token was printed to stdout in plaintext.** `src/telegram/telegramBot.ts` logged `console.log(telegramToken)` between two separator lines on every boot, so the token landed in every log file, terminal scrollback and CI artifact that ever captured a startup. Now logs `bot token loaded | MISSING`. **Any token that booted this code before this commit should be treated as disclosed and rotated via BotFather.**
+
+2. **Every periodic check was registered twice.** `startPeriodicChecks(client)` and `scheduleDailyTopTokensReport(client, telegramBot)` were called once at module scope in `src/index.ts` *and* again inside `main()`. Two `setInterval` chains ran concurrently, so **every PnL card was rendered and posted to Discord twice** — visible in the startup log as `🔄 Started periodic checks` appearing twice one second apart. The module-scope pair is removed; `main()` remains the single owner.
+
+3. **`main()` hung forever on a second Discord login.** `src/discord/discord.ts` calls `client.login()` at module scope (bottom of file). `main()` then called `await client.login(...)` again on the same client, which never resolves — so everything after it in `main()` was silently skipped. This was invisible while bug 2 existed, because the module-scope `startPeriodicChecks` call kept PnL checks alive. Removing bug 2 exposed it: periodic checks stopped starting at all. `main()` now waits for readiness (`client.isReady()`, else the `ready` event) with a 30s timeout, and never re-logs-in.
+
+A fourth, related fragility was fixed at the same time: `this.bot.launch()` in `telegramBot.ts` had **no `.catch()`**. Telegraf's `launch()` rejects on any polling failure, so a `409 Conflict: terminated by other getUpdates request` — which happens whenever a second instance of the same bot token polls, e.g. a laptop running `npm run dev` against the production token — became an unhandled rejection that **killed the whole detection backend**, not just Telegram. It now logs and degrades: Discord and detection continue.
+
+> **Operational note:** the 409 above is a real, reproducible consequence of running this repo locally with the production `TELEGRAM_BOT_TOKEN`. Two instances cannot poll one bot. Use a separate test bot locally, or leave Telegram unset.
+
+### 22.3 `src/services/pnlImage.ts` — one renderer, not two
+
+`createPnLImage()` existed as two copies: `src/pnl-check.ts` (the standalone `yarn pnl` script) and `src/services/tokenTrackingService.ts` (the live tracker). They were byte-identical across 136 lines except for one extracted variable, meaning every visual change had to be made twice and could silently drift between what `yarn pnl` previewed and what the tracker actually posted.
+
+Both now import the single `src/services/pnlImage.ts`, which uses the already-canonical `getSolPrice()` from `src/utils/tokenUtils.ts`. The card is unchanged: 1200x675, the OG-image aspect ratio, so it previews correctly when a shared link is unfurled.
+
+> **Known duplication left alone:** `getSolPrice()` still exists as **eight** near-identical copies (`pnl-check.ts`, `simulation.ts`, `pumpfun-sniper.ts`, `tokenTrackingService.ts`, `discord/discord-pumpfun.ts`, `api/index.ts`, `api/standalone.ts`, plus the canonical `utils/tokenUtils.ts`). Only the two PnL call sites were migrated here, deliberately — collapsing the other six touches unrelated trading paths and belongs in its own change with its own tests.
+
+### 22.4 `GET /api/v1/callouts` — the verifiable record
+
+`src/researchApi/routes/callouts.ts`, registered at `/api/v1/callouts`, contract in `src/researchApi/contracts/callouts.ts`. Two routes:
+
+| Route | Returns |
+|-------|---------|
+| `GET /api/v1/callouts?limit=` | Verified callouts, `pnlPercentage` desc then `alertTimestamp` desc. Default 25, max 100. |
+| `GET /api/v1/callouts/{mint}` | Callout history for one token; 404 when it has none. |
+
+The invariant that makes these *verifiable*: **a row only appears here after `tokenTrackingService` has checked it against live market data.** The route filters on `checked: true` AND `pnlPercentage >= CALLOUT_MIN_PNL_PERCENTAGE` (50 — the same bar at which the tracker actually shares a card). It performs pure Prisma reads: it never writes, never re-prices, and never computes a PnL of its own. An unchecked alert with a spectacular notional gain is **not** a callout and is excluded.
+
+`multiple` (`currentMarketCap / initialMarketCap`) is returned alongside the percentage because that is how traders read these. It returns `null` rather than `Infinity`/`NaN` when the initial cap is zero or the current cap is missing — the frontend renders that as an em dash, never as `$0`.
+
+The OpenAPI document is regenerated (`npm run openapi:generate`) and now carries **18 paths**, up from 16.
+
+### 22.5 Verification — real data, not fixtures
+
+- `src/services/__tests__/pnlImage.test.ts` (10 tests) rasterises **real PNGs** through node-canvas and asserts the PNG magic bytes and IHDR dimensions, covering negative PnL, 0%, 100,000%, total loss, and long/emoji token symbols. Stress: 25 sequential renders (heap growth < 150MB, slowest < 5s) and 10 concurrent renders asserting the outputs actually differ. Measured: 25 cards in ~2.0s, 10 concurrent in ~750ms.
+- `src/researchApi/__tests__/callouts.integration.test.ts` (11 tests) runs against the **real Postgres** named by `DATABASE_URL` and seeds rows from **live DexScreener market data** for real Solana mints (WIF, JUP, POPCAT) — not hand-written fixtures — then drives the real Express app over HTTP. It asserts ordering, the 100-row cap, `limit` validation (400 on `0`/`-5`/`abc`/`1.5`), exclusion of flat and unverified calls, 40 concurrent reads inside budget, and that a burst past the configured limit sheds load with `429` and **never** a `500`.
+- One honest caveat: `getSolPrice()`'s live test tolerates CoinGecko's documented `170` fallback, and on a rate-limited run (`429`) that fallback is what gets exercised. A green run proves the fallback is sound, not that a live quote was fetched.
+
+Full backend suite after this phase: **529 passed, 36 skipped, 0 failed** across 54 files.
+
+### 22.6 Known gaps
+
+1. **No PnL card is served over HTTP.** The callouts API returns the numbers; the rendered image still only reaches Discord/Telegram. A `GET /api/v1/callouts/{mint}/card.png` returning the shared renderer's output is the obvious next step and would let the frontend embed the same artifact rather than re-implementing the design in DOM.
+2. **`initialSolInvestment` is hardcoded to 1.0 SOL** in `tokenTrackingService`. Every card claims a 1 SOL entry. That is a marketing simplification, not a measured position, and should be labeled as such or driven by real position size.
+3. **`checkTokenPriceHistory` can simulate.** When a token has no `currentMarketCap`, it falls back to `initialMarketCap * 7.5` — a fabricated 650% gain. Any row reaching the callouts API through that path would be a *simulated* result presented as verified. It is out of scope here, but it undermines the word "verifiable" and should be removed or hard-gated before this API is promoted publicly.
+4. **No pagination cursor.** `limit` caps at 100 with no cursor, so a backlog beyond 100 verified calls is not fully reachable. Fine today; not fine at scale.

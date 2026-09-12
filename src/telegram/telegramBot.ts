@@ -37,9 +37,7 @@ class TelegramBot {
 
   private constructor() {
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-    console.log("===========================")
-    console.log(telegramToken);
-    console.log("===========================")
+    console.log(`📱 TELEGRAM: bot token ${telegramToken ? 'loaded' : 'MISSING'}`);
     if (!telegramToken) {
       console.error('❌ Telegram bot token not found in environment variables');
       throw new Error('TELEGRAM_BOT_TOKEN is required');
@@ -105,8 +103,17 @@ class TelegramBot {
       }
     });
 
-    // Start bot
-    this.bot.launch();
+    // Start bot.
+    // launch() resolves only when polling stops, so it is intentionally not awaited.
+    // It MUST have a catch: an unhandled rejection here (e.g. 409 Conflict when another
+    // instance of this same bot token is already polling getUpdates) would otherwise
+    // crash the entire detection backend, not just Telegram.
+    this.bot.launch().catch((error: unknown) => {
+      const description = (error as any)?.response?.description ?? (error as Error)?.message ?? error;
+      console.error(`📱 TELEGRAM: polling stopped — ${description}`);
+      console.error('📱 TELEGRAM: continuing without Telegram; Discord and detection are unaffected.');
+      this.isInitialized = false;
+    });
     console.log('✅ Telegram bot started successfully');
     this.isInitialized = true;
     
