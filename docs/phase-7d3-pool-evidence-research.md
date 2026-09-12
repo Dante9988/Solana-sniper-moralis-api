@@ -191,3 +191,101 @@ it is labelled as such**: it should be locked with raw regression fixtures (capt
 5. **§5 pre-graduation (G1)** and **V1 (G7)** — separate, each needing its own verified ABI.
 
 Nothing above is implementable from memory, which is the point of this document.
+
+---
+
+## 7. Round 2 — hook semantics answered (2026-09-12, blocks 61336785+)
+
+### 7.1 MemeHook permissions, decoded from its address
+
+Uniswap V4 encodes hook permissions in the **low 14 bits of the hook's address**
+([Hooks.sol](https://github.com/Uniswap/v4-core/blob/main/src/libraries/Hooks.sol),
+`main`, accessed 2026-09-12). No ABI needed — the address is the source of truth.
+
+`0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044` → low 14 bits `0x2044`:
+
+| Flag | State |
+|---|---|
+| `BEFORE_INITIALIZE` | **ON** |
+| `AFTER_SWAP` | **ON** |
+| `AFTER_SWAP_RETURNS_DELTA` | **ON** |
+| `BEFORE_SWAP` | off |
+| `BEFORE_SWAP_RETURNS_DELTA` | off |
+| all liquidity/donate flags | off |
+
+### 7.2 Q2 — dynamic fee: **ANSWERED, no**
+
+Read live from `getLaunchedToken` for two graduated tokens:
+
+```
+poolFee       = 0  (0x0)   DYNAMIC_FEE_FLAG (0x800000) not set
+tickSpacing   = 200
+creatorTaxBps = 200         // 2%
+pairToken     = 0x0000…0000 // native ETH
+phase         = 2           // graduated
+graduationThreshold = 4200000000000000000  // 4.2 ETH
+```
+
+`lpFee = 0` in slot0 is therefore **genuine, not a decoding artefact**: these pools charge
+a zero LP fee. Reporting "0% fee" to a user would still be misleading, because of 7.3.
+
+### 7.3 Q3 — custom swap accounting: **ANSWERED, yes — after the swap, not before**
+
+This is the load-bearing finding, and it cuts both ways:
+
+- `BEFORE_SWAP` is **off** → nothing intercepts the swap before core executes it.
+  **Core pool math is therefore authoritative for pool state.** §5 is sound: the
+  `sqrtPriceX96`/tick/liquidity read in §4 genuinely describe the pool.
+- `AFTER_SWAP_RETURNS_DELTA` is **ON** → the hook takes a delta *after* the swap. With
+  `creatorTaxBps = 200`, a seller's realized proceeds are expected to be ~2% below the raw
+  pool output.
+
+**Consequence for §6:** pool-state math alone must **not** be presented as expected
+proceeds. A sell quote has to account for the hook's after-swap delta, or state plainly
+that it is a pre-tax pool figure. Quoting the raw pool output as "expected output" would
+overstate what a seller receives — precisely the class of dishonesty this phase exists to
+remove.
+
+The 2% figure is currently **inferred** from `creatorTaxBps` plus the delta flag. It is
+not yet confirmed against a decoded settlement, so it must be labelled inferred until it
+is (see 7.5).
+
+### 7.4 Q1 — `hookData`: **probably empty, still inference**
+
+With `BEFORE_SWAP` off, no hook consumes `hookData` on the way in. `afterSwap` receives it,
+but the tax is parameterised on-chain per launch (`creatorTaxBps`), not passed per-call.
+Empty `hookData` is therefore the reasonable default — but this is inference, not a
+decoded fact, and is labelled as such.
+
+### 7.5 PoolKey/PoolId construction — **verified, 3/3**
+
+The strongest validation available: build `PoolKey` from `getLaunchedToken` + `memeHook()`,
+hash it per S2, and compare against the `poolId` this repo already persisted from the
+on-chain `PoolGraduated` event.
+
+| Token | Derived == persisted |
+|---|---|
+| `0x21884b3a…` | **YES** |
+| `0x187b69cb…` | **YES** |
+| `0x8407d207…` | **YES** |
+
+Construction: `currency0/currency1 = sort(pairToken, token)` numerically — here `pairToken`
+is `0x0` (native ETH), so **native is always `currency0` and the launched token is
+`currency1`**. Hence **selling the token is `zeroForOne = false`**.
+
+G3 is closed and verified.
+
+### 7.6 Updated gap status
+
+| Gap | Status |
+|---|---|
+| G2 extsload reader | Math verified §4. **Ready to implement.** |
+| G3 PoolKey/PoolId | **Closed** — verified 3/3 against persisted ids. |
+| G4 no V4Quoter deployed | Still blocking §6. |
+| G5 fee semantics | **Answered** — 0% LP fee, 2% hook tax after swap. |
+| G1 curve ABI (pre-graduation) | Still open — needs the verified curve ABI. |
+| G7 V1 / Uniswap V3 | Still open. |
+
+**§5 for graduated V2 tokens is now fully unblocked and can be implemented from verified
+facts.** Remaining before §6: confirm the after-swap delta against a real decoded
+settlement, then resolve G4.
