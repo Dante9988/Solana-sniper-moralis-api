@@ -866,6 +866,208 @@
           "expiresInMs"
         ]
       },
+      "PoolEvidenceResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AVAILABLE"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/components/schemas/PoolEvidence"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "evidence"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/PoolEvidenceMissingReason"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail"
+            ]
+          }
+        ]
+      },
+      "PoolEvidence": {
+        "type": "object",
+        "properties": {
+          "poolId": {
+            "type": "string"
+          },
+          "poolKey": {
+            "$ref": "#/components/schemas/PoolKey"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "uniswap-v4"
+            ]
+          },
+          "slot0": {
+            "$ref": "#/components/schemas/PoolSlot0"
+          },
+          "liquidity": {
+            "type": "string",
+            "description": "Active in-range liquidity (uint128), decimal string."
+          },
+          "priceC1PerC0X18": {
+            "type": "string",
+            "description": "currency1 per currency0, scaled by 1e18. Decimal string."
+          },
+          "priceC0PerC1X18": {
+            "type": "string",
+            "description": "currency0 per currency1, scaled by 1e18 — native per whole token."
+          },
+          "nativeSymbol": {
+            "type": "string",
+            "description": "Symbol for currency0, e.g. ETH.",
+            "example": "ETH"
+          },
+          "lpFeeHundredthsBip": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Null when the pool uses a dynamic fee. 0 is a real zero fee, not unknown."
+          },
+          "isDynamicFee": {
+            "type": "boolean"
+          },
+          "creatorTaxBps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Basis points the hook takes AFTER the swap. Not applied to any figure here."
+          },
+          "observedAtBlock": {
+            "type": "string"
+          },
+          "calculationVersion": {
+            "type": "string"
+          },
+          "executionCaveat": {
+            "type": "string",
+            "description": "Why these numbers are not an executable quote. Always present for this venue — the Pons hook takes an after-swap delta, so realized proceeds are below raw pool output."
+          }
+        },
+        "required": [
+          "poolId",
+          "poolKey",
+          "protocol",
+          "slot0",
+          "liquidity",
+          "priceC1PerC0X18",
+          "priceC0PerC1X18",
+          "nativeSymbol",
+          "lpFeeHundredthsBip",
+          "isDynamicFee",
+          "creatorTaxBps",
+          "observedAtBlock",
+          "calculationVersion",
+          "executionCaveat"
+        ]
+      },
+      "PoolKey": {
+        "type": "object",
+        "properties": {
+          "currency0": {
+            "type": "string",
+            "description": "Lower-sorted currency. Native ETH (0x0) for Pons V2."
+          },
+          "currency1": {
+            "type": "string",
+            "description": "Higher-sorted currency — the launched token for Pons V2."
+          },
+          "fee": {
+            "type": "integer",
+            "description": "Fixed LP fee in hundredths of a bip, or the dynamic-fee marker."
+          },
+          "tickSpacing": {
+            "type": "integer"
+          },
+          "hooks": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currency0",
+          "currency1",
+          "fee",
+          "tickSpacing",
+          "hooks"
+        ]
+      },
+      "PoolSlot0": {
+        "type": "object",
+        "properties": {
+          "sqrtPriceX96": {
+            "type": "string",
+            "description": "Decimal string — exceeds Number.MAX_SAFE_INTEGER."
+          },
+          "tick": {
+            "type": "integer"
+          },
+          "protocolFee": {
+            "type": "integer"
+          },
+          "lpFee": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sqrtPriceX96",
+          "tick",
+          "protocolFee",
+          "lpFee"
+        ]
+      },
+      "PoolEvidenceMissingReason": {
+        "type": "string",
+        "enum": [
+          "POOL_NOT_INITIALIZED",
+          "NOT_GRADUATED",
+          "NO_LIQUIDITY",
+          "UNSUPPORTED_VENUE",
+          "RPC_UNAVAILABLE"
+        ]
+      },
       "CalloutListResponse": {
         "type": "object",
         "properties": {
@@ -1822,6 +2024,63 @@
             }
           },
           "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/pool": {
+      "get": {
+        "summary": "Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool evidence, or an explicit unavailable reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolEvidenceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

@@ -18,6 +18,7 @@ import {
 } from "./robinhoodTokens";
 import { CandleHistoryResponseSchema } from "./candles";
 import { CalloutListResponseSchema } from "./callouts";
+import { PoolEvidenceResponseSchema } from "./poolEvidence";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -248,6 +249,21 @@ registry.registerPath({
     200: { description: "Job status", content: { "application/json": { schema: z.object({ jobKey: z.string(), status: z.string() }).passthrough() } } },
     401: errorResponse,
     404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/pool",
+  summary:
+    "Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Pool evidence, or an explicit unavailable reason", content: { "application/json": { schema: PoolEvidenceResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
   },
 });
 
