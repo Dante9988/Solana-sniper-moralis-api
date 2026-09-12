@@ -24,6 +24,7 @@ import { createJobsRouter } from "./routes/jobs";
 import { createMeRouter } from "./routes/me";
 import { createRealtimeTicketsRouter } from "./routes/realtimeTickets";
 import { createRobinhoodTokensRouter } from "./routes/robinhoodTokens";
+import { createCalloutsRouter } from "./routes/callouts";
 import { createTokensRouter } from "./routes/tokens";
 import { createWalletsRouter } from "./routes/wallets";
 import { logger } from "./lib/logger";
@@ -68,6 +69,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   // first keeps intent obvious rather than relying on that fact.
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
   app.use("/api/v1/tokens", createTokensRouter(db, config, deps, eventBus));
+  app.use("/api/v1/callouts", createCalloutsRouter(db, config, deps));
   app.use("/api/v1/jobs", createJobsRouter(db, config, deps));
   app.use("/api/v1/wallets", createWalletsRouter(db, config, deps));
   app.use("/api/v1/realtime", createRealtimeTicketsRouter(config, deps, ticketStore));

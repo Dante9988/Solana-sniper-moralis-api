@@ -827,11 +827,9 @@ websocketHandler().catch((err) => {
   console.error(err.message);
 });
 
-// Set up periodic PnL checking
-startPeriodicChecks(client);
-
-// Schedule daily top tokens reports
-scheduleDailyTopTokensReport(client, telegramBot);
+// NOTE: periodic PnL checks and the daily top-tokens report are started in main()
+// below. They used to also be started here at module scope, which registered every
+// setInterval twice and posted each PnL alert to Discord twice.
 
 console.log('📊 PnL tracking system initialized');
 console.log('🏆 Daily top tokens reporting scheduled');
@@ -1111,10 +1109,23 @@ async function main() {
     console.log('🔌 API server not started (API_ENABLED is not "true"). Run with API_ENABLED=true, or separately with `npm run api:server` for the read-only status API.');
   }
 
-  // Initialize Discord client
+  // Initialize Discord client.
+  // NOTE: src/discord/discord.ts already calls client.login() at module scope, so by
+  // the time main() runs the client is usually logging in or ready. Calling login()
+  // a second time on the same client never resolves, which used to hang main() here
+  // and silently skip everything below (periodic PnL checks included).
   try {
-    await client.login(process.env.DISCORD_BOT_TOKEN);
-    console.log('✅ Discord client initialized successfully');
+    if (client.isReady()) {
+      console.log('✅ Discord client already initialized');
+    } else {
+      await Promise.race([
+        new Promise<void>((resolve) => client.once('ready', () => resolve())),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Discord client not ready after 30s')), 30_000)
+        ),
+      ]);
+      console.log('✅ Discord client initialized successfully');
+    }
   } catch (error) {
     console.error('Failed to initialize Discord client:', error);
   }
