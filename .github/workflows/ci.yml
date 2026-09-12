@@ -72,6 +72,9 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      - name: OpenAPI contract drift
+        run: npm run openapi:check
+
       - name: Run tests
         run: npx vitest run
 

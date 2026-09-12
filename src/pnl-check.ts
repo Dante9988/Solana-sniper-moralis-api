@@ -32,19 +32,26 @@ async function getSolPrice(): Promise<number> {
   }
 }
 
-// Function to check token price history similar to checkTokenPriceHistory in tokenTrackingService
-async function checkTokenPriceHistory(token: any): Promise<{ 
+/**
+ * Resolve a token's observed market cap.
+ *
+ * This function used to fabricate a 7.5x (650%) gain whenever `currentMarketCap` was
+ * missing, and the caller then turned that invented number into a PnL percentage, a
+ * shareable PnL card and a Discord/Telegram post. A token nobody had priced would be
+ * broadcast as a 650% winner.
+ *
+ * Missing market data now yields no market cap, which the caller treats as "skip". It
+ * must never produce a PnL, a multiple, a callout, a card, a notification, or AI
+ * evidence. Returning zeros is the contract the caller already checks for.
+ */
+async function checkTokenPriceHistory(token: any): Promise<{
   highestPrice: number;
   highestMarketCap: number;
   timestamp: number | null;
 }> {
   try {
-    console.log(`Fetching price history for ${token.tokenAddress}...`);
+    console.log(`Resolving observed market cap for ${token.tokenAddress}...`);
 
-    // For demonstration purposes, we'll use current market cap from the token data
-    // In a real scenario, you would fetch the current price data from Birdeye or another provider
-    
-    // If the token already has current market cap data, use it
     if (token.currentMarketCap && token.currentMarketCap > 0) {
       return {
         highestPrice: token.currentPrice || 0,
@@ -53,15 +60,13 @@ async function checkTokenPriceHistory(token: any): Promise<{
       };
     }
 
-    // Otherwise, simulate some market cap increase (as a fallback)
-    const simulatedMarketCap = token.initialMarketCap * 7.5; // 650% increase
-    return {
-      highestPrice: token.initialPrice * 7.5,
-      highestMarketCap: simulatedMarketCap,
-      timestamp: Date.now() / 1000
-    };
+    // No observed market cap. Do not estimate, extrapolate or simulate one.
+    console.log(
+      `No observed market cap for ${token.tokenAddress} — skipping. PnL is never derived from estimated data.`
+    );
+    return { highestPrice: 0, highestMarketCap: 0, timestamp: null };
   } catch (error) {
-    console.error('Error fetching price history:', error);
+    console.error('Error resolving market cap:', error);
     return { highestPrice: 0, highestMarketCap: 0, timestamp: null };
   }
 }
