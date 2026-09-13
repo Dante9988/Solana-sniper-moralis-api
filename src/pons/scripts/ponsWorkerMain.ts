@@ -15,7 +15,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { loadRobinhoodChainConfig, loadPonsV2Config, PonsConfigError } from "../config";
-import { PonsChainClient } from "../chainClient";
+import { FailoverChainClient } from "../failoverChainClient";
 import { DiscoveryListener } from "../discoveryListener";
 import { TradeListener } from "../tradeListener";
 import { GraduationPoller } from "../graduationPoller";
@@ -25,7 +25,7 @@ import { ponsLogger, ponsComponentLogger } from "../logger";
 
 async function main(): Promise<void> {
   const config = loadRobinhoodChainConfig();
-  const chainClient = new PonsChainClient({ config });
+  const chainClient = new FailoverChainClient({ config });
   const db = new PrismaClient();
 
   const discoveryListener = new DiscoveryListener({ chainClient, db, config, logger: ponsComponentLogger("pons:discovery") });

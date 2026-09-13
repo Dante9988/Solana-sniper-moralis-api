@@ -40,6 +40,17 @@ service_cmd() {
   esac
 }
 
+# The script path each service runs, used to resolve its real pid after launch.
+service_script() {
+  case "$1" in
+    api)     echo "src/researchApi/server.ts" ;;
+    pons)    echo "src/pons/scripts/ponsWorkerMain.ts" ;;
+    candles) echo "src/candles/scripts/candlesWorkerMain.ts" ;;
+    bot)     echo "src/index.ts" ;;
+    *)       echo "" ;;
+  esac
+}
+
 pid_file() { echo "${RUN_DIR}/$1.pid"; }
 log_file() { echo "${LOG_DIR}/$1.log"; }
 
@@ -52,7 +63,8 @@ is_running() {
   local pid; pid="$(cat "${pf}" 2>/dev/null)"
   [[ -n "${pid}" && -d "/proc/${pid}" ]] || return 1
   # Guard against PID reuse: the command line must still reference this repo.
-  tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -q "ts-node" || return 1
+  local script_path; script_path="$(service_script "$1")"
+  tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null | grep -q "${script_path}" || return 1
   return 0
 }
 
@@ -68,7 +80,21 @@ start_one() {
   cd "${ROOT}"
   # setsid detaches the child so it survives this shell exiting.
   setsid nohup ${cmd} >> "$(log_file "${svc}")" 2>&1 < /dev/null &
-  local pid=$!
+  local launcher=$!
+
+  # `$!` is the npx wrapper, not the node process that actually holds the port. Recording
+  # the wrapper let the pidfile drift: `status` reported "stopped" while a four-hour-old
+  # node process still owned :8787, and every "restart" silently failed to bind and left
+  # stale code serving. Resolve the real node process instead.
+  local script_path; script_path="$(service_script "${svc}")"
+  local pid="" i
+  for i in $(seq 1 20); do
+    pid="$(pgrep -f "ts-node ${script_path}" 2>/dev/null | tail -1)"
+    [[ -n "${pid}" ]] && break
+    sleep 0.5
+  done
+  [[ -z "${pid}" ]] && pid="${launcher}"
+
   echo "${pid}" > "$(pid_file "${svc}")"
   echo "  ${svc}: started (pid ${pid}) -> $(log_file "${svc}")"
 }

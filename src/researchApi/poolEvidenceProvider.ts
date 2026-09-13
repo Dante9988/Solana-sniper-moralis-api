@@ -15,7 +15,8 @@
 import type { Abi } from "viem";
 
 import { PONS_V2_FACTORY_ABI } from "../pons/abiV2";
-import { PonsChainClient, type ChainReader } from "../pons/chainClient";
+import type { ChainReader } from "../pons/chainClient";
+import { FailoverChainClient } from "../pons/failoverChainClient";
 import { loadPonsV2Config, loadRobinhoodChainConfig } from "../pons/config";
 import { fetchPoolEvidence, type PoolEvidenceResult } from "../pons/v4PoolEvidenceService";
 
@@ -47,7 +48,7 @@ export function createPoolEvidenceProvider(env: NodeJS.ProcessEnv = process.env)
     let reader: ChainReader;
     try {
       factoryAddress = loadPonsV2Config(env).factoryAddress;
-      reader = new PonsChainClient({ config: loadRobinhoodChainConfig(env) });
+      reader = new FailoverChainClient({ config: loadRobinhoodChainConfig(env), env });
     } catch (error) {
       // Not misconfiguration in every deployment — an API-only process legitimately has
       // no chain settings. Treated as "evidence unavailable here", not as a crash.
