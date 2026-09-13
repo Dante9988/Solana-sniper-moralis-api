@@ -339,9 +339,35 @@ the Pons MemeHook carries (§7.1). So the swapper's delta, and therefore the quo
 **Consequence:** deploying a `V4Quoter` on Robinhood Chain yields an honest, net-of-tax
 sell quote, and G4 is the only thing standing between us and §6.
 
-### 8.1 Confidence and what is still untested
+### 8.1 Confirmed by execution (2026-09-12)
 
-This is **source-verified, not execution-verified**. The reasoning follows the canonical
+**Superseded: this is now execution-verified.** See `evm-verification/test/QuoterHookDelta.t.sol`.
+
+A Foundry test deploys `PoolManager`, `V4Quoter` and v4-core's `FeeTakingHook` — mounted
+with exactly the Pons swap-side permissions (`AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA`, and
+deliberately no liquidity flags, which Pons also lacks) — then quotes a sell and executes
+the identical sell:
+
+```
+untaxed quote (control) : 996006981039903
+taxed quote             : 983756095173113
+shortfall               :  12250885866790   = 1.23%, exactly the hook fee
+
+quoted                  : 983756095173113
+actually received       : 983756095173113   <- identical
+```
+
+Four tests pass, including a control (no hook), a proof the hook genuinely reduces output
+so the main assertion is not vacuous, and the same equality across four order sizes. The
+harness runs inside Foundry's own EVM — no RPC, no fork, no key, no gas — which is why it
+remained usable while the Alchemy quota was exhausted.
+
+**G4 is therefore the only remaining blocker on §6, and it is now purely an operational
+one: deploy a `V4Quoter` on Robinhood Chain.**
+
+### 8.1.1 Original source-only reasoning (retained)
+
+At the time of writing this was **source-verified, not execution-verified**. The reasoning follows the canonical
 contracts line by line, but no swap has been quoted and then executed to compare the two
 numbers empirically — not on mainnet, not on a testnet, and not on a local node.
 
