@@ -1,0 +1,18 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+solc = "0.8.26"
+evm_version = "cancun"
+ffi = false
+remappings = [
+  "forge-std/=lib/v4-periphery/lib/v4-core/lib/forge-std/src/",
+  "v4-periphery/=lib/v4-periphery/",
+  "@uniswap/v4-core/=lib/v4-periphery/lib/v4-core/",
+  "@uniswap/v4-periphery/=lib/v4-periphery/",
+  "solmate/=lib/v4-periphery/lib/v4-core/lib/solmate/",
+  "permit2/=lib/v4-periphery/lib/permit2/",
+  "@openzeppelin/=lib/v4-periphery/lib/openzeppelin-contracts/",
+  "openzeppelin-contracts/=lib/v4-periphery/lib/openzeppelin-contracts/",
+  "ds-test/=lib/v4-periphery/lib/v4-core/lib/forge-std/lib/ds-test/src/"
+]

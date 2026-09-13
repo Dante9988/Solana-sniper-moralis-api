@@ -137,9 +137,10 @@ describe("GET /api/v1/callouts (real Postgres + live DexScreener market data)", 
     const res = await request(app).get("/api/v1/callouts").expect(200);
 
     expect(res.body.apiVersion).toBe(1);
-    const mine = res.body.callouts.filter((c: any) =>
-      live.some((m) => m.mint === c.tokenAddress)
-    );
+    // Scope to this run: a shared dev database may already hold rows for these same
+    // real mints (seeded for a UI demo, say), and filtering on address alone would
+    // pick those up too.
+    const mine = res.body.callouts.filter((c: any) => (c.tokenName ?? "").includes(TEST_RUN_TAG));
     expect(mine).toHaveLength(live.length);
 
     const percentages = mine.map((c: any) => c.pnlPercentage);
@@ -150,7 +151,9 @@ describe("GET /api/v1/callouts (real Postgres + live DexScreener market data)", 
     const res = await request(app).get("/api/v1/callouts?limit=100").expect(200);
 
     for (const market of live) {
-      const row = res.body.callouts.find((c: any) => c.tokenAddress === market.mint);
+      const row = res.body.callouts.find(
+        (c: any) => c.tokenAddress === market.mint && (c.tokenName ?? "").includes(TEST_RUN_TAG)
+      );
       expect(row, `${market.symbol} missing from callouts`).toBeDefined();
 
       // Round-trips the live FDV through Postgres Float without precision loss.
@@ -186,8 +189,9 @@ describe("GET /api/v1/callouts (real Postgres + live DexScreener market data)", 
   it("returns per-token history, and 404s for a token with no verified callouts", async () => {
     const wif = live.find((m) => m.symbol === "WIF")!;
     const ok = await request(app).get(`/api/v1/callouts/${wif.mint}`).expect(200);
-    expect(ok.body.callouts.length).toBeGreaterThan(0);
-    expect(ok.body.callouts[0].tokenAddress).toBe(wif.mint);
+    const mine = ok.body.callouts.filter((c: any) => (c.tokenName ?? "").includes(TEST_RUN_TAG));
+    expect(mine.length).toBeGreaterThan(0);
+    expect(mine[0].tokenAddress).toBe(wif.mint);
 
     await request(app).get(`/api/v1/callouts/UNCHECKED${TEST_RUN_TAG}`).expect(404);
   }, 60_000);

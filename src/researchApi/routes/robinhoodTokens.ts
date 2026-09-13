@@ -25,6 +25,8 @@ import { computeCandleHealth, CandleHealthStatus } from "../../candles/health";
 import { loadCandleHealthThresholds, CandleHealthThresholds } from "../../candles/config";
 import { resolutionIdToDb, CandleResolutionId } from "../../candles/resolutions";
 import { NullQuoteUsdRateProvider } from "../../candles/usdPricing";
+import { createPoolEvidenceProvider, type PoolEvidenceProvider } from "../poolEvidenceProvider";
+import { toPoolEvidenceJson, toPoolEvidenceUnavailableJson } from "../../presentation/toPoolEvidenceJson";
 
 /**
  * Prisma.Decimal#toString() renders large integers in scientific notation
@@ -140,7 +142,9 @@ export function createRobinhoodTokensRouter(
   config: ApiConfig,
   deps: AuthenticateDeps,
   healthThresholds: PonsHealthThresholds = loadPonsHealthThresholds(),
-  candleHealthThresholds: CandleHealthThresholds = loadCandleHealthThresholds()
+  candleHealthThresholds: CandleHealthThresholds = loadCandleHealthThresholds(),
+  // Injectable so route tests never touch a real RPC.
+  poolEvidenceProvider: PoolEvidenceProvider = createPoolEvidenceProvider()
 ): Router {
   const router = Router();
   const readAuth = createAuthenticateUnlessPublicReads(config, deps);
@@ -233,6 +237,30 @@ export function createRobinhoodTokensRouter(
   // serve a chart request. Registered after "/:tokenAddress" is harmless
   // (different path depth — no Express route-order ambiguity), but placed
   // here to keep it visually next to the route it extends.
+  /**
+   * Phase 7D.3 §5 — live Uniswap V4 pool evidence for a graduated Pons V2 token.
+   *
+   * Separate from "/:tokenAddress" on purpose: that route is a pure database read and
+   * must keep working in a deployment with no chain access, whereas this one needs an
+   * RPC. Keeping them apart means an RPC outage degrades one panel instead of the whole
+   * token page.
+   *
+   * Always 200. "This token has no V4 pool yet" is a fact about the token, not an HTTP
+   * error, so the payload carries status + reason and the UI renders an honest state.
+   */
+  router.get("/:tokenAddress/pool", readAuth, readLimiter, validateRobinhoodAddress, async (req, res, next) => {
+    try {
+      const result = await poolEvidenceProvider.fetch(req.params.tokenAddress);
+      if (result.status === "AVAILABLE") {
+        res.json(toPoolEvidenceJson(result.evidence));
+        return;
+      }
+      res.json(toPoolEvidenceUnavailableJson(result.reason, result.detail));
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get("/:tokenAddress/candles", readAuth, readLimiter, validateRobinhoodAddress, async (req, res, next) => {
     try {
       const parsed = CandleQuerySchema.safeParse(req.query);

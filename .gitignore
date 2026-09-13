@@ -40,8 +40,12 @@ yarn.lock
 holdings.db
 myConfig.ts
 
-# Generated OpenAPI snapshot (npm run openapi:generate) — the Zod schemas +
-# registry in src/researchApi/contracts/ are the source of truth, not this
-# file; it's a disposable local artifact, and the live /api/v1/openapi.json
-# route always regenerates from source.
-/openapi.json
+# openapi.json is COMMITTED (Phase 7D.3 §3). The Zod schemas in
+# src/researchApi/contracts/ remain the source of truth, but the generated
+# document is the published contract: scripts/check-openapi-drift.mjs compares
+# the two in CI, and the frontend pins a copy to generate its API types. A
+# disposable local copy would let those silently diverge, which is exactly what
+# happened in 7D.2 (snapshot documented 18 fields, route returned 29).
+
+# Supervised dev-stack runtime state (scripts/dev-stack.sh)
+.run/

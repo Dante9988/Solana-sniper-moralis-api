@@ -1,0 +1,82 @@
+{
+  "capturedAt": "2026-09-12T19:25:13.933Z",
+  "chainId": 4663,
+  "blockNumber": "61351410",
+  "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+  "memeHook": "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044",
+  "factory": "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
+  "pools": [
+    {
+      "token": "0x21884b3a1a16ac0dd698bd66d25287a05acb254a",
+      "poolKey": {
+        "currency0": "0x0000000000000000000000000000000000000000",
+        "currency1": "0x21884b3a1a16ac0dd698bd66d25287a05acb254a",
+        "fee": 0,
+        "tickSpacing": 200,
+        "hooks": "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044"
+      },
+      "poolId": "0x554be5f8fc76bf8a5de1022e3caae249d4888a88d508a6d1b1b8345a2aef51b8",
+      "stateSlot": "0xa73345064daf30447f81a5b349dfc4a6c310746f32b64e9b91439efa064c7c2e",
+      "raw": {
+        "slot0Word": "0x00000000000000000003266900000000000076acfe26056aeae039e33ad49f0c",
+        "liquidityWord": "0x0000000000000000000000000000000000000000000006331c062631f5929faa"
+      },
+      "launch": {
+        "pairToken": "0x0000000000000000000000000000000000000000",
+        "poolFee": 0,
+        "tickSpacing": 200,
+        "creatorTaxBps": 200,
+        "phase": 2,
+        "graduationThreshold": "4200000000000000000"
+      }
+    },
+    {
+      "token": "0x187b69cbc8de7937b7a1d2b4fa39e0d2445efbc1",
+      "poolKey": {
+        "currency0": "0x0000000000000000000000000000000000000000",
+        "currency1": "0x187b69cbc8de7937b7a1d2b4fa39e0d2445efbc1",
+        "fee": 0,
+        "tickSpacing": 200,
+        "hooks": "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044"
+      },
+      "poolId": "0x18b555622790311e89a5fb423f3a6b3cf34713257bcc1c125c150b059f2a2076",
+      "stateSlot": "0xe6a77ed21d6357b63915ce319443d8576d57313dca2782ae07b16c56241af6f1",
+      "raw": {
+        "slot0Word": "0x00000000000000000003166500000000000060ad276552cd0505412b8048d8d8",
+        "liquidityWord": "0x0000000000000000000000000000000000000000000006331c062631f5918797"
+      },
+      "launch": {
+        "pairToken": "0x0000000000000000000000000000000000000000",
+        "poolFee": 0,
+        "tickSpacing": 200,
+        "creatorTaxBps": 200,
+        "phase": 2,
+        "graduationThreshold": "4200000000000000000"
+      }
+    },
+    {
+      "token": "0x8407d207e1b1fcf93bcce2e9abe0d708eb108f4a",
+      "poolKey": {
+        "currency0": "0x0000000000000000000000000000000000000000",
+        "currency1": "0x8407d207e1b1fcf93bcce2e9abe0d708eb108f4a",
+        "fee": 0,
+        "tickSpacing": 200,
+        "hooks": "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044"
+      },
+      "poolId": "0xb83541295f3af956466fcfd6f54ed0ea2fd5d667cd5435042abe2adf49cef7fa",
+      "stateSlot": "0x16574d20d54a448a707647a99f5c020e4f93f40b1c0447f39d0aaa6ae59a041d",
+      "raw": {
+        "slot0Word": "0x00000000000000000002d29b00000000000028997768cceac378ee235583f328",
+        "liquidityWord": "0x0000000000000000000000000000000000000000000006331c062631f593fdc1"
+      },
+      "launch": {
+        "pairToken": "0x0000000000000000000000000000000000000000",
+        "poolFee": 0,
+        "tickSpacing": 200,
+        "creatorTaxBps": 180,
+        "phase": 2,
+        "graduationThreshold": "4200000000000000000"
+      }
+    }
+  ]
+}

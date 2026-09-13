@@ -1,0 +1,2213 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OnlyPump API",
+    "version": "1.0.0",
+    "description": "Versioned REST gateway for the OnlyPump web and mobile applications. Read-only token intelligence today; see ARCHITECTURE.md for what's planned next."
+  },
+  "servers": [
+    {
+      "url": "https://api.onlypump.me/api/v1",
+      "description": "Production"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "A Supabase access token (or, for internal/admin callers, an API_KEYS token)."
+      }
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ]
+          },
+          "db": {
+            "type": "string",
+            "enum": [
+              "reachable",
+              "unreachable"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "db"
+        ]
+      },
+      "ReadyResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not_ready"
+            ]
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "database": {
+                "type": "string",
+                "enum": [
+                  "ok",
+                  "error"
+                ]
+              }
+            },
+            "required": [
+              "database"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ]
+      },
+      "MeResponse": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "required": [
+          "userId"
+        ]
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "RobinhoodTokenListResponse": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveredToken"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tokens",
+          "nextCursor",
+          "observedAt"
+        ]
+      },
+      "DiscoveredToken": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "robinhood"
+            ]
+          },
+          "venue": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "deployer": {
+            "type": "string"
+          },
+          "poolAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "curveAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quoteAddress": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "logoUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "socials": {
+            "$ref": "#/components/schemas/TokenSocials"
+          },
+          "richMetadataStatus": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "FOUND",
+              "UNAVAILABLE",
+              null
+            ]
+          },
+          "supply": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enrichmentStatus": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PENDING"
+            ]
+          },
+          "initialBuyAmount": {
+            "type": "string"
+          },
+          "sourceHeight": {
+            "type": "string"
+          },
+          "sourceHash": {
+            "type": "string"
+          },
+          "sourceTxHash": {
+            "type": "string"
+          },
+          "sourceIndex": {
+            "type": "integer"
+          },
+          "observedAt": {
+            "type": "string"
+          },
+          "graduated": {
+            "type": "boolean"
+          },
+          "graduationPairedPrincipal": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationThreshold": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationCheckedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationPositionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationTokenAmount": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationPairTokenAmount": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poolId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "chain",
+          "venue",
+          "tokenAddress",
+          "deployer",
+          "poolAddress",
+          "curveAddress",
+          "quoteAddress",
+          "name",
+          "symbol",
+          "logoUrl",
+          "description",
+          "socials",
+          "richMetadataStatus",
+          "supply",
+          "enrichmentStatus",
+          "initialBuyAmount",
+          "sourceHeight",
+          "sourceHash",
+          "sourceTxHash",
+          "sourceIndex",
+          "observedAt",
+          "graduated",
+          "graduationPairedPrincipal",
+          "graduationThreshold",
+          "graduationCheckedAt",
+          "graduationPositionId",
+          "graduationTokenAmount",
+          "graduationPairTokenAmount",
+          "poolId"
+        ]
+      },
+      "TokenSocials": {
+        "type": "object",
+        "properties": {
+          "website": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "twitter": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "telegram": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discord": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "farcaster": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "website",
+          "twitter",
+          "telegram",
+          "discord",
+          "farcaster"
+        ]
+      },
+      "RobinhoodStatusResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "LIVE",
+              "LAGGING",
+              "DEGRADED",
+              "REORG_RECOVERY",
+              "UNAVAILABLE"
+            ]
+          },
+          "discovery": {
+            "$ref": "#/components/schemas/SourceHealthDetail"
+          },
+          "trades": {
+            "$ref": "#/components/schemas/SourceHealthDetail"
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "discovery",
+          "trades",
+          "observedAt"
+        ]
+      },
+      "SourceHealthDetail": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "LIVE",
+              "LAGGING",
+              "DEGRADED",
+              "REORG_RECOVERY",
+              "UNAVAILABLE"
+            ]
+          },
+          "lastHeight": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastObservedChainHeight": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "blocksBehind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastPollAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastSuccessAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secondsSinceLastSuccess": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastErrorAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unresolvedReorg": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "status",
+          "lastHeight",
+          "lastObservedChainHeight",
+          "blocksBehind",
+          "lastPollAt",
+          "lastSuccessAt",
+          "secondsSinceLastSuccess",
+          "lastError",
+          "lastErrorAt",
+          "unresolvedReorg"
+        ]
+      },
+      "RobinhoodTokenDetailResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "$ref": "#/components/schemas/DiscoveredToken"
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainTrade"
+            }
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "trades",
+          "observedAt"
+        ]
+      },
+      "ChainTrade": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "robinhood"
+            ]
+          },
+          "venue": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "poolAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "poolId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "tokenAmount": {
+            "type": "string"
+          },
+          "quoteAmount": {
+            "type": "string"
+          },
+          "quoteAddress": {
+            "type": "string"
+          },
+          "priceQuote": {
+            "type": "string"
+          },
+          "trader": {
+            "type": "string"
+          },
+          "sourceHeight": {
+            "type": "string"
+          },
+          "sourceHash": {
+            "type": "string"
+          },
+          "sourceTxHash": {
+            "type": "string"
+          },
+          "sourceIndex": {
+            "type": "integer"
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "chain",
+          "venue",
+          "tokenAddress",
+          "poolAddress",
+          "poolId",
+          "side",
+          "tokenAmount",
+          "quoteAmount",
+          "quoteAddress",
+          "priceQuote",
+          "trader",
+          "sourceHeight",
+          "sourceHash",
+          "sourceTxHash",
+          "sourceIndex",
+          "observedAt"
+        ]
+      },
+      "CandleHistoryResponse": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "robinhood"
+            ]
+          },
+          "venue": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "quoteAddress": {
+            "type": "string"
+          },
+          "resolution": {
+            "$ref": "#/components/schemas/CandleResolution"
+          },
+          "candles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Candle"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "observedAt": {
+            "type": "string"
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/CandleFreshness"
+          },
+          "pricingBasis": {
+            "type": "string"
+          },
+          "uniqueTraderSemantics": {
+            "type": "string"
+          },
+          "usd": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "provider": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "available",
+              "provider",
+              "note"
+            ]
+          }
+        },
+        "required": [
+          "chain",
+          "venue",
+          "tokenAddress",
+          "quoteAddress",
+          "resolution",
+          "candles",
+          "nextCursor",
+          "observedAt",
+          "freshness",
+          "pricingBasis",
+          "uniqueTraderSemantics",
+          "usd"
+        ]
+      },
+      "CandleResolution": {
+        "type": "string",
+        "enum": [
+          "1s",
+          "5s",
+          "15s",
+          "1m",
+          "5m",
+          "15m",
+          "1h"
+        ]
+      },
+      "Candle": {
+        "type": "object",
+        "properties": {
+          "startTime": {
+            "type": "integer"
+          },
+          "open": {
+            "type": "string"
+          },
+          "high": {
+            "type": "string"
+          },
+          "low": {
+            "type": "string"
+          },
+          "close": {
+            "type": "string"
+          },
+          "volumeToken": {
+            "type": "string"
+          },
+          "volumeQuote": {
+            "type": "string"
+          },
+          "volumeUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trades": {
+            "type": "integer"
+          },
+          "uniqueTraders": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisional",
+              "final"
+            ]
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "startTime",
+          "open",
+          "high",
+          "low",
+          "close",
+          "volumeToken",
+          "volumeQuote",
+          "volumeUsd",
+          "trades",
+          "uniqueTraders",
+          "status",
+          "updatedAt"
+        ]
+      },
+      "CandleFreshness": {
+        "type": "string",
+        "enum": [
+          "live",
+          "lagging",
+          "degraded",
+          "reorg_recovery",
+          "unavailable"
+        ]
+      },
+      "ScanAcceptedResponse": {
+        "type": "object",
+        "properties": {
+          "jobKey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "jobKey",
+          "status"
+        ]
+      },
+      "CreateWalletChallengeResponse": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "challengeId",
+          "message",
+          "expiresAt"
+        ]
+      },
+      "CreateWalletChallengeRequest": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 64,
+            "example": "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin"
+          }
+        },
+        "required": [
+          "address"
+        ]
+      },
+      "VerifiedWallet": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "address",
+          "network",
+          "verifiedAt"
+        ]
+      },
+      "VerifyWalletChallengeRequest": {
+        "type": "object",
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "address": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 64
+          },
+          "signature": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Base58-encoded detached Ed25519 signature from wallet-adapter's signMessage."
+          }
+        },
+        "required": [
+          "challengeId",
+          "address",
+          "signature"
+        ]
+      },
+      "VerifiedWalletList": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/VerifiedWallet"
+        }
+      },
+      "RealtimeTicketResponse": {
+        "type": "object",
+        "properties": {
+          "ticket": {
+            "type": "string"
+          },
+          "expiresInMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "ticket",
+          "expiresInMs"
+        ]
+      },
+      "PoolEvidenceResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AVAILABLE"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/components/schemas/PoolEvidence"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "evidence"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "$ref": "#/components/schemas/PoolEvidenceMissingReason"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail"
+            ]
+          }
+        ]
+      },
+      "PoolEvidence": {
+        "type": "object",
+        "properties": {
+          "poolId": {
+            "type": "string"
+          },
+          "poolKey": {
+            "$ref": "#/components/schemas/PoolKey"
+          },
+          "protocol": {
+            "type": "string",
+            "enum": [
+              "uniswap-v4"
+            ]
+          },
+          "slot0": {
+            "$ref": "#/components/schemas/PoolSlot0"
+          },
+          "liquidity": {
+            "type": "string",
+            "description": "Active in-range liquidity (uint128), decimal string."
+          },
+          "priceC1PerC0X18": {
+            "type": "string",
+            "description": "currency1 per currency0, scaled by 1e18. Decimal string."
+          },
+          "priceC0PerC1X18": {
+            "type": "string",
+            "description": "currency0 per currency1, scaled by 1e18 — native per whole token."
+          },
+          "nativeSymbol": {
+            "type": "string",
+            "description": "Symbol for currency0, e.g. ETH.",
+            "example": "ETH"
+          },
+          "lpFeeHundredthsBip": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Null when the pool uses a dynamic fee. 0 is a real zero fee, not unknown."
+          },
+          "isDynamicFee": {
+            "type": "boolean"
+          },
+          "creatorTaxBps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Basis points the hook takes AFTER the swap. Not applied to any figure here."
+          },
+          "observedAtBlock": {
+            "type": "string"
+          },
+          "calculationVersion": {
+            "type": "string"
+          },
+          "executionCaveat": {
+            "type": "string",
+            "description": "Why these numbers are not an executable quote. Always present for this venue — the Pons hook takes an after-swap delta, so realized proceeds are below raw pool output."
+          }
+        },
+        "required": [
+          "poolId",
+          "poolKey",
+          "protocol",
+          "slot0",
+          "liquidity",
+          "priceC1PerC0X18",
+          "priceC0PerC1X18",
+          "nativeSymbol",
+          "lpFeeHundredthsBip",
+          "isDynamicFee",
+          "creatorTaxBps",
+          "observedAtBlock",
+          "calculationVersion",
+          "executionCaveat"
+        ]
+      },
+      "PoolKey": {
+        "type": "object",
+        "properties": {
+          "currency0": {
+            "type": "string",
+            "description": "Lower-sorted currency. Native ETH (0x0) for Pons V2."
+          },
+          "currency1": {
+            "type": "string",
+            "description": "Higher-sorted currency — the launched token for Pons V2."
+          },
+          "fee": {
+            "type": "integer",
+            "description": "Fixed LP fee in hundredths of a bip, or the dynamic-fee marker."
+          },
+          "tickSpacing": {
+            "type": "integer"
+          },
+          "hooks": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currency0",
+          "currency1",
+          "fee",
+          "tickSpacing",
+          "hooks"
+        ]
+      },
+      "PoolSlot0": {
+        "type": "object",
+        "properties": {
+          "sqrtPriceX96": {
+            "type": "string",
+            "description": "Decimal string — exceeds Number.MAX_SAFE_INTEGER."
+          },
+          "tick": {
+            "type": "integer"
+          },
+          "protocolFee": {
+            "type": "integer"
+          },
+          "lpFee": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sqrtPriceX96",
+          "tick",
+          "protocolFee",
+          "lpFee"
+        ]
+      },
+      "PoolEvidenceMissingReason": {
+        "type": "string",
+        "enum": [
+          "POOL_NOT_INITIALIZED",
+          "NOT_GRADUATED",
+          "NO_LIQUIDITY",
+          "UNSUPPORTED_VENUE",
+          "RPC_UNAVAILABLE"
+        ]
+      },
+      "CalloutListResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "callouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Callout"
+            }
+          }
+        },
+        "required": [
+          "apiVersion",
+          "callouts"
+        ]
+      },
+      "Callout": {
+        "type": "object",
+        "properties": {
+          "tokenAddress": {
+            "type": "string",
+            "example": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"
+          },
+          "tokenSymbol": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "WIF"
+          },
+          "tokenName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "dogwifhat"
+          },
+          "pnlPercentage": {
+            "type": "number",
+            "description": "Verified PnL at check time, in percent.",
+            "example": 650
+          },
+          "initialMarketCap": {
+            "type": "number",
+            "example": 18000
+          },
+          "currentMarketCap": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "example": 135000
+          },
+          "multiple": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "currentMarketCap / initialMarketCap, or null when not computable.",
+            "example": 7.5
+          },
+          "alertedAt": {
+            "type": "string",
+            "description": "When the call was first made (ISO 8601)."
+          },
+          "verifiedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the tracker last verified the PnL against market data (ISO 8601)."
+          },
+          "shared": {
+            "type": "boolean",
+            "description": "Whether the PnL card was actually shared to Discord/Telegram."
+          }
+        },
+        "required": [
+          "tokenAddress",
+          "tokenSymbol",
+          "tokenName",
+          "pnlPercentage",
+          "initialMarketCap",
+          "currentMarketCap",
+          "multiple",
+          "alertedAt",
+          "verifiedAt",
+          "shared"
+        ]
+      }
+    },
+    "parameters": {}
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "Liveness — proves the process is up. No auth, no dependency checks.",
+        "tags": [
+          "operational"
+        ],
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ready": {
+      "get": {
+        "summary": "Readiness — checks required dependencies (database) without leaking connection details.",
+        "tags": [
+          "operational"
+        ],
+        "responses": {
+          "200": {
+            "description": "Ready to serve traffic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "summary": "The authenticated user's minimal identity, derived from their verified Supabase token.",
+        "tags": [
+          "identity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caller identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{mint}/report": {
+      "get": {
+        "summary": "The deterministic risk view for a token mint, if it has ever been analysed.",
+        "tags": [
+          "token-intelligence"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 64,
+              "example": "So11111111111111111111111111111111111111112"
+            },
+            "required": true,
+            "name": "mint",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Risk view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "apiVersion": {
+                      "type": "number"
+                    },
+                    "mint": {
+                      "type": "string"
+                    },
+                    "verdict": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "apiVersion",
+                    "mint",
+                    "verdict"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{mint}/forensics": {
+      "get": {
+        "summary": "The latest Solana forensics run for a token mint, if one exists.",
+        "tags": [
+          "token-intelligence"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 64,
+              "example": "So11111111111111111111111111111111111111112"
+            },
+            "required": true,
+            "name": "mint",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forensics run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "apiVersion": {
+                      "type": "number"
+                    },
+                    "mint": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "apiVersion",
+                    "mint"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood": {
+      "get": {
+        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4).",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Discovered token list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RobinhoodTokenListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/status": {
+      "get": {
+        "summary": "Backend-owned Pons/Robinhood Chain ingestion source-health projection (Phase 7B.5A) — LIVE/LAGGING/DEGRADED/REORG_RECOVERY/UNAVAILABLE, never inferred client-side.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ingestion source health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RobinhoodStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}": {
+      "get": {
+        "summary": "One discovered Robinhood Chain token's detail with its recent trades (Phase 7B.4).",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token detail with trades",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RobinhoodTokenDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/candles": {
+      "get": {
+        "summary": "Materialized OHLCV candle history for a Robinhood/Pons token (Phase 7B.5B) — reads PostgreSQL only, never Robinhood RPC inline.",
+        "tags": [
+          "robinhood-chain",
+          "candles"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Candle history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandleHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{mint}/scans": {
+      "post": {
+        "summary": "Idempotently enqueue a forensics scan for a token mint. Returns the same jobKey on repeat calls for the same mint.",
+        "tags": [
+          "token-intelligence"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 64,
+              "example": "So11111111111111111111111111111111111111112"
+            },
+            "required": true,
+            "name": "mint",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Scan accepted (queued or already in flight)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wallets/challenges": {
+      "post": {
+        "summary": "Create a short-lived, single-use wallet-ownership challenge for the authenticated user to sign (never a transaction).",
+        "tags": [
+          "wallet-verification"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWalletChallengeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Challenge created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateWalletChallengeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/wallets/verify": {
+      "post": {
+        "summary": "Verify a detached Ed25519 signature over a previously issued challenge, linking the address to the authenticated user.",
+        "tags": [
+          "wallet-verification"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyWalletChallengeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Wallet verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifiedWallet"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/wallets": {
+      "get": {
+        "summary": "List the authenticated user's own verified wallets.",
+        "tags": [
+          "wallet-verification"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified wallets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifiedWalletList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/wallets/{walletId}": {
+      "delete": {
+        "summary": "Unlink one of the authenticated user's verified wallets. Never deletes blockchain history or shared token intelligence.",
+        "tags": [
+          "wallet-verification"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "walletId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unlinked"
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/realtime/tickets": {
+      "post": {
+        "summary": "Issue a short-lived, single-use ticket for connecting to the WebSocket endpoint. Never a substitute for the Supabase token itself.",
+        "tags": [
+          "realtime"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket issued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RealtimeTicketResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{jobKey}": {
+      "get": {
+        "summary": "Poll a forensics job's status.",
+        "tags": [
+          "token-intelligence"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "jobKey",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobKey": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "jobKey",
+                    "status"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/pool": {
+      "get": {
+        "summary": "Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool evidence, or an explicit unavailable reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolEvidenceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/callouts": {
+      "get": {
+        "summary": "Verified PnL callouts the tracker has already shared, best first (Phase 7F.2).",
+        "tags": [
+          "callouts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified callout list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalloutListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/callouts/{mint}": {
+      "get": {
+        "summary": "Verified callout history for one token (Phase 7F.2).",
+        "tags": [
+          "callouts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 64,
+              "example": "So11111111111111111111111111111111111111112"
+            },
+            "required": true,
+            "name": "mint",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified callout list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalloutListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "webhooks": {}
+}

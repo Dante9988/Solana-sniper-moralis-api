@@ -39,7 +39,8 @@
     "api": "ts-node src/researchApi/server.ts",
     "openapi:generate": "ts-node src/researchApi/scripts/generateOpenApiDocument.ts",
     "test:api-v1": "vitest run src/researchApi",
-    "test:candles": "vitest run src/candles src/discovery"
+    "test:candles": "vitest run src/candles src/discovery",
+    "openapi:check": "node scripts/check-openapi-drift.mjs"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
