@@ -52,6 +52,43 @@ export function toPoolEvidenceJson(evidence: PoolEvidence): PoolEvidenceResponse
   };
 }
 
-export function toPoolEvidenceUnavailableJson(reason: MissingReason, detail: string): PoolEvidenceResponse {
-  return { apiVersion: POOL_EVIDENCE_API_VERSION, status: "UNAVAILABLE", reason, detail };
+/**
+ * Stable, safe public messages — one per reason code (Phase 7D.3.1 §1).
+ *
+ * Provider errors are verbose and leaky: viem's text carries the request URL (which holds
+ * the API key), the encoded calldata, and the contract call shape. Even with URLs
+ * redacted, forwarding that to a browser publishes internal structure and changes wording
+ * whenever a provider or library is upgraded, so clients cannot depend on it.
+ *
+ * The machine-readable `reason` is the contract; this is the human sentence. Raw provider
+ * text stays server-side, where it is useful for operators.
+ */
+const PUBLIC_DETAIL: Record<MissingReason, string> = {
+  NOT_GRADUATED: "This token has not graduated to a Uniswap V4 pool yet.",
+  POOL_NOT_INITIALIZED: "The pool exists but has not been initialized with a price.",
+  NO_LIQUIDITY: "The pool holds no in-range liquidity.",
+  UNSUPPORTED_VENUE: "This token was not launched through a venue whose pool state we can read.",
+  RPC_UNAVAILABLE: "Chain data is temporarily unavailable. This is a connectivity problem, not a fact about the token.",
+};
+
+export function publicDetailFor(reason: MissingReason): string {
+  return PUBLIC_DETAIL[reason] ?? PUBLIC_DETAIL.RPC_UNAVAILABLE;
+}
+
+/**
+ * @param internalDetail Raw diagnostic text. NEVER placed in the response — pass it to a
+ *                       logger if you need it; it is accepted here only so call sites do
+ *                       not have to remember to drop it.
+ */
+export function toPoolEvidenceUnavailableJson(
+  reason: MissingReason,
+  internalDetail?: string
+): PoolEvidenceResponse {
+  void internalDetail;
+  return {
+    apiVersion: POOL_EVIDENCE_API_VERSION,
+    status: "UNAVAILABLE",
+    reason,
+    detail: publicDetailFor(reason),
+  };
 }

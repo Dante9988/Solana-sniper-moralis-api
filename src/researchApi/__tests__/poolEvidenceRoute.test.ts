@@ -112,18 +112,65 @@ describe("GET /api/v1/tokens/robinhood/:tokenAddress/pool", () => {
     ["RPC_UNAVAILABLE", "connection reset"],
     ["POOL_NOT_INITIALIZED", "slot0 zero"],
     ["UNSUPPORTED_VENUE", "unknown token"],
-  ])("delivers %s as a 200 with a reason, not an HTTP error", async (reason, detail) => {
+  ])("delivers %s as a 200 with a reason, not an HTTP error", async (reason, internalDetail) => {
     const res = await request(
-      appWith({ fetch: async () => ({ status: "UNAVAILABLE", reason: reason as any, detail }) })
+      appWith({ fetch: async () => ({ status: "UNAVAILABLE", reason: reason as any, detail: internalDetail }) })
     )
       .get(`/api/v1/tokens/robinhood/${TOKEN}/pool`)
       .expect(200);
 
     expect(res.body.status).toBe("UNAVAILABLE");
     expect(res.body.reason).toBe(reason);
-    expect(res.body.detail).toBe(detail);
+    // Phase 7D.3.1 §1: the stable code is the contract and the message is ours. The
+    // internal diagnostic string is deliberately NOT echoed — it is where provider URLs,
+    // keys and calldata leak from.
+    expect(res.body.detail).not.toBe(internalDetail);
+    expect(typeof res.body.detail).toBe("string");
+    expect(res.body.detail.length).toBeGreaterThan(0);
     // No half-populated evidence alongside an unavailable status.
     expect(res.body.evidence).toBeUndefined();
+  });
+
+  it("never forwards raw provider text, URLs, calldata or keys to the client", async () => {
+    // The shape of a real viem error: URL with the API key, request body, calldata.
+    const leaky = [
+      "RPC Request failed.",
+      "URL: https://robinhood-mainnet.g.alchemy.com/v2/SYNTHETIC_TEST_KEY_NOT_A_REAL_CREDENTIAL",
+      'Request body: {"method":"eth_call","params":[{"data":"0xdc4c90d3","to":"0x7eD5"}]}',
+      "Details: Monthly capacity limit exceeded.",
+    ].join("\n");
+
+    const res = await request(
+      appWith({ fetch: async () => ({ status: "UNAVAILABLE", reason: "RPC_UNAVAILABLE", detail: leaky }) })
+    )
+      .get(`/api/v1/tokens/robinhood/${TOKEN}/pool`)
+      .expect(200);
+
+    const body = JSON.stringify(res.body);
+    expect(body).not.toContain("SYNTHETIC_TEST_KEY_NOT_A_REAL_CREDENTIAL");
+    expect(body).not.toContain("alchemy.com");
+    expect(body).not.toContain("0xdc4c90d3");
+    expect(body).not.toContain("Request body");
+    // The stable code survives; the message is ours, not the provider's.
+    expect(res.body.reason).toBe("RPC_UNAVAILABLE");
+    expect(res.body.detail).toMatch(/connectivity problem, not a fact about the token/i);
+  });
+
+  it("returns a stable message per reason code", async () => {
+    for (const [reason, pattern] of [
+      ["NOT_GRADUATED", /has not graduated/i],
+      ["POOL_NOT_INITIALIZED", /not been initialized/i],
+      ["UNSUPPORTED_VENUE", /not launched through a venue/i],
+    ] as const) {
+      const res = await request(
+        appWith({ fetch: async () => ({ status: "UNAVAILABLE", reason: reason as any, detail: "internal noise" }) })
+      )
+        .get(`/api/v1/tokens/robinhood/${TOKEN}/pool`)
+        .expect(200);
+      expect(res.body.reason).toBe(reason);
+      expect(res.body.detail).toMatch(pattern);
+      expect(res.body.detail).not.toContain("internal noise");
+    }
   });
 
   it("rejects a malformed address before doing any chain work", async () => {

@@ -335,17 +335,22 @@ describe("redactRpcUrls — the API key must never reach a response or a log", (
    * Observed in production on 2026-09-12: the pool-evidence endpoint returned a 429
    * detail containing the full provider URL, API key and all, straight to the browser.
    * viem's error text embeds the request URL, and that text flows into `reason`/`detail`.
+   *
+   * The credential below is SYNTHETIC. The first version of this test used the real
+   * leaked key as its fixture, which committed that key to a public repository — the
+   * exact failure the test exists to prevent. Never paste a real credential into a test,
+   * even one being asserted as redacted.
    */
   const LEAKED = [
     "RPC Request failed.",
     "",
-    "URL: https://robinhood-mainnet.g.alchemy.com/v2/W3blepCxPkOC3E9cWu_t3BoLzc9WmCtQ",
+    "URL: https://robinhood-mainnet.g.alchemy.com/v2/SYNTHETIC_TEST_KEY_NOT_A_REAL_CREDENTIAL",
     "Details: Monthly capacity limit exceeded.",
   ].join("\n");
 
   it("removes the key but keeps the host, which is the useful part", () => {
     const safe = redactRpcUrls(LEAKED);
-    expect(safe).not.toContain("W3blepCxPkOC3E9cWu_t3BoLzc9WmCtQ");
+    expect(safe).not.toContain("SYNTHETIC_TEST_KEY_NOT_A_REAL_CREDENTIAL");
     expect(safe).not.toContain("/v2/");
     expect(safe).toContain("robinhood-mainnet.g.alchemy.com");
     // The diagnostic message itself must survive.
