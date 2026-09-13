@@ -289,3 +289,82 @@ G3 is closed and verified.
 **§5 for graduated V2 tokens is now fully unblocked and can be implemented from verified
 facts.** Remaining before §6: confirm the after-swap delta against a real decoded
 settlement, then resolve G4.
+
+---
+
+## 8. Round 3 — does V4Quoter account for the hook's after-swap tax?
+
+**This was the question gating the deployment decision.** If the quoter reported raw pool
+output, a deployed quoter would be confidently ~2% wrong on every sell — worse than no
+quote at all.
+
+**Answer: yes, the quote is net of the hook delta.** Verified by reading the canonical
+implementation (v4-core / v4-periphery, `main`, accessed 2026-09-12):
+
+`V4Quoter._quoteExactInputSingle` (v4-periphery `src/lens/V4Quoter.sol:113`) takes its
+answer straight from the `BalanceDelta` that `poolManager.swap()` returns:
+
+```solidity
+BalanceDelta swapDelta = _swap(params.poolKey, params.zeroForOne, -int256(...), params.hookData);
+uint256 amountOut = params.zeroForOne ? uint128(swapDelta.amount1()) : uint128(swapDelta.amount0());
+```
+
+`PoolManager.swap` (v4-core `src/PoolManager.sol:221`) reassigns that delta from the
+hook's return value before accounting it to the caller:
+
+```solidity
+(swapDelta, hookDelta) = key.hooks.afterSwap(key, params, swapDelta, hookData, beforeSwapDelta);
+if (hookDelta != ZERO_DELTA) _accountPoolBalanceDelta(key, hookDelta, address(key.hooks));
+_accountPoolBalanceDelta(key, swapDelta, msg.sender);
+```
+
+And `Hooks.afterSwap` (v4-core `src/libraries/Hooks.sol:298-313`) is explicit:
+
+```solidity
+if (self.hasPermission(AFTER_SWAP_FLAG)) {
+    hookDeltaUnspecified += self.callHookWithReturnDelta(
+        abi.encodeCall(IHooks.afterSwap, (...)),
+        self.hasPermission(AFTER_SWAP_RETURNS_DELTA_FLAG)
+    ).toInt128();
+}
+...
+    // the caller has to pay for (or receive) the hook's delta
+    swapDelta = swapDelta - hookDelta;
+```
+
+The permission gate on line 301 is `AFTER_SWAP_RETURNS_DELTA_FLAG` — precisely the flag
+the Pons MemeHook carries (§7.1). So the swapper's delta, and therefore the quoter's
+`amountOut`, is already reduced by the creator tax.
+
+**Consequence:** deploying a `V4Quoter` on Robinhood Chain yields an honest, net-of-tax
+sell quote, and G4 is the only thing standing between us and §6.
+
+### 8.1 Confidence and what is still untested
+
+This is **source-verified, not execution-verified**. The reasoning follows the canonical
+contracts line by line, but no swap has been quoted and then executed to compare the two
+numbers empirically — not on mainnet, not on a testnet, and not on a local node.
+
+`CLAUDE.md` asks for ambiguous behaviour to be confirmed against real transactions, so
+this remains labelled inferred-from-source until one of the following is done:
+
+1. **Local (preferred, free, no key):** standalone `anvil` — no `--fork-url`, so no RPC
+   quota — deploying `PoolManager`, `V4Quoter`, and a minimal hook that mirrors Pons
+   (`AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA`, 2% of output) at a mined address. Initialize
+   a pool, add liquidity, quote a sell, execute the same sell, assert the quote equals the
+   realized proceeds. The repo already has a standalone-anvil test precedent in
+   `src/pons/__tests__/reorgRecovery.anvilFork.test.ts`.
+2. **Mainnet decode:** decode one real graduated Pons swap and compare the pool delta
+   against the seller's realized receipt. Needs working RPC; currently blocked by the
+   exhausted Alchemy monthly quota.
+
+### 8.2 Operational note — RPC quota exhausted (2026-09-12)
+
+All Robinhood Chain reads are failing with Alchemy's monthly capacity error, not a rate
+limit. This blocks the mainnet decode above, `anvil --fork-url`, live pool evidence, and
+any deployment. The PONS and candles workers were stopped rather than left retrying a
+dead endpoint; restart with `scripts/dev-stack.sh start pons candles`.
+
+Worth recording that the system degraded correctly under this real outage: the pool
+evidence endpoint returned `UNAVAILABLE / RPC_UNAVAILABLE` rather than crashing or
+inventing numbers.
