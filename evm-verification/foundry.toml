@@ -1,7 +1,18 @@
+# Two profiles, deliberately separate:
+#
+#   default — self-contained tests. No RPC, no fork. Safe to run anywhere.
+#   fork    — Phase 7D.3.2 §2 verification against the real Robinhood Chain contracts at a
+#             pinned block. Needs ROBINHOOD_FORK_RPC_URL; run via scripts/fork-verify.sh,
+#             which reports a missing RPC as BLOCKED rather than as a pass.
+#
+# Dependencies are pinned by scripts/install-deps.sh, never by `forge install`.
+
 [profile.default]
 src = "src"
 out = "out"
 libs = ["lib"]
+test = "test"
+skip = ["test/fork/**"]
 solc = "0.8.26"
 evm_version = "cancun"
 ffi = false
@@ -15,4 +26,32 @@ remappings = [
   "@openzeppelin/=lib/v4-periphery/lib/openzeppelin-contracts/",
   "openzeppelin-contracts/=lib/v4-periphery/lib/openzeppelin-contracts/",
   "ds-test/=lib/v4-periphery/lib/v4-core/lib/forge-std/lib/ds-test/src/"
+]
+
+[profile.fork]
+src = "src"
+out = "out-fork"
+libs = ["lib"]
+test = "test/fork"
+skip = []
+# Uniswap's release settings for V4Quoter (v4-periphery foundry.toml at 6601a199, and the
+# compiler settings Blockscout recorded for 0x8dc178ef…). Required so the locally deployed
+# pinned quoter can be compared byte-for-byte with the official deployment.
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+optimizer = true
+optimizer_runs = 44444444
+bytecode_hash = "none"
+ffi = false
+fs_permissions = [{ access = "read-write", path = "./evidence" }]
+remappings = [
+  "forge-std/=lib/v4-periphery/lib/v4-core/lib/forge-std/src/",
+  "v4-periphery/=lib/v4-periphery/",
+  "@uniswap/v4-core/=lib/v4-periphery/lib/v4-core/",
+  "@uniswap/v4-periphery/=lib/v4-periphery/",
+  "solmate/=lib/v4-periphery/lib/v4-core/lib/solmate/",
+  "permit2/=lib/v4-periphery/lib/permit2/",
+  "@openzeppelin/=lib/v4-periphery/lib/openzeppelin-contracts/",
+  "openzeppelin-contracts/=lib/v4-periphery/lib/openzeppelin-contracts/"
 ]

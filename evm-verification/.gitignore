@@ -1,4 +1,8 @@
 out/
+out-fork/
 cache/
 lib/
 broadcast/
+# Run logs and raw forge JSON; the curated evidence files are committed.
+evidence/run.log
+evidence/forge-results.json
