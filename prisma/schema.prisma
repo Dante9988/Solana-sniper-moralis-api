@@ -1071,3 +1071,114 @@ model CandleWorkerRunState {
   lastTickDurationMs         Int?
   updatedAt                  DateTime  @updatedAt
 }
+
+/// Phase 7D.3.2 §6 — what an evidence snapshot records.
+enum EvidenceSnapshotKind {
+  QUOTE
+  SIMULATION
+}
+
+/// Phase 7D.3.2 §6 — an immutable record of one quote or execution simulation, exactly
+/// as it was served: pinned block and hash, timestamps, calculation and policy versions,
+/// source references and whatever evidence was missing.
+///
+/// Append-only. The migration installs a trigger that rejects UPDATE and DELETE, so a
+/// paper position can always be traced to the precise numbers it was based on, even after
+/// the calculation changes. A corrected result is a new row, never an edit.
+model EvidenceSnapshot {
+  id                 String               @id @default(uuid())
+  kind               EvidenceSnapshotKind
+  /// QUOTED | UNSUPPORTED (quotes); SIMULATED | REVERTED | UNSUPPORTED (simulations).
+  status             String
+  chain              String
+  tokenAddress       String
+  side               String
+  /// A simulation's parent is the quote it simulated.
+  parentId           String?
+  parent             EvidenceSnapshot?    @relation("EvidenceLineage", fields: [parentId], references: [id], onDelete: Restrict)
+  children           EvidenceSnapshot[]   @relation("EvidenceLineage")
+  blockNumber        BigInt?
+  blockHash          String?
+  blockTimestamp     DateTime?
+  observedAt         DateTime
+  expiresAt          DateTime?
+  calculationVersion String?
+  policyVersion      String
+  /// The full served result. Decimal strings throughout; never a JS number for an amount.
+  payload            Json
+  /// sha256 of the canonical payload JSON, so tampering outside the trigger is detectable.
+  payloadSha256      String
+  sourceReferences   Json
+  missingEvidence    Json
+  createdAt          DateTime             @default(now())
+
+  paperPositionsFromQuote      PaperPosition[] @relation("PaperPositionQuote")
+  paperPositionsFromSimulation PaperPosition[] @relation("PaperPositionSimulation")
+
+  @@index([chain, tokenAddress, createdAt])
+  @@index([parentId])
+}
+
+/// Phase 7D.3.2 §5 — a paper fill saved by an authenticated user.
+///
+/// Deliberately separate from wallets, ChainTrade and anything else describing real
+/// holdings: nothing here was ever broadcast. Creation is idempotent per user and key; a
+/// retried request returns the original row, and reusing a key for a different request is
+/// refused (requestFingerprint).
+model PaperPosition {
+  id                   String            @id @default(uuid())
+  /// Supabase subject. Every read and write is scoped by it.
+  userId               String
+  idempotencyKey       String
+  requestFingerprint   String
+  chain                String
+  tokenAddress         String
+  side                 String
+  venue                String
+  /// EXECUTION_SIMULATION when a successful simulation backs the fill, otherwise QUOTE.
+  fillBasis            String
+  inputCurrency        String
+  inputSymbol          String?
+  inputDecimals        Int
+  inputAmount          Decimal           @db.Decimal(78, 0)
+  outputCurrency       String
+  outputSymbol         String?
+  outputDecimals       Int
+  outputAmount         Decimal           @db.Decimal(78, 0)
+  minimumOutput        Decimal           @db.Decimal(78, 0)
+  quoteSnapshotId      String
+  quoteSnapshot        EvidenceSnapshot  @relation("PaperPositionQuote", fields: [quoteSnapshotId], references: [id], onDelete: Restrict)
+  simulationSnapshotId String?
+  simulationSnapshot   EvidenceSnapshot? @relation("PaperPositionSimulation", fields: [simulationSnapshotId], references: [id], onDelete: Restrict)
+  createdAt            DateTime          @default(now())
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([userId, chain, tokenAddress])
+}
+
+/// Phase 7D.3.2 §6 — token logos, fetched asynchronously and served from OnlyPump's own
+/// origin. The browser never contacts the launcher's URL or a third-party IPFS gateway.
+model TokenImageCache {
+  id            String    @id @default(uuid())
+  chain         String
+  tokenAddress  String
+  /// The URL as recorded at launch (ipfs://, a bare CID, or https). Part of the key, so a
+  /// changed logo is a new row rather than an overwrite.
+  sourceUrl     String
+  /// PENDING | READY | FAILED (retryable) | REJECTED (not an allowed image; never retried)
+  status        String
+  contentType   String?
+  bytes         Bytes?
+  byteLength    Int?
+  sha256        String?
+  attempts      Int       @default(0)
+  lastError     String?
+  nextAttemptAt DateTime?
+  fetchedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([chain, tokenAddress, sourceUrl])
+  @@index([status, nextAttemptAt])
+}

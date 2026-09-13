@@ -1,0 +1,241 @@
+{
+  "contract": "PonsRouteSimulator",
+  "sourcePath": "evm-verification/src/PonsRouteSimulator.sol",
+  "sourceSha256": "b0bb7760611dca21aca58bb6727de90fcd67185bc08dee9c50ed87b6f58e9c43",
+  "compiler": {
+    "solc": "0.8.26+commit.8a97fa7a",
+    "viaIR": true,
+    "optimizerRuns": 44444444,
+    "evmVersion": "cancun"
+  },
+  "runtimeBytecode": "0x6080604052600436101561001a575b3615610018575f80fd5b005b5f803560e01c806323d4b5a2146103e95780632f679a9c1461026b576383cead1614610046575061000e565b3461026857610054366108b4565b93929161005f6109b9565b6040517f095ea7b300000000000000000000000000000000000000000000000000000000815273ffffffffffffffffffffffffffffffffffffffff8616600482015260248101849052909590602081806044810103818b73ffffffffffffffffffffffffffffffffffffffff88165af1801561025d57610230575b5061017160206100e984610ae7565b9485828a01526100f887610ae7565b975a948b73ffffffffffffffffffffffffffffffffffffffff6040518097819682957fd04c698300000000000000000000000000000000000000000000000000000000845230916004850191604091949373ffffffffffffffffffffffffffffffffffffffff9160608501968552602085015216910152565b0393165af18098506101f0575b506101cd926101bd6101d29695936101b36101c3946101e39b155f146101e7576101a6610a50565b60a08c01525b5a90610aad565b60808a0152610ae7565b90610aad565b6040860152610ae7565b610aad565b606082015260405191829182610832565b0390f35b60018b526101ac565b92602095949295843d602011610228575b8161020e6020938361094b565b81010312610224579394919392506101cd61017e565b5f80fd5b3d9150610201565b6102519060203d602011610256575b610249818361094b565b8101906109fa565b6100da565b503d61023f565b6040513d8a823e3d90fd5b80fd5b50346102685761027a366108b4565b926102869491946109b9565b9473ffffffffffffffffffffffffffffffffffffffff821690811591821561034d575b506020610171916102b985610ae7565b9586838b01526102c888610ae7565b985a951561034757825b73ffffffffffffffffffffffffffffffffffffffff6040518097819682957f59a87bc100000000000000000000000000000000000000000000000000000000845230916004850191604091949373ffffffffffffffffffffffffffffffffffffffff9160608501968552602085015216910152565b8b6102d2565b6040517f095ea7b300000000000000000000000000000000000000000000000000000000815273ffffffffffffffffffffffffffffffffffffffff86166004820152602481018390529190602090839060449082908d905af19081156103de57610171926020926103c1575b5091506102a9565b6103d790833d851161025657610249818361094b565b505f6103b9565b6040513d8b823e3d90fd5b50346102245760e07ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc360112610224576004359073ffffffffffffffffffffffffffffffffffffffff82168092036102245760243573ffffffffffffffffffffffffffffffffffffffff811692838203610224576044359173ffffffffffffffffffffffffffffffffffffffff83168303610224576084359467ffffffffffffffff8611610224573660238701121561022457856004013567ffffffffffffffff81116102245736602482890101116102245760a4359567ffffffffffffffff871161022457366023880112156102245786600401359467ffffffffffffffff8611610224578560051b983660248b8b010111610224576105086109b9565b9885159586156106ed575b5061051d87610ae7565b978860208c015261052d8a610ae7565b9b5a97156106e657606435935b853b156106e2579693919092869593610589604051998a977f3593564c000000000000000000000000000000000000000000000000000000008952606060048a0152602460648a019201610a12565b927ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc87850301602488015280845260208085019285010193602484019389917fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffbd82360301905b84841061065257505050505050509083809260c435604483015203925af1918261063d575b50506101e396936101bd6101cd946101b36101d298956101c395155f146101e7576101a6610a50565b61064882809261094b565b6102685780610614565b809396999b50877fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe09295989396999b50030187528735838112156106de57840160446024820135910167ffffffffffffffff82116106da5781360381136106da576106c36001936020938493610a12565b99019701940190928a999795928c999795946105ef565b8c80fd5b8b80fd5b8680fd5b859361053a565b6040517f095ea7b30000000000000000000000000000000000000000000000000000000081526e22d473030f116ddee9f6b43ac78ba360048201527fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff60248201526020816044815f865af1801561080a57610815575b506e22d473030f116ddee9f6b43ac78ba33b1561022457604051907f87517c45000000000000000000000000000000000000000000000000000000008252600482015283602482015273ffffffffffffffffffffffffffffffffffffffff604482015265ffffffffffff60648201525f81608481836e22d473030f116ddee9f6b43ac78ba35af1801561080a5715610513576108029194505f9061094b565b5f925f610513565b6040513d5f823e3d90fd5b61082d9060203d60201161025657610249818361094b565b610763565b7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe0601f602060a06101009582865280511515838701528281015160408701526040810151606087015260608101516080870152608081015182870152015160c08086015280519182918260e0880152018686015e5f8582860101520116010190565b7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc60a09101126102245760043573ffffffffffffffffffffffffffffffffffffffff81168103610224579060243573ffffffffffffffffffffffffffffffffffffffff81168103610224579060443573ffffffffffffffffffffffffffffffffffffffff8116810361022457906064359060843590565b90601f7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe0910116810190811067ffffffffffffffff82111761098c57604052565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52604160045260245ffd5b6040519060c0820182811067ffffffffffffffff82111761098c57604052606060a0835f81525f60208201525f60408201525f838201525f60808201520152565b90816020910312610224575180151581036102245790565b601f82602094937fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe093818652868601375f8582860101520116010190565b3d15610aa8573d9067ffffffffffffffff821161098c5760405191610a9d60207fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe0601f840116018461094b565b82523d5f602084013e565b606090565b91908203918211610aba57565b7f4e487b71000000000000000000000000000000000000000000000000000000005f52601160045260245ffd5b73ffffffffffffffffffffffffffffffffffffffff1680610b0757504790565b6020602491604051928380927f70a082310000000000000000000000000000000000000000000000000000000082523060048301525afa90811561080a575f91610b4f575090565b90506020813d602011610b76575b81610b6a6020938361094b565b81010312610224575190565b3d9150610b5d56fea164736f6c634300081a000a",
+  "abi": [
+    {
+      "type": "receive",
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "simulateCurveBuy",
+      "inputs": [
+        {
+          "name": "curve",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "pairToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "quoteIn",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "minTokensOut",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "r",
+          "type": "tuple",
+          "internalType": "struct PonsRouteSimulator.Result",
+          "components": [
+            {
+              "name": "success",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "inputBalanceBefore",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "spent",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "received",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gasUsed",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "revertData",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "simulateCurveSell",
+      "inputs": [
+        {
+          "name": "curve",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "pairToken",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "token",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "tokensIn",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "minQuoteOut",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "r",
+          "type": "tuple",
+          "internalType": "struct PonsRouteSimulator.Result",
+          "components": [
+            {
+              "name": "success",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "inputBalanceBefore",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "spent",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "received",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gasUsed",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "revertData",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "simulateRouter",
+      "inputs": [
+        {
+          "name": "router",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "inputCurrency",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "outputCurrency",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "amountIn",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "commands",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "inputs",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        },
+        {
+          "name": "deadline",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "r",
+          "type": "tuple",
+          "internalType": "struct PonsRouteSimulator.Result",
+          "components": [
+            {
+              "name": "success",
+              "type": "bool",
+              "internalType": "bool"
+            },
+            {
+              "name": "inputBalanceBefore",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "spent",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "received",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "gasUsed",
+              "type": "uint256",
+              "internalType": "uint256"
+            },
+            {
+              "name": "revertData",
+              "type": "bytes",
+              "internalType": "bytes"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "nonpayable"
+    }
+  ]
+}

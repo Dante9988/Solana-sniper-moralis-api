@@ -19,6 +19,17 @@ import {
 import { CandleHistoryResponseSchema } from "./candles";
 import { CalloutListResponseSchema } from "./callouts";
 import { PoolEvidenceResponseSchema } from "./poolEvidence";
+import {
+  CreatePaperPositionRequestSchema,
+  EvidenceSnapshotParamSchema,
+  EvidenceSnapshotSchema,
+  PaperPositionListResponseSchema,
+  PaperPositionResponseSchema,
+  QuoteRequestSchema,
+  QuoteResponseSchema,
+  SimulationRequestSchema,
+  SimulationResponseSchema,
+} from "./paperTrading";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -292,6 +303,89 @@ registry.registerPath({
     200: { description: "Verified callout list", content: { "application/json": { schema: CalloutListResponseSchema } } },
     401: errorResponse,
     404: errorResponse,
+  },
+});
+
+// --- Phase 7D.3.2 — quotes, simulations, evidence, paper positions ---
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/quotes",
+  summary:
+    "Amount-specific quote for a Pons V2 token at one pinned block (curve formula or official V4Quoter). An estimate — not a simulation and not a fill. UNSUPPORTED and UNAVAILABLE are 200 results with a reason.",
+  tags: ["paper-trading"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema, body: { content: { "application/json": { schema: QuoteRequestSchema } } } },
+  responses: {
+    200: { description: "Quote, refusal, or unavailable state", content: { "application/json": { schema: QuoteResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/simulations",
+  summary:
+    "Execute a quote's trade through the real route (UniversalRouter or bonding curve) at the quote's block, from a synthetic account via eth_call state override. Nothing is signed or broadcast.",
+  tags: ["paper-trading"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema, body: { content: { "application/json": { schema: SimulationRequestSchema } } } },
+  responses: {
+    200: { description: "Simulation result, refusal, or unavailable state", content: { "application/json": { schema: SimulationResponseSchema } } },
+    400: errorResponse,
+    404: errorResponse,
+    409: { description: "QUOTE_EXPIRED or QUOTE_NOT_FILLABLE", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/evidence/{snapshotId}",
+  summary: "An immutable quote or simulation evidence snapshot: pinned block/hash, timestamps, versions, sources and missing evidence.",
+  tags: ["paper-trading"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: EvidenceSnapshotParamSchema },
+  responses: {
+    200: { description: "Evidence snapshot", content: { "application/json": { schema: EvidenceSnapshotSchema } } },
+    400: errorResponse,
+    404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/paper-positions",
+  summary:
+    "Save a paper fill for the signed-in user from an unexpired quote and, optionally, its successful simulation. Idempotent per Idempotency-Key: a retry returns the original (200); a new fill returns 201.",
+  tags: ["paper-trading"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    headers: z.object({ "Idempotency-Key": z.string().regex(/^[A-Za-z0-9_-]{8,128}$/) }),
+    body: { content: { "application/json": { schema: CreatePaperPositionRequestSchema } } },
+  },
+  responses: {
+    200: { description: "Replayed — the original paper position", content: { "application/json": { schema: PaperPositionResponseSchema } } },
+    201: { description: "Created", content: { "application/json": { schema: PaperPositionResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+    409: { description: "QUOTE_EXPIRED, QUOTE_NOT_FILLABLE, SIMULATION_NOT_FOR_QUOTE or SIMULATION_NOT_SUCCESSFUL", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+    422: { description: "IDEMPOTENCY_KEY_REUSED", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/paper-positions",
+  summary: "The signed-in user's paper positions, newest first, each with its evidence snapshots. Separate from real wallet holdings and trades.",
+  tags: ["paper-trading"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Paper positions", content: { "application/json": { schema: PaperPositionListResponseSchema } } },
+    401: errorResponse,
   },
 });
 

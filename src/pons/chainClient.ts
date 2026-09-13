@@ -8,7 +8,7 @@
  * material anywhere in this file.
  */
 
-import { createPublicClient, defineChain, http, type Abi, type PublicClient } from "viem";
+import { BaseError, createPublicClient, defineChain, http, type Abi, type Hex, type PublicClient, type StateOverride } from "viem";
 import type { RobinhoodChainConfig } from "./config";
 import type { RawEvmLog } from "./ponsAdapter";
 import { redactRpcUrls } from "./rpcEndpoints";
@@ -105,10 +105,52 @@ export interface ChainReader {
     toBlock: bigint;
     args?: Record<string, unknown>;
   }): Promise<ChainClientResult<RawEvmLog[]>>;
-  readContract<T>(params: { address: string; abi: Abi; functionName: string; args: readonly unknown[] }): Promise<ChainClientResult<T>>;
+  /**
+   * `blockNumber` is optional so existing callers keep reading `latest`. Phase 7D.3.2
+   * evidence and quotes always pass it: a snapshot read at `latest` cannot be tied to a
+   * block hash.
+   */
+  readContract<T>(params: { address: string; abi: Abi; functionName: string; args: readonly unknown[]; blockNumber?: bigint }): Promise<ChainClientResult<T>>;
 }
 
-export class PonsChainClient implements ChainReader {
+/** Phase 7D.3.2 — a raw `eth_call`, always at an explicit block. */
+export interface EthCallParams {
+  to: string;
+  data: Hex;
+  blockNumber: bigint;
+  from?: string;
+  value?: bigint;
+  stateOverride?: StateOverride;
+}
+
+/**
+ * What an `eth_call` established. A revert is a fact about the call at that block, so it is
+ * an AVAILABLE result carrying the revert data, never an outage. `UNSUPPORTED_CAPABILITY`
+ * means this provider cannot run the call as asked (state overrides, typically) — a
+ * property of the endpoint, which failover handles by trying the next one without
+ * penalising the endpoint for ordinary reads.
+ */
+export type EthCallOutcome =
+  | { kind: "SUCCESS"; data: Hex }
+  | { kind: "REVERTED"; data: Hex; message: string }
+  | { kind: "UNSUPPORTED_CAPABILITY"; message: string };
+
+export interface ChainCaller extends ChainReader {
+  call(params: EthCallParams): Promise<ChainClientResult<EthCallOutcome>>;
+}
+
+const CAPABILITY_PATTERNS = [/state ?override/i, /override.*not supported/i, /unsupported.*override/i, /too many arguments/i];
+
+/** Pull revert bytes out of viem's error chain; `0x` when the node gave none. */
+function revertDataOf(err: unknown): Hex {
+  if (err instanceof BaseError) {
+    const withData = err.walk((e) => typeof (e as { data?: unknown }).data === "string") as { data?: string } | null;
+    if (withData?.data && /^0x[0-9a-fA-F]*$/.test(withData.data)) return withData.data as Hex;
+  }
+  return "0x";
+}
+
+export class PonsChainClient implements ChainCaller {
   private readonly client: PublicClient;
   private readonly requestTimeoutMs: number;
   private readonly maxRetries: number;
@@ -210,7 +252,7 @@ export class PonsChainClient implements ChainReader {
     });
   }
 
-  async readContract<T>(params: { address: string; abi: Abi; functionName: string; args: readonly unknown[] }): Promise<ChainClientResult<T>> {
+  async readContract<T>(params: { address: string; abi: Abi; functionName: string; args: readonly unknown[]; blockNumber?: bigint }): Promise<ChainClientResult<T>> {
     return this.withRetry(
       () =>
         this.client.readContract({
@@ -218,7 +260,35 @@ export class PonsChainClient implements ChainReader {
           abi: params.abi,
           functionName: params.functionName,
           args: params.args as never,
+          ...(params.blockNumber !== undefined ? { blockNumber: params.blockNumber } : {}),
         }) as Promise<T>
     );
+  }
+
+  async call(params: EthCallParams): Promise<ChainClientResult<EthCallOutcome>> {
+    return this.withRetry(async (): Promise<EthCallOutcome> => {
+      try {
+        const result = await this.client.call({
+          to: params.to as Hex,
+          data: params.data,
+          blockNumber: params.blockNumber,
+          ...(params.from ? { account: params.from as Hex } : {}),
+          ...(params.value !== undefined ? { value: params.value } : {}),
+          ...(params.stateOverride ? { stateOverride: params.stateOverride } : {}),
+        });
+        return { kind: "SUCCESS", data: result.data ?? "0x" };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (params.stateOverride && CAPABILITY_PATTERNS.some((p) => p.test(message))) {
+          return { kind: "UNSUPPORTED_CAPABILITY", message: redactRpcUrls(message) };
+        }
+        // Transport failures must stay failures (and be retried/failed over); only a node
+        // that actually executed the call and reverted produces a REVERTED outcome.
+        const { code } = classifyError(err);
+        if (code !== "RPC_ERROR") throw err;
+        if (!/revert/i.test(message) && revertDataOf(err) === "0x") throw err;
+        return { kind: "REVERTED", data: revertDataOf(err), message: redactRpcUrls(message).slice(0, 300) };
+      }
+    });
   }
 }
