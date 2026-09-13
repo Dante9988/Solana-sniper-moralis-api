@@ -29,7 +29,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { loadRobinhoodChainConfig } from "../../pons/config";
-import { PonsChainClient } from "../../pons/chainClient";
+import { FailoverChainClient } from "../../pons/failoverChainClient";
 import { ROBINHOOD_CHAIN } from "../../pons/discoveryListener";
 import { ponsComponentLogger } from "../../pons/logger";
 import { loadApiConfig } from "../../researchApi/config";
@@ -46,7 +46,7 @@ const logger = ponsComponentLogger("candles:worker");
 async function main(): Promise<void> {
   const chainConfig = loadRobinhoodChainConfig();
   const workerConfig = loadCandleWorkerConfig();
-  const chainClient = new PonsChainClient({ config: chainConfig });
+  const chainClient = new FailoverChainClient({ config: chainConfig });
   const db = new PrismaClient();
   const usdRateProvider = new NullQuoteUsdRateProvider();
 

@@ -11,6 +11,7 @@
 import { createPublicClient, defineChain, http, type Abi, type PublicClient } from "viem";
 import type { RobinhoodChainConfig } from "./config";
 import type { RawEvmLog } from "./ponsAdapter";
+import { redactRpcUrls } from "./rpcEndpoints";
 
 export type ChainClientFailureCode = "TIMEOUT" | "RATE_LIMITED" | "NETWORK_ERROR" | "RPC_ERROR";
 
@@ -21,7 +22,10 @@ export type ChainClientResult<T> =
 const SOURCE = "robinhood-chain-rpc";
 
 function unavailable<T>(code: ChainClientFailureCode, reason: string, attempts: number): ChainClientResult<T> {
-  return { status: "UNAVAILABLE", source: SOURCE, fetchedAt: new Date(), code, reason, attempts };
+  // Provider errors embed the request URL, and that URL carries the API key. This result
+  // is surfaced through the HTTP API, so redacting here — at the single point every
+  // failure flows through — is what keeps the key out of responses and logs.
+  return { status: "UNAVAILABLE", source: SOURCE, fetchedAt: new Date(), code, reason: redactRpcUrls(reason), attempts };
 }
 
 function sleep(ms: number): Promise<void> {
