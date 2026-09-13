@@ -377,3 +377,64 @@ describe("redactRpcUrls — the API key must never reach a response or a log", (
     expect(safe).not.toContain("KEY2");
   });
 });
+
+describe("request deadlines and metrics (§2)", () => {
+  it("bounds total elapsed time across providers instead of compounding per-endpoint timeouts", async () => {
+    // Three endpoints that each burn 5s. Without a total budget the caller waits 15s+;
+    // with a 6s budget the cascade is cut short.
+    let clock = 1_000_000;
+    const client = new FailoverChainClient({
+      config: { chainId: 4663, rpcHttpUrl: "unused" } as never,
+      env: ENV,
+      validateChainId: false,
+      perEndpointRetries: 0,
+      totalDeadlineMs: 6_000,
+      now: () => clock,
+      random: () => 0,
+      clientFactory: () =>
+        stubReader(async () => {
+          clock += 5_000; // each attempt consumes 5s of the budget
+          return unavailable("socket hang up");
+        }),
+    });
+
+    const result = await client.getBlockNumber();
+    expect(result.status).toBe("UNAVAILABLE");
+    if (result.status !== "UNAVAILABLE") return;
+    expect(result.code).toBe("TIMEOUT");
+    expect(result.reason).toMatch(/deadline/i);
+    expect(client.metricsSnapshot().deadlineExceededCount).toBe(1);
+  });
+
+  it("does not trip the deadline on a fast success", async () => {
+    const { client } = buildClient({
+      ROBINHOOD_RPC_HTTPS: async () => ok(1n),
+      ROBINHOOD_RPC_HTTPS2: async () => ok(1n),
+      DEAFULT_RPC_HTTPS: async () => ok(1n),
+    });
+    const result = await client.getBlockNumber();
+    expect(result.status).toBe("AVAILABLE");
+    expect(client.metricsSnapshot().deadlineExceededCount).toBe(0);
+  });
+
+  it("exposes sanitized request, failover and health metrics", async () => {
+    const { client } = buildClient({
+      ROBINHOOD_RPC_HTTPS: async () => unavailable(ALCHEMY_QUOTA_MESSAGE),
+      ROBINHOOD_RPC_HTTPS2: async () => ok(1n),
+      DEAFULT_RPC_HTTPS: async () => ok(1n),
+    });
+    await client.getBlockNumber();
+    await client.getBlockNumber();
+
+    const m = client.metricsSnapshot();
+    expect(m.requestCount).toBe(2);
+    expect(m.failoverCount).toBeGreaterThanOrEqual(1);
+    expect(m.endpointCount).toBe(3);
+    expect(m.healthyEndpoints).toBeLessThan(3); // the quota-exhausted one is unhealthy
+
+    // The whole point: safe to export without redaction at the call site.
+    const serialized = JSON.stringify(m);
+    expect(serialized).not.toContain("KEY_A");
+    expect(serialized).not.toContain("https://");
+  });
+});

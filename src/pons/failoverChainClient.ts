@@ -57,6 +57,12 @@ export interface FailoverChainClientOptions {
   random?: () => number;
   /** Injectable so tests never open a socket. */
   clientFactory?: (endpoint: RpcEndpoint, config: RobinhoodChainConfig) => ChainReader;
+  /**
+   * Total wall-clock budget for one logical request, across every retry and every
+   * endpoint. Without it, three endpoints x retries x per-request timeout compounds into
+   * a caller-visible stall far longer than any single timeout suggests.
+   */
+  totalDeadlineMs?: number;
   /** Skip the one-off chain-id probe (tests, or a deployment that has verified elsewhere). */
   validateChainId?: boolean;
   logger?: { warn: (msg: string, meta?: unknown) => void; info: (msg: string, meta?: unknown) => void };
@@ -107,7 +113,12 @@ export class FailoverChainClient implements ChainReader {
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly validateChainId: boolean;
+  private readonly totalDeadlineMs: number;
   private readonly logger: FailoverChainClientOptions["logger"];
+  /** Sanitized counters for the metrics surface. Never contains a URL. */
+  private requestCount = 0;
+  private deadlineExceededCount = 0;
+  private failoverCount = 0;
 
   constructor(options: FailoverChainClientOptions) {
     this.config = options.config;
@@ -117,6 +128,7 @@ export class FailoverChainClient implements ChainReader {
     this.now = options.now ?? Date.now;
     this.random = options.random ?? Math.random;
     this.validateChainId = options.validateChainId ?? true;
+    this.totalDeadlineMs = options.totalDeadlineMs ?? 20_000;
     this.logger = options.logger;
 
     const endpoints = resolveHttpEndpoints(options.env ?? process.env);
@@ -154,6 +166,30 @@ export class FailoverChainClient implements ChainReader {
   /** Sanitized health for metrics/ops. Never contains a URL. */
   healthSnapshot(): EndpointHealth[] {
     return this.entries.map((entry) => ({ ...entry.health }));
+  }
+
+  /**
+   * Sanitized metrics (Phase 7D.3.1 §2): request volume, per-endpoint health, failover
+   * counts and deadline exhaustion. Deliberately built from `label`/`host` only, so this
+   * can be logged or exported without redaction at the call site.
+   */
+  metricsSnapshot(): {
+    requestCount: number;
+    failoverCount: number;
+    deadlineExceededCount: number;
+    endpointCount: number;
+    healthyEndpoints: number;
+    endpoints: EndpointHealth[];
+  } {
+    const endpoints = this.healthSnapshot();
+    return {
+      requestCount: this.requestCount,
+      failoverCount: this.failoverCount,
+      deadlineExceededCount: this.deadlineExceededCount,
+      endpointCount: endpoints.length,
+      healthyEndpoints: endpoints.filter((e) => e.healthy).length,
+      endpoints,
+    };
   }
 
   get endpointCount(): number {
@@ -221,6 +257,12 @@ export class FailoverChainClient implements ChainReader {
   private async run<T>(
     operation: (client: ChainReader) => Promise<ChainClientResult<T>>
   ): Promise<ChainClientResult<T>> {
+    this.requestCount += 1;
+    const startedAt = this.now();
+    // One budget for the whole logical request. Checked between endpoints and between
+    // retries so a slow cascade cannot outlive it.
+    const deadlineExceeded = () => this.now() - startedAt >= this.totalDeadlineMs;
+
     const entries = this.available();
     if (entries.length === 0) {
       return {
@@ -236,6 +278,18 @@ export class FailoverChainClient implements ChainReader {
     let last: ChainClientResult<T> | undefined;
 
     for (let index = 0; index < entries.length; index += 1) {
+      if (deadlineExceeded()) {
+        this.deadlineExceededCount += 1;
+        return {
+          status: "UNAVAILABLE",
+          source: "robinhood-chain-rpc",
+          fetchedAt: new Date(),
+          code: "TIMEOUT",
+          reason: `request deadline of ${this.totalDeadlineMs}ms exceeded across providers`,
+          attempts: index,
+        };
+      }
+
       const entry = entries[index];
       await this.ensureChainId(entry);
 
@@ -271,7 +325,10 @@ export class FailoverChainClient implements ChainReader {
 
         if (result.status === "AVAILABLE") {
           this.recordSuccess(entry);
-          if (index > 0) entry.health.failoverCount += 1;
+          if (index > 0) {
+            entry.health.failoverCount += 1;
+            this.failoverCount += 1;
+          }
           return result;
         }
 
@@ -281,7 +338,7 @@ export class FailoverChainClient implements ChainReader {
         if (!shouldFailover(failure)) return result;
 
         this.recordFailure(entry, failure, null);
-        if (attempt < this.perEndpointRetries) {
+        if (attempt < this.perEndpointRetries && !deadlineExceeded()) {
           await new Promise((resolve) =>
             setTimeout(resolve, backoffWithJitter(attempt, this.baseRetryDelayMs, this.maxRetryDelayMs, this.random))
           );
