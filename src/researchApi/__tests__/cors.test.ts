@@ -30,6 +30,18 @@ describe("CORS allowlist (phase7b1.txt §8)", () => {
     expect(res.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  it("lets an allowed origin send Idempotency-Key, which paper-position saves require", async () => {
+    const app = buildApp(prodConfig);
+    const res = await request(app)
+      .options("/thing")
+      .set("Origin", "https://app.onlypump.me")
+      .set("Access-Control-Request-Method", "POST")
+      .set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key");
+    expect(res.status).toBe(204);
+    const allowed = String(res.headers["access-control-allow-headers"]).toLowerCase().split(",");
+    for (const header of ["authorization", "content-type", "idempotency-key"]) expect(allowed).toContain(header);
+  });
+
   it("rejects a preflight (OPTIONS) request from a denied origin with 403", async () => {
     const app = buildApp(prodConfig);
     const res = await request(app).options("/thing").set("Origin", "https://evil.example.com").set("Access-Control-Request-Method", "GET");
