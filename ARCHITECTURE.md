@@ -1,19 +1,21 @@
 # Architecture & Handoff Guide
 
-> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, **7F.2**, plus the trading/Telegram surface merged from the `main2` branch).
-> Companion docs: [README.md](./README.md) (operator overview), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
+> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, **7D–7D.3.3**, **7F.2**, plus the trading/Telegram surface merged from the `main2` branch).
+> Companion docs: [README.md](./README.md) (operator overview), [RUNBOOK.md](./RUNBOOK.md) (running the stack locally), [PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md](./PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md) (Pons V2 ingestion), [docs/phase-7d3-2-quote-verification.md](./docs/phase-7d3-2-quote-verification.md) (quote verification record), [evm-verification/README.md](./evm-verification/README.md) (Foundry harness), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
-**Snapshot date:** 2026-09-07 (UTC)
+**Snapshot date:** 2026-09-14 (UTC)
 **Canonical branch:** `main` (fast-forwarded to `master`'s tip in Phase 7B.1 — see §16.1; `master` still exists, unused going forward)
-**Latest commits:** `3d049e4` (Phase 7B.5B: the first candle/OHLCV service backed by canonical `ChainTrade` — §21; on top of `953cc2e`'s carried-forward schema draft, branch `feature/phase-7b5b-canonical-ohlcv`), `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
+**Latest commits:** `a097263` / `3d366a5` / `8b7963c` (Phase 7D.3.3: CORS for the web app's Vite port and `Idempotency-Key`, and the disposable-database guard for DB test suites; §26, open as PR #21), `b1de963` (PR #20 merged: Phase 7D.3.2 block-pinned quotes, route simulation, evidence snapshots, paper positions, logo cache, Foundry fork verification; §25), `cab5784` (PR #19: Phase 7D.3.1 RPC failover, WebSocket recovery, block pinning; §24), `c29780a` (PR #18: Phase 7D.3 operational ingestion and V4 pool evidence; §24), `eab698c` (PR #17: Phase 7F.2; §22), `1ef81be` (PR #16: Phase 7D Pons V2 and Uniswap V4; §23), `3d049e4` (Phase 7B.5B: the first candle/OHLCV service backed by canonical `ChainTrade` — §21; on top of `953cc2e`'s carried-forward schema draft, branch `feature/phase-7b5b-canonical-ohlcv`), `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
 
-**Stack:** TypeScript / Node (CI runs Node 20), Solana Web3.js, **viem** (Robinhood Chain HTTP RPC), Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Supabase JWT auth, Zod/OpenAPI, `ws`, Redis via `ioredis` (optional distributed rate limiting/realtime), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
+**Stack:** TypeScript / Node (CI runs Node 20), Solana Web3.js, **viem** (Robinhood Chain HTTP/WSS RPC with multi-key failover), **Foundry 1.8.1** (Solidity fork verification in `evm-verification/`, CI only), Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Supabase JWT auth, Zod/OpenAPI, `ws`, Redis via `ioredis` (optional distributed rate limiting/realtime), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
 ---
 
 ## ⚠️ 0. Read this before running `npm run dev`
 
 > **Phase 7F.2 update (§22):** three startup defects were fixed here — a Telegram bot token printed to stdout on every boot (**rotate any token that booted the old code**), every periodic check registered twice so **each PnL card posted to Discord twice**, and a second `client.login()` in `main()` that hung forever and silently skipped everything after it. Running this repo locally with the *production* `TELEGRAM_BOT_TOKEN` will also fight the production instance for Telegram's polling lock (`409 Conflict`); use a separate test bot or leave Telegram unset.
+
+> **Phase 7D.3.3 update (§26):** the `*.dbIntegration` suites delete checkpoints and run reorg recovery against a fake chain. On 2026-09-14 they were run against the local development database (`solana_bot`) and marked 11,977 real Pons V2 launches `ORPHANED`, wiping their graduation data. A vitest global setup now refuses any `*_RUN_DB_TESTS` flag unless the database name looks disposable. The damaged local rows are not yet repaired (§26.4). To run the product locally (API, workers, frontend), follow [RUNBOOK.md](./RUNBOOK.md), not `npm run dev`.
 
 This section exists because the single most important fact about the current state of this repository does not fit anywhere else without getting lost: `npm run dev` starts a live Telegram trading bot alongside everything it already did. **As of this snapshot, that bot is non-custodial** (trades are approved in the user's own wallet app — see §8.2) **and its trading commands are allowlisted** (§8.6); its HTTP server (`src/api/index.ts`) is **off by default** and, when enabled, requires a bearer token on every `/api/*` route (§8.3). Full detail is in §8 — read it before changing any of that, and definitely before running with `API_ENABLED=true` on a network-reachable host.
 
@@ -32,7 +34,7 @@ Four layers share one codebase:
 
 **Implemented:** everything in the first two layers (event types, orchestrator, researchers, Prisma report store, non-blocking listener dispatch, Anthropic synthesis, Moralis compatibility cleanup, trench.bot removed from runtime, canonical asset identity, deterministic Solana forensics 5A–5E, read-only presentation HTTP API, an X API read-only capability checkpoint) plus, from `main2`: a Telegraf-based Telegram bot with real buy/sell/wallet commands, a `PumpSwapService` and a `JupiterService` trading class, a websocket/API server, PnL/top-calls/simulation reporting scripts.
 
-**Latest additions:** wallet verification and user-scoped realtime jobs; real-chain Pump.fun/PumpSwap event decoding and normalized trades; the `ChainAdapter` contract; Robinhood/Pons ingestion with discovery enrichment, raw trades, graduation polling, transactional checkpoints, and `/api/v1/tokens/robinhood` reads (Phase 7B.4); a discovery-before-trades coordination barrier, bounded automatic reorg rollback/replay, chunked pool-scaling, bounded-concurrency batch enrichment with `PENDING`-row retry, and a backend-owned `/api/v1/tokens/robinhood/status` ingestion source-health projection (Phase 7B.5A, §20). Phase 7B.4 is completed and tested within the boundaries in §19.8–§19.9; Phase 7B.5A within §20.12–§20.13; and now, **the first candle/OHLCV service**: a chain-neutral aggregation engine, a `MarketCandle` materialization, an independently runnable `candles:worker`, reorg-safe full-bucket recomputation driven by the same `reorgRecovery.ts` transaction, `GET /api/v1/tokens/robinhood/:tokenAddress/candles`, and an optional `token.candle.updated` realtime event — Phase 7B.5B, §21, tested and proven within the boundaries in §21.19–§21.20. Pons facts are still not connected to the Solana intelligence/scoring pipeline.
+**Latest additions:** wallet verification and user-scoped realtime jobs; real-chain Pump.fun/PumpSwap event decoding and normalized trades; the `ChainAdapter` contract; Robinhood/Pons ingestion with discovery enrichment, raw trades, graduation polling, transactional checkpoints, and `/api/v1/tokens/robinhood` reads (Phase 7B.4); a discovery-before-trades coordination barrier, bounded automatic reorg rollback/replay, chunked pool-scaling, bounded-concurrency batch enrichment with `PENDING`-row retry, and a backend-owned `/api/v1/tokens/robinhood/status` ingestion source-health projection (Phase 7B.5A, §20). Phase 7B.4 is completed and tested within the boundaries in §19.8–§19.9; Phase 7B.5A within §20.12–§20.13; and now, **the first candle/OHLCV service**: a chain-neutral aggregation engine, a `MarketCandle` materialization, an independently runnable `candles:worker`, reorg-safe full-bucket recomputation driven by the same `reorgRecovery.ts` transaction, `GET /api/v1/tokens/robinhood/:tokenAddress/candles`, and an optional `token.candle.updated` realtime event — Phase 7B.5B, §21, tested and proven within the boundaries in §21.19–§21.20. Since then: Pons **V2** discovery/graduation onto Uniswap V4 with launch metadata (Phase 7D, §23); supervised local processes, a committed OpenAPI contract and read-only V4 pool evidence (Phase 7D.3, §24); multi-key RPC failover, WebSocket recovery and cross-provider block pinning (Phase 7D.3.1, §24); and **block-pinned quotes verified against the real contracts on a fork, route simulation, immutable evidence snapshots, per-user paper positions and a safe token-logo cache** (Phase 7D.3.2, §25), accepted in a real browser with two Supabase test users (Phase 7D.3.3, §26). Nothing in this path signs or broadcasts a transaction. Pons facts are still not connected to the Solana intelligence/scoring pipeline.
 
 **Not implemented yet:** Chroma/RAG, trending history, macro/news beyond the X checkpoint, intelligence → Discord/Telegram notifications, real PumpSwap AMM swap execution (Jupiter is the only working swap path). (`src/api/index.ts` authentication is implemented — bearer-token, fail-closed, off by default — see §8.3.)
 
@@ -107,11 +109,14 @@ The discovery foundation still leaves historical/legacy-factory backfill, Pons s
 │  FORENSICS_WORKER_ENABLED=false by default — must be explicitly on.  │
 └──────────────────────────────────────────────────────────────────────┘
 
-┌─ PROCESS D: npm run api (canonical /api/v1 gateway, §16–§19)        ┐
+┌─ PROCESS D: npm run api (canonical /api/v1 gateway, §16–§26)        ┐
 │  src/researchApi/server.ts — Express, default API_PORT=8787.        │
 │  Supabase/API-key auth; Prisma research and Robinhood token reads; │
 │  scan enqueue, wallet proofs, authenticated realtime job events.   │
 │  Redis connects worker/API events when REALTIME_BACKEND=redis.     │
+│  Phase 7D.3.2: quotes/simulations/market evidence read Robinhood   │
+│  Chain directly (block-pinned, failover RPC); paper positions and  │
+│  evidence snapshots in Postgres; in-process token-logo worker.     │
 └──────────────────────────────────────────────────────────────────────┘
 
 ┌─ PROCESS E: npm run api:server (main2's standalone read-only API)    ┐
@@ -119,15 +124,27 @@ The discovery foundation still leaves historical/legacy-factory backfill, Pons s
 │  /api/utils/sol-price. No Discord/Telegram/wallet imports, no trades.│
 └──────────────────────────────────────────────────────────────────────┘
 
-┌─ PROCESS F: npm run pons:worker (standalone, Phase 7B.4)            ┐
+┌─ PROCESS F: npm run pons:worker (standalone, Phase 7B.4 / 7D)       ┐
 │  src/pons/scripts/ponsWorkerMain.ts                               │
-│  Robinhood HTTP RPC → active factory TokenLaunched + enrichment   │
+│  Robinhood RPC (failover list, §24) →                              │
+│    Pons V1 factory TokenLaunched + enrichment                     │
+│    Pons V2 factory TokenLaunched / PoolGraduated + launch metadata │
 │    → DiscoveredToken + discovery checkpoint in one transaction    │
-│  Discovered pools → Swap polling → ChainTrade + trade checkpoint  │
-│  graduationStatus(token) polling → DiscoveredToken state          │
+│  V1 pools → Swap; V2 → Uniswap V4 PoolManager Swap by PoolId      │
+│    → ChainTrade + trade checkpoint                                 │
+│  V1 graduationStatus(token) polling → DiscoveredToken state       │
 │  PostgreSQL → PROCESS D /api/v1/tokens/robinhood[/tokenAddress]    │
-│  Source block/hash checkpoints support resume and reorg detection.│
+│  Source block/hash checkpoints support resume and reorg recovery. │
 └──────────────────────────────────────────────────────────────────────┘
+
+┌─ PROCESS G: npm run candles:worker (standalone, Phase 7B.5B)        ┐
+│  src/candles/scripts/candlesWorkerMain.ts                         │
+│  ChainTrade → MarketCandle (7 resolutions, provisional/final,      │
+│  reorg-safe recompute) → /api/v1/tokens/robinhood/:token/candles  │
+└──────────────────────────────────────────────────────────────────────┘
+
+PROCESS D, F and G are what the web app needs; scripts/dev-stack.sh
+supervises all three with one-owner protection (RUNBOOK.md).
 ```
 
 **Rule (intelligence layer only):** listeners are event sources; analysis lives under `src/intelligence/**`; Discord alerts and intelligence are parallel, not substitutes. **This rule does not extend to the Telegram/API trading surface** — that surface has its own, separate path from a chat command or an HTTP request to a trade, but (unlike when this line was first written) that path is now allowlisted (§8.6) and non-custodial: it ends at an unsigned Solana Pay transaction request the user's own wallet must approve, never a transaction this bot signs or submits itself (§8.2).
@@ -154,8 +171,16 @@ The discovery foundation still leaves historical/legacy-factory backfill, Pons s
 | **7B.2** | Wallet-ownership verification, user-scoped scans/jobs, authenticated WebSockets, memory/Redis event bus and tickets | Done — see §17; live Supabase/Redis deployment proof remains open |
 | **7B.3A1** | Pump.fun/PumpSwap lifecycle decoding, canonical event identity, normalized trades and additive schema | Done for decoding/schema slice — see §18; durable Solana ingestion and candle services remain open |
 | **7B.4** | Robinhood/Pons discovery, trades, graduation polling, PostgreSQL checkpoints, reorg detection and canonical read API | Done and tested; recorded mainnet proof, testnet blocker and remaining limits — §19 |
+| **7B.5A** | Pons ingestion hardening: discovery-before-trades barrier, bounded reorg rollback/replay, chunked pool scaling, batch enrichment, source health | Done — §20 |
+| **7B.5B** | Chain-neutral candle/OHLCV service for Robinhood/Pons | Done — §21 |
+| **7D** | Pons V2 discovery/graduation onto Uniswap V4, launch metadata, V4 trade history | Done — §23 and `PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md` |
+| **7F.2** | Verified callouts API, single-sourced PnL renderer, three startup fixes | Done — §22 |
+| **7D.3** | Supervised local processes (`dev-stack.sh`), committed OpenAPI + drift check, fabricated-PnL removal, read-only V4 pool evidence | Done — §24 |
+| **7D.3.1** | Credential-leak remediation, safe public error messages, multi-key RPC failover, WebSocket recovery, cross-provider block pinning, deadlines and metrics | Done — §24 |
+| **7D.3.2** | Official V4Quoter verified on a pinned fork; block-pinned quotes, route simulation, market evidence, immutable evidence snapshots, paper positions, token-logo cache | Done, merged as PR #20 — §25 |
+| **7D.3.3** | Browser acceptance with two confirmed Supabase test users; CORS fixes; disposable-DB guard | Done; follow-up PR #21 open (not merged) — §26 |
 
-Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt`, `phase4.txt`, `phase5*.txt`, `phase6`, `phase7b1.txt`, `phase7b2.txt`, and `phase7b4.txt` (repository root, historical prompts). The implemented Phase 7B.4 behavior and deviations are recorded in §19; the brief is not an exact runtime description. The `main2` merge had no corresponding phase brief — it is independent legacy work with its own history (commits from May 2025), reconciled into `master` (see git log around `10668e0`).
+Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt`, `phase4.txt`, `phase5*.txt`, `phase6`, `phase7b1.txt`, `phase7b2.txt`, `phase7b4.txt`, `phase7b5a.txt` and `phase7b5b.txt` (repository root, historical prompts). The Phase 7C/7D/7G briefs (`phase7d3.txt` … `phase7d3.3.txt`) live in the frontend repository root (`only-pump-me`). The implemented Phase 7B.4 behavior and deviations are recorded in §19; the brief is not an exact runtime description. The `main2` merge had no corresponding phase brief — it is independent legacy work with its own history (commits from May 2025), reconciled into `master` (see git log around `10668e0`).
 
 ### Phase 4 details
 
@@ -552,14 +577,27 @@ src/
 ├── pons/                             # Phase 7B.4: config, verified ABI, viem ChainReader, adapter,
 │                                      # discovery/trade loops, checkpoints, graduation poller;
 │                                      # scripts/ponsWorkerMain.ts and liveVerification.ts (§19)
+│   ├── abiV2.ts / ponsV2Adapter.ts / discoveryV2Listener.ts / tradeV2Listener.ts   # Phase 7D (§23)
+│   ├── v4PoolState.ts / v4PoolEvidenceService.ts   # Phase 7D.3 read-only V4 pool evidence (§24)
+│   ├── rpcEndpoints.ts / failoverChainClient.ts     # Phase 7D.3.1 multi-key failover (§24)
+│   ├── wsSubscriptionManager.ts / blockPinnedReader.ts   # Phase 7D.3.1 WS recovery, block pinning
+│   └── quote/                        # Phase 7D.3.2 (§25): protocol.ts (addresses/ABIs/sources),
+│                                      # curveQuote.ts, v4Quote.ts, pinnedReads.ts, quoteService.ts,
+│                                      # simulationService.ts, marketEvidenceService.ts,
+│                                      # generated/routeSimulator.json (from evm-verification/)
+├── candles/                          # Phase 7B.5B candle domain + candlesWorkerMain.ts (§21)
+├── media/                            # Phase 7D.3.2 token-logo cache: imageSafety.ts (byte sniffing),
+│                                      # safeImageFetch.ts (SSRF-guarded), tokenImageCache.ts (worker)
+├── testSupport/disposableDatabaseGuard.ts   # Phase 7D.3.3 vitest globalSetup (§26.3)
 ├── assets/                           # Phase 4 canonical identity (see §3)
 ├── presentation/                     # Phase 6 pure projection layer (see §3)
 ├── researchApi/                      # Canonical /api/v1 gateway (Phase 6, evolved 7B.1/7B.2 — see §3, §8.4, §16, §17)
 │   ├── server.ts                     # createApiServer(db, config) — requestId, CORS, routes, error handler
 │   ├── config.ts                     # Fail-closed env config: API_KEYS, Supabase, CORS, rate-limit/realtime backend
-│   ├── middleware/{authenticate,supabaseAuth,requestId,cors,rateLimit,validateMint}.ts
-│   ├── routes/{health,docs,me,tokens,jobs,wallets,realtimeTickets}.ts
-│   ├── contracts/{zodOpenApi,common,errors,openapi,wallets}.ts   # One Zod source for validation + OpenAPI (§16.5)
+│   ├── middleware/{authenticate,supabaseAuth,requestId,cors,rateLimit,validateMint,validateRobinhoodAddress}.ts
+│   ├── routes/{health,docs,me,tokens,jobs,wallets,realtimeTickets,robinhoodTokens,callouts,paperTrading,media}.ts
+│   ├── contracts/{zodOpenApi,common,errors,openapi,wallets,robinhoodTokens,candles,callouts,poolEvidence,paperTrading}.ts   # One Zod source for validation + OpenAPI (§16.5)
+│   ├── quoteEngineProvider.ts        # Phase 7D.3.2: lazy chain config + 8s market-evidence cache
 │   ├── realtime/{eventEnvelope,eventBus,eventPublisher,ticketStore,websocketServer}.ts   # Phase 7B.2 (§17)
 │   ├── lib/logger.ts                 # pino + redaction (§16.8)
 │   ├── scripts/generateOpenApiDocument.ts   # npm run openapi:generate
@@ -593,6 +631,8 @@ src/
 │   ├── qrCode.ts                     # Renders a Solana Pay URL as a PNG for chat delivery
 │   ├── walletVerificationService.ts  # Phase 7B.2: Sign-In-With-Solana challenge/verify (§17.1) — non-custodial
 │   ├── scanOwnershipService.ts       # Phase 7B.2: user <-> jobKey ownership mapping (§17.2)
+│   ├── paperTradingService.ts        # Phase 7D.3.2: evidence snapshots + idempotent paper positions (§25)
+│   ├── pnlImage.ts                   # Phase 7F.2: the single PnL card renderer (§22.3)
 │   ├── __tests__/walletVerificationService.test.ts / .dbIntegration.test.ts   # §17.1
 │   ├── __tests__/nonCustodialTradingBoundary.test.ts  # Grep-based: no key material anywhere in
 │   │                                  # telegram/discord/api/trading-service source (§3 Phase 6 note)
@@ -608,6 +648,10 @@ src/
 ├── tracker/                          # SQLite holdings
 └── pumputils/                        # Bonding-curve buy helpers (legacy)
 prisma/schema.prisma
+evm-verification/                     # Phase 7D.3.2 Foundry harness: test-hook suite, actual-Pons fork suite
+                                      # at block 62211539, PonsRouteSimulator.sol, evidence/*.jsonl (§25)
+scripts/dev-stack.sh                  # Phase 7D.3: supervises api, pons, candles (RUNBOOK.md)
+scripts/check-openapi-drift.mjs       # Phase 7D.3: CI contract drift check
 ```
 
 ---
@@ -632,11 +676,15 @@ Intelligence does **not** post Discord alerts yet. The Telegram surface (§8) is
 npm install
 npx prisma generate
 npx prisma validate
-npx prisma migrate deploy    # full 12-migration chain, init through discovered-token pool context (§19.3)
+npx prisma migrate deploy    # full 18-migration chain, through evidence snapshots / paper positions / image cache (§25)
                               # apply both Pons migrations before starting ingestion
 
 npm run build                 # tsc
-npx vitest run                # default offline/transport tests; 6 opt-in DB-integration files skipped
+npx vitest run                # default offline/transport tests: 1,111 passed, 82 skipped (2026-09-14);
+                               # opt-in DB-integration files skipped. vitest.config.ts excludes
+                               # evm-verification/, .run/, .claude/ and dist/ (vendored tests inflated counts before)
+# DB suites: DATABASE_URL must name a disposable database (test/tests/ci/tmp/temp as a word) or
+# ALLOW_DB_TESTS_ON_NAMED_DATABASE must equal its exact name; otherwise vitest refuses to start (§26.3)
 WALLET_RUN_DB_TESTS=true npx vitest run src/services/__tests__/walletVerificationService.dbIntegration.test.ts
                                # real-Postgres atomicity/cross-account-claim proof (§17.1) — disposable DB only
 npx vitest run src/pump/__tests__/eventDecoding.test.ts src/pons/__tests__/ponsAdapter.test.ts
@@ -647,7 +695,13 @@ PONS_RUN_DB_TESTS=true npx vitest run --no-file-parallelism src/pons src/researc
                                # real Postgres; canned chain input; real Express HTTP reads (§19.8)
 npm run test:intelligence     # intelligence subset
 npm run test:api-v1           # /api/v1 gateway subset only (src/researchApi) — §16
-npm run openapi:generate      # writes openapi.json (gitignored snapshot; the live route always regenerates)
+PAPER_RUN_DB_TESTS=true npx vitest run --no-file-parallelism src/services src/media src/researchApi
+                               # evidence snapshots, paper positions, logo cache (§25) — disposable DB only
+npm run openapi:generate      # writes openapi.json (committed since Phase 7D.3; the live route always regenerates)
+npm run openapi:check         # CI drift check between Zod contracts and the committed openapi.json
+
+cd evm-verification && scripts/install-deps.sh && forge test -vv      # Foundry 1.8.1, no RPC
+ROBINHOOD_FORK_RPC_URL=<archive RPC> scripts/fork-verify.sh           # actual-Pons fork suite; exit 0/1/78 (§25)
 npx prisma@6.5.0 validate
 
 npm run dev                   # see §0/§8 — also starts the Telegram bot (non-custodial, allowlisted); API_ENABLED=true additionally starts src/api/index.ts (bearer-authenticated)
@@ -655,16 +709,18 @@ npm run pumpfun                # Pump.fun mint Discord only, no trading surfaces
 npm run api                    # Canonical /api/v1 gateway, wallet/realtime + Robinhood token reads (§16–§19)
 npm run api:server             # main2's read-only standalone status API
 npm run forensics:worker       # disabled by default (FORENSICS_WORKER_ENABLED=false)
-npm run pons:worker            # starts all three Pons loops; required config must be exported (§19.7)
+npm run pons:worker            # starts the Pons V1 + V2 loops; required config must be exported (§19.7)
+npm run candles:worker         # candle aggregation (§21)
+scripts/dev-stack.sh start     # api + pons + candles, supervised, one owner each (RUNBOOK.md)
 npm run forensics:fixture      # synthetic, zero live network calls — safe to run any time
 npm run x:smoke                # only place X_BEARER_TOKEN is read
 ```
 
 All opt-in DB suites require `DATABASE_URL` to point at an already migrated **disposable database**. Pons suites reuse fixture identities and checkpoint sources and must run serially; their cleanup deletes those rows. `src/pons/scripts/liveVerification.ts` is a separate live-RPC harness that also deletes/reseeds Pons checkpoints, so use it only with a disposable verification database (§19.8). Neither live chain harness runs in CI.
 
-CI (`.github/workflows/ci.yml`) runs, on Node 20, for every push/PR to `main`/`master`: `npm ci` → `prisma generate` → `prisma validate` → wait for a disposable `postgres:16` **service container** to report ready (`pg_isready`) → `prisma migrate deploy` against that container (a real clean-install migration run every time — not a placeholder, and not a shared or persistent database; it starts empty on every job and is discarded when the job ends) → `tsc --noEmit` → `vitest run` → `npm run build`. This is a Phase 7A.1 change: CI previously used a `DATABASE_URL` string Prisma Client never actually connected with (`prisma generate` only needs it to be *set*, not reachable), which is exactly how the missing `20250324020906_init` migration (§3, §5.6) went unnoticed — `prisma migrate deploy` was never actually exercised in CI before. The default suite mocks database/provider boundaries and uses local HTTP/WebSocket transports; the six opt-in DB files connect to real PostgreSQL only when explicitly enabled — `src/api/__tests__/index.test.ts` mocks `../discord/discord` and `../telegram/telegramBot` before importing `src/api/index.ts` for exactly this reason (importing the real modules would call `client.login(DISCORD_BOT_TOKEN)` at module scope). The `src/presentation/`/`src/researchApi/`/`src/assets/`/`src/x/`/`src/forensics/` execution-boundary tests still only scan those directories (unchanged); `src/telegram/`, `src/discord/`, and `src/api/` now have their own separate regression coverage instead (§3 Phase 6 note, §8.2's intent-hardening tests, §8.3's auth tests) — so CI verifies both that the trading surface compiles *and* that its auth/allowlist/non-custodial invariants hold, but the live Solana Pay flow (a real wallet app fetching `/pay/*` and signing) is still not exercised by CI or by any test in this repo; see §14.
+CI (`.github/workflows/ci.yml`) has two jobs. **`build-and-test`** runs, on Node 20, for every push/PR to `main`/`master`: `npm ci` → `prisma generate` → `prisma validate` → wait for a disposable `postgres:16` **service container** to report ready (`pg_isready`) → `prisma migrate deploy` against that container → `tsc --noEmit` → `npm run openapi:check` → `vitest run` → every opt-in DB suite serially (`PONS/PUMP/FORENSICS/WALLET/CANDLES/PAPER_RUN_DB_TESTS=true`) → the real-anvil reorg proof → `npm run build`. **`foundry-verification`** (Phase 7D.3.2) installs Foundry **v1.8.1**, runs the test-hook suite, then `scripts/fork-verify.sh` against the `ROBINHOOD_FORK_RPC_URL` secret, annotating BLOCKED (exit 78) rather than failing when no archive RPC is available. The historical description of the original single-job pipeline follows: `npm ci` → `prisma generate` → `prisma validate` → wait for a disposable `postgres:16` **service container** to report ready (`pg_isready`) → `prisma migrate deploy` against that container (a real clean-install migration run every time — not a placeholder, and not a shared or persistent database; it starts empty on every job and is discarded when the job ends) → `tsc --noEmit` → `vitest run` → `npm run build`. This is a Phase 7A.1 change: CI previously used a `DATABASE_URL` string Prisma Client never actually connected with (`prisma generate` only needs it to be *set*, not reachable), which is exactly how the missing `20250324020906_init` migration (§3, §5.6) went unnoticed — `prisma migrate deploy` was never actually exercised in CI before. The default suite mocks database/provider boundaries and uses local HTTP/WebSocket transports; the six opt-in DB files connect to real PostgreSQL only when explicitly enabled — `src/api/__tests__/index.test.ts` mocks `../discord/discord` and `../telegram/telegramBot` before importing `src/api/index.ts` for exactly this reason (importing the real modules would call `client.login(DISCORD_BOT_TOKEN)` at module scope). The `src/presentation/`/`src/researchApi/`/`src/assets/`/`src/x/`/`src/forensics/` execution-boundary tests still only scan those directories (unchanged); `src/telegram/`, `src/discord/`, and `src/api/` now have their own separate regression coverage instead (§3 Phase 6 note, §8.2's intent-hardening tests, §8.3's auth tests) — so CI verifies both that the trading surface compiles *and* that its auth/allowlist/non-custodial invariants hold, but the live Solana Pay flow (a real wallet app fetching `/pay/*` and signing) is still not exercised by CI or by any test in this repo; see §14.
 
-**What migration validation covers:** CI applies the full current chain (12 migrations at this snapshot) to a fresh `postgres:16` database; its ordinary `vitest run` does not enable the six opt-in DB suites. The historical Phase 7A.1 upgrade proof covered migrations 1–6 plus migration 7 with an existing `Wallet` row. It does not establish upgrade safety for every later migration. In particular, the second Pons migration adds required pool-context columns without defaults; apply both Pons migrations before ingestion, or plan enrichment of existing rows if upgrading a database populated between them (§19.3). No production database snapshot replay is recorded.
+**What migration validation covers:** CI applies the full current chain (18 migrations at this snapshot) to a fresh `postgres:16` database; its ordinary `vitest run` does not enable the six opt-in DB suites. The historical Phase 7A.1 upgrade proof covered migrations 1–6 plus migration 7 with an existing `Wallet` row. It does not establish upgrade safety for every later migration. In particular, the second Pons migration adds required pool-context columns without defaults; apply both Pons migrations before ingestion, or plan enrichment of existing rows if upgrading a database populated between them (§19.3). No production database snapshot replay is recorded.
 
 Prefer `npm`/`npx` (not Yarn) in this environment — `yarn.lock` has repeatedly drifted from `package-lock.json` (registry-host-only diffs) with no clear trigger found; CI only uses `npm ci`, so `yarn.lock` is not load-bearing. Also: local `npm install`/`npm ci` was found to resolve some optional transitive dependencies (`arweave`, `socks`) differently between npm 11 (many local dev machines) and npm 10.8.x (the CI runner's bundled npm on Node 20) — if `npm ci` passes locally but fails in CI with a "not in sync" lockfile error, regenerate `package-lock.json` with Node 20 (`nvm install 20 && nvm use 20 && npm install`) rather than assuming the lockfile is simply stale.
 
@@ -685,15 +741,18 @@ See `.env.example` for the names that are actually documented there — it now i
 | Forensics worker (Phase 5D) | `FORENSICS_WORKER_ENABLED`, `FORENSICS_WORKER_CONCURRENCY`, `FORENSICS_JOB_POLL_MS`, `FORENSICS_JOB_LEASE_MS`, `FORENSICS_JOB_HEARTBEAT_MS`, `FORENSICS_JOB_MAX_ATTEMPTS`, `FORENSICS_JOB_BASE_BACKOFF_MS` | Yes |
 | Forensics integration (Phase 5E) | `FORENSICS_ENQUEUE_ENABLED`, `FORENSICS_RECONCILIATION_ENABLED`, `FORENSICS_AI_RESYNTHESIS_ENABLED` | Yes |
 | Research API / `/api/v1` gateway (Phase 6, evolved in Phase 7B.1 — §16) | `API_PORT` (default 8787), `API_KEYS` (internal/admin only — §16.4), `API_PUBLIC_READS`, `PRESENTATION_RATE_LIMIT_PER_MIN`, `SCAN_ENQUEUE_LIMIT_PER_HOUR` | Yes — but see §8.4, this `API_PORT` is easy to confuse with `main2`'s unrelated same-named var |
-| Supabase JWT auth (Phase 7B.1, §16.4) | `SUPABASE_URL` (only required setting — enables JWKS-based ES256/RS256 verification automatically), `SUPABASE_JWT_SECRET` (legacy HS256 only), `SUPABASE_JWT_AUDIENCE` | Yes |
+| Supabase JWT auth (Phase 7B.1, §16.4) | `SUPABASE_URL` (only required setting — enables JWKS-based ES256/RS256 verification automatically; currently project `weafhrsgxuwrtabkjbmk`), `SUPABASE_JWT_SECRET` (legacy HS256 only), `SUPABASE_JWT_AUDIENCE`. Local-only admin tooling may also use `SUPABASE_SECRET_KEY` (never in the frontend, never committed) | Yes |
 | `/api/v1` CORS (Phase 7B.1, §16.6) | `CORS_ALLOWED_ORIGINS` (never a wildcard — config load throws if `*` is present), `CORS_DEV_ORIGINS` (non-production only) | Yes |
 | `/api/v1` rate-limit backend (Phase 7B.1, §16.7) | `RATE_LIMIT_BACKEND` (`memory`\|`redis` — required explicitly when `NODE_ENV=production`), `REDIS_URL` (required when backend is `redis`) | Yes |
 | Wallet-challenge binding (Phase 7B.2, §17.1) | `ONLYPUMP_DOMAIN` (default `onlypump.me`), `ONLYPUMP_URI` (default `https://onlypump.me`) — baked into every challenge message server-side, never from request input | Yes |
 | Realtime event bus + WS ticket store (Phase 7B.2, §17.5) | `REALTIME_BACKEND` (`memory`\|`redis` — required explicitly when `NODE_ENV=production`, reuses `REDIS_URL`), `WS_TICKET_TTL_MS`, `WS_MAX_MESSAGE_BYTES`, `WS_MAX_SUBSCRIPTIONS_PER_CONNECTION`, `WS_MAX_CONNECTIONS_PER_USER`, `WS_IDLE_TIMEOUT_MS` | Yes |
-| Robinhood Chain connection (Phase 7B.4, §19.7) | `ROBINHOOD_CHAIN_ID`, `ROBINHOOD_RPC_HTTPS`, `ROBINHOOD_RPC_WSS`, `ROBINHOOD_EXPLORER` — all required; WSS retained as configuration only | No |
-| Pons contract identity (Phase 7B.4) | `PONS_FACTORY`, `PONS_LOCKER`, `PONS_FACTORY_LEGACY`, `PONS_LOCKER_LEGACY`, `WETH_QUOTE` — all required; active factory is the ingestion target | No |
-| Pons polling (optional defaults, §19.7) | `PONS_POLL_INTERVAL_MS`, `PONS_GRADUATION_POLL_INTERVAL_MS`, `PONS_MAX_BLOCK_RANGE_PER_POLL`, `PONS_CONFIRMATION_LAG_BLOCKS`, `PONS_FRESH_START_LOOKBACK_BLOCKS` | No |
-| Opt-in ingestion verification | `PUMP_RUN_DB_TESTS`, `PONS_RUN_DB_TESTS`; live Solana capture: `PUMP_LIVE_CAPTURE_MAX`, `PUMP_LIVE_CAPTURE_TIMEOUT_MS`, `PUMP_LIVE_CAPTURE_SPACING_MS` | No |
+| Robinhood Chain connection (Phase 7B.4, §19.7) | `ROBINHOOD_CHAIN_ID`, `ROBINHOOD_RPC_HTTPS`, `ROBINHOOD_RPC_WSS`, `ROBINHOOD_EXPLORER` — all required | Yes |
+| Robinhood RPC failover (Phase 7D.3.1, §24) | `ROBINHOOD_RPC_HTTPS2`, `ROBINHOOD_RPC_HTTPS3`, `DEAFULT_RPC_HTTPS` (real spelling), `ROBINHOOD_RPC_WSS2`, `ROBINHOOD_RPC_WSS3`, `DEAFULT_RPC_WSS` — optional, tried in that order after the primary | Yes |
+| Pons contract identity (Phase 7B.4 / 7D) | `PONS_FACTORY`, `PONS_LOCKER`, `PONS_FACTORY_LEGACY`, `PONS_LOCKER_LEGACY`, `WETH_QUOTE`, `PONS_V2_FACTORY`; optional `BLOCKSCOUT_API_KEY` | Yes |
+| Token-logo cache (Phase 7D.3.2, §25) | `TOKEN_IMAGE_IPFS_GATEWAYS` (comma-separated `https://` gateways; defaults to `ipfs.io`, `dweb.link`) | Yes |
+| Foundry fork verification (CI / local, §25) | `ROBINHOOD_FORK_RPC_URL` (archive RPC; CI secret) | No — CI secret / shell only |
+| Pons polling (optional defaults, §19.7) | `PONS_POLL_INTERVAL_MS`, `PONS_GRADUATION_POLL_INTERVAL_MS`, `PONS_MAX_BLOCK_RANGE_PER_POLL`, `PONS_CONFIRMATION_LAG_BLOCKS`, `PONS_FRESH_START_LOOKBACK_BLOCKS` | Yes |
+| Opt-in DB verification | `PUMP_RUN_DB_TESTS`, `PONS_RUN_DB_TESTS`, `FORENSICS_RUN_DB_TESTS`, `WALLET_RUN_DB_TESTS`, `CANDLES_RUN_DB_TESTS`, `PAPER_RUN_DB_TESTS`; `ALLOW_DB_TESTS_ON_NAMED_DATABASE` (exact database name, §26.3); live Solana capture: `PUMP_LIVE_CAPTURE_MAX`, `PUMP_LIVE_CAPTURE_TIMEOUT_MS`, `PUMP_LIVE_CAPTURE_SPACING_MS` | No |
 | Telegram bot (main2) | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHANNEL_ID`, `TELEGRAM_CHANNEL_ALERTS_ENABLED`, `TELEGRAM_ADMIN_IDS` (trading-command allowlist, fails closed — §8.6) | Yes |
 | Discord trading allowlist | `DISCORD_ADMIN_IDS` (fails closed — §8.6) | Yes |
 | **main2 API server — ⚠️ see §8.3-8.4** | `API_ENABLED` (default `false` — must be `true` to start the server at all), `API_HOST` (default `0.0.0.0`), `API_PORT` (default 3001, collides in name with Phase 6's), `API_PORT_MAIN` (default 3030), `API_AUTH_TOKEN` (bearer token required on every `/api/*` route — fails closed with 503 if unset) | Yes |
@@ -722,6 +781,13 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 - ~~`.env.example` didn't document the Telegram/`main2`-API/Solana-Pay env vars.~~ Fixed — see §12.
 - ~~The original `20250324020906_init` Prisma migration file was missing from the repo, so `prisma migrate deploy` failed against a fresh database.~~ Fixed in Phase 7A.1 — restored byte-for-byte from `origin/main`; clean-install and upgrade paths validated against real disposable PostgreSQL, and CI now runs the same clean-install validation on every push/PR (§3, §5.6, §11).
 - ~~`UserPreference` had no migration.~~ Fixed in Phase 7B.1 (`20260828071721_add_user_preference`, §16.2).
+
+**New since Phase 7D.3.2 (see §25.8, §26.4 for detail):**
+
+12. The local development database still carries 11,977 Pons V2 rows wrongly marked `ORPHANED` by a DB test run (§26.4). Repair is planned but not approved.
+13. Progressive token enrichment via `alchemy_getTokenMetadata` is **pending**: the method works on the third Alchemy key but is not wired in; enrichment uses standard ERC-20 reads through failover (§26.2).
+14. A signed-out Supabase access token keeps verifying until it expires (Supabase design); the API does not check `auth.sessions`.
+15. `GET /api/v1/media/token-logos/robinhood/:token` is not in the OpenAPI document; public IPFS gateways rate-limit (429) and delay logos.
 
 **Discovery/ingestion follow-up:** §18 distinguishes the completed Solana decoder/schema slice from durable ingestion; §19.9 records Pons testnet, reorg recovery, discovery/trade coordination, price semantics, and API freshness limits. Candle tables do not yet imply candle aggregation or candle routes.
 
@@ -759,7 +825,7 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 
 ## 15. One-line truth
 
-**`npm run api` serves the canonical research, wallet-ownership, realtime-job and Robinhood token APIs; `npm run pons:worker` independently ingests Pons launches, trades and graduation state into PostgreSQL with source checkpoints. Pump.fun/PumpSwap decoding is implemented, with durable Solana ingestion still pending. The legacy `npm run dev` process separately runs Discord/listeners and the allowlisted non-custodial Telegram flow (§0, §8); the new discovery path never signs or submits transactions. Current proof and ingestion limits are recorded in §18–§19.**
+**`npm run api` serves the canonical research, wallet-ownership, realtime-job and Robinhood token APIs, plus block-pinned Pons quotes, simulations, market evidence and per-user paper positions that never sign or broadcast; `npm run pons:worker` independently ingests Pons V1/V2 launches, trades and graduation state into PostgreSQL with source checkpoints; `npm run candles:worker` turns those trades into candles. Pump.fun/PumpSwap decoding is implemented, with durable Solana ingestion still pending. The legacy `npm run dev` process separately runs Discord/listeners and the allowlisted non-custodial Telegram flow (§0, §8); the new discovery path never signs or submits transactions. Current proof and ingestion limits are recorded in §18–§19.**
 
 ---
 
@@ -810,6 +876,16 @@ All of the following live in `src/researchApi/`, mounted under `/api/v1` by `src
 | GET | `/api/v1/tokens/:mint/forensics` | Supabase or API key* | Latest `SolanaForensicsRun` for the mint, if any |
 | POST | `/api/v1/tokens/:mint/scans` | Supabase or API key | Idempotent forensics-scan enqueue (renamed from Phase 6's `/scan`) — `202` on a freshly queued job, `200` with the same `jobKey` on a repeat call for the same mint |
 | GET | `/api/v1/jobs/:jobKey` | Supabase or API key* | Poll a forensics job's status |
+| GET | `/api/v1/tokens/robinhood/status` | Supabase or API key* | Ingestion source health (§20.5) |
+| GET | `/api/v1/tokens/robinhood/:tokenAddress/candles` | Supabase or API key* | Candles (§21.13) |
+| GET | `/api/v1/tokens/robinhood/:tokenAddress/pool` | Supabase or API key* | **Deprecated** — V4 pool evidence (§24); superseded by `market-evidence` |
+| GET | `/api/v1/callouts`, `/api/v1/callouts/:mint` | Supabase or API key* | Verified callouts (§22.4) |
+| POST | `/api/v1/tokens/robinhood/:tokenAddress/quotes` | Supabase or API key* | Block-pinned quote + evidence snapshot; 20/min limiter (§25.4) |
+| POST | `/api/v1/tokens/robinhood/:tokenAddress/simulations` | Supabase or API key* | `eth_call` route simulation of a live quote (§25.5) |
+| GET | `/api/v1/tokens/robinhood/:tokenAddress/market-evidence` | Supabase or API key* | Spot, depth at reference sizes, liquidity semantics (§25.6) |
+| GET | `/api/v1/evidence/:snapshotId` | Supabase or API key* | Immutable evidence snapshot by id (§25.7) |
+| POST / GET | `/api/v1/me/paper-positions` | **Supabase only** | Caller's paper positions; POST requires `Idempotency-Key` (§25.7) |
+| GET | `/api/v1/media/token-logos/robinhood/:tokenAddress` | none | Cached, byte-verified logo or 404 with `X-Image-Status` (§25.8); not in OpenAPI |
 
 \* Falls back to public/unauthenticated when `API_PUBLIC_READS=true` (unchanged Phase 6 behavior) — `POST /scans` never does, regardless of that flag.
 
@@ -848,7 +924,7 @@ Every error response uses the same envelope (`src/researchApi/contracts/errors.t
 
 ### 16.6 CORS
 
-`src/researchApi/middleware/cors.ts` — an explicit allowlist (`CORS_ALLOWED_ORIGINS`), never a wildcard (`loadApiConfig` throws at startup if `*` appears in it). A request with no `Origin` header (native mobile, server-to-server, curl) is never touched by this middleware — CORS is a browser-only concept. Outside `NODE_ENV=production`, an additional `CORS_DEV_ORIGINS` list (defaulting to the usual local Vite (`:5173`) and Expo (`:19006`/`:8081`) ports) is also honored; in production, only `CORS_ALLOWED_ORIGINS` counts. A denied origin gets no `Access-Control-*` headers at all on a normal request (the browser enforces the block), and an outright `403` on a preflight `OPTIONS` so the browser never proceeds to the real request.
+`src/researchApi/middleware/cors.ts` — an explicit allowlist (`CORS_ALLOWED_ORIGINS`), never a wildcard (`loadApiConfig` throws at startup if `*` appears in it). A request with no `Origin` header (native mobile, server-to-server, curl) is never touched by this middleware — CORS is a browser-only concept. Outside `NODE_ENV=production`, an additional `CORS_DEV_ORIGINS` list (defaulting to the usual local Vite (`:5173`) and Expo (`:19006`/`:8081`) ports) is also honored; in production, only `CORS_ALLOWED_ORIGINS` counts. Since Phase 7D.3.3 the defaults also include the web app's Vite port under both host spellings (`http://localhost:8080`, `http://127.0.0.1:8080`) — browsers treat the two as different origins — and allowed requests may send `Authorization`, `Content-Type` and `Idempotency-Key`. A denied origin gets no `Access-Control-*` headers at all on a normal request (the browser enforces the block), and an outright `403` on a preflight `OPTIONS` so the browser never proceeds to the real request.
 
 ### 16.7 Rate limiting
 
@@ -1583,5 +1659,240 @@ Full backend suite after this phase: **529 passed, 36 skipped, 0 failed** across
 
 1. **No PnL card is served over HTTP.** The callouts API returns the numbers; the rendered image still only reaches Discord/Telegram. A `GET /api/v1/callouts/{mint}/card.png` returning the shared renderer's output is the obvious next step and would let the frontend embed the same artifact rather than re-implementing the design in DOM.
 2. **`initialSolInvestment` is hardcoded to 1.0 SOL** in `tokenTrackingService`. Every card claims a 1 SOL entry. That is a marketing simplification, not a measured position, and should be labeled as such or driven by real position size.
-3. **`checkTokenPriceHistory` can simulate.** When a token has no `currentMarketCap`, it falls back to `initialMarketCap * 7.5` — a fabricated 650% gain. Any row reaching the callouts API through that path would be a *simulated* result presented as verified. It is out of scope here, but it undermines the word "verifiable" and should be removed or hard-gated before this API is promoted publicly.
+3. ~~**`checkTokenPriceHistory` can simulate.** When a token has no `currentMarketCap`, it falls back to `initialMarketCap * 7.5` — a fabricated 650% gain.~~ **Fixed in Phase 7D.3 (`07bb9d4`):** missing market data now returns no market cap, which the caller treats as "skip"; 9 regression tests; zero persisted `TokenAlert` rows were affected.
 4. **No pagination cursor.** `limit` caps at 100 with no cursor, so a backlog beyond 100 verified calls is not fully reachable. Fine today; not fine at scale.
+
+---
+
+## 23. Phase 7D — Pons V2 on Uniswap V4
+
+**Merged:** PR #16 (`2945b08`). Full write-up, including the separate launchpad contracts project: [PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md](./PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md).
+
+- **Why:** the §19 pipeline tracked only Pons **V1** (Uniswap V3, graduation polled). Pons **V2** launches onto a bonding curve and graduates onto **Uniswap V4**. The factory is `PonsV2LaunchFactory` `0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e` and the pool manager is the V4 singleton `0x8366a39CC670B4001A1121B8F6A443A643e40951`; both were verified on Blockscout.
+- **Code:**
+  - `src/pons/abiV2.ts`: verified factory and PoolManager ABIs.
+  - `ponsV2Adapter.ts`: pure decoders for discovery, graduation, launch metadata from the `launchToken()` calldata, `Initialize` → PoolId, and V4 `Swap`.
+  - `discoveryV2Listener.ts`: discovery **and** graduation, both real events.
+  - `tradeV2Listener.ts`: V4 swaps filtered by PoolId.
+  - `blockscoutTrace.ts`: best-effort fallback for launches routed through a bundler.
+- **Schema:** `DiscoveredToken` gains curve address, name/symbol/logo/description/socials, rich-metadata status, V2 graduation fields and `poolId`; `ChainTrade` gains `poolId`. `reorgRecovery.ts` also resets V2 graduation fields keyed on graduation height.
+- **Fixed along the way:** every polling loop used to wait a full interval even with known backlog. Loops now wait only once caught up.
+
+## 24. Phases 7D.3 and 7D.3.1 — operating the pipeline honestly
+
+**Merged:** PR #18 (7D.3) and PR #19 (7D.3.1).
+
+### 24.1 Runtime and contract hygiene (7D.3)
+
+- **Supervision:** `scripts/dev-stack.sh` supervises `api`, `pons` and `candles` as separate processes (see [RUNBOOK.md](./RUNBOOK.md)).
+  - PID files are cross-checked against `/proc/<pid>/cmdline` and `cwd`, and the process that owns a service's port is authoritative.
+  - `start` refuses to run on top of untracked processes.
+  - Shutdown is SIGTERM with bounded escalation.
+  - `bot` (`src/index.ts`) is opt-in only.
+- **Restart safety** was verified live: checkpoints resumed with zero duplicate tokens.
+- **Contract:** `openapi.json` is committed, and `scripts/check-openapi-drift.mjs` runs in CI before tests. The frontend pins this file (`only-pump-me/openapi/README.md`).
+- **No fabricated PnL:** the `initialMarketCap * 7.5` fallback is removed (§22.6).
+
+### 24.2 V4 pool evidence (7D.3)
+
+- **Read path:** `src/pons/v4PoolState.ts` and `v4PoolEvidenceService.ts` provide a read-only, integer-only path.
+  - PoolKey/PoolId follow v4-core.
+  - StateLibrary slots (`POOLS_SLOT = 6`, `LIQUIDITY_OFFSET = 3`) are read through `extsload`.
+  - Fixtures are real `extsload` words captured at block 61351410.
+- **Endpoint:** `GET /api/v1/tokens/robinhood/:tokenAddress/pool` is kept separate from the DB-only token route so an RPC outage degrades one panel, not the page.
+  - It always returns 200 with `AVAILABLE` or `UNAVAILABLE` plus a reason code.
+  - No USD is ever produced.
+  - **Deprecated in 7D.3.2** in favour of `market-evidence` (§25.6).
+- **Correction:** the "2% creator tax" and "no V4Quoter deployed" conclusions in `docs/phase-7d3-pool-evidence-research.md` were wrong. See §25.1.
+
+### 24.3 RPC resilience (7D.3.1)
+
+- **Credential leak remediation.** A real Alchemy key reached a public test fixture and pre-redaction logs.
+  - Fixtures now use synthetic credentials.
+  - Logs were sanitized.
+  - Public error messages are now stable codes plus our own sentence; raw provider detail (URL, calldata) stays server-side.
+  - **Rotation of the leaked key is still the operator's job.**
+- **Failover:** `src/pons/rpcEndpoints.ts` and `failoverChainClient.ts` implement it.
+  - Order: `ROBINHOOD_RPC_HTTPS` → `…HTTPS2` → `…HTTPS3` → `DEAFULT_RPC_HTTPS`, and the same for WSS. Empty entries are skipped.
+  - A quota-exhausted endpoint cools down for 30 minutes.
+  - A request fault such as `-32601` does **not** fail over, because the next provider would say the same.
+  - `ChainCaller.call` returns `UNSUPPORTED_CAPABILITY` to move to the next endpoint without a cooldown (used for state-override `eth_call`).
+  - One wall-clock deadline covers all retries.
+  - `metricsSnapshot()` exposes per-endpoint health by label/host only.
+- **Standard RPC vs provider-specific methods:** failover applies to standard JSON-RPC only. Alchemy-specific methods such as `alchemy_getTokenMetadata` exist only on Alchemy endpoints and are not part of the failover contract (§26.2).
+- **WebSocket recovery:** `wsSubscriptionManager.ts` handles it.
+  - Every (re)connection backfills over HTTP from the durable checkpoint.
+  - Live frames and backfill are deduplicated on `txHash:logIndex`.
+  - The checkpoint only advances to heights the backfill covered.
+  - Stall detection, single-flight reconnect and jittered backoff are built in, and the manager reports `degraded_polling` when every endpoint fails.
+  - HTTP polling remains the path carrying ingestion.
+- **Block pinning:** `blockPinnedReader.ts` pins one block per read group and records its hash.
+  - Reads never fall back to `latest`.
+  - The hash is re-verified after the group, and on any mismatch the whole group restarts at a fresh block (`BLOCK_HASH_MISMATCH`).
+
+## 25. Phase 7D.3.2 — verified quotes, simulation and paper positions
+
+**Merged:** PR #20 at `904df05` (merge `b1de963`). The verification record, with its source matrix, contract identities, fork results and failure modes, is [docs/phase-7d3-2-quote-verification.md](./docs/phase-7d3-2-quote-verification.md). This section covers how the code is organised.
+
+### 25.1 Protocol facts the code relies on
+
+| Contract | Address |
+|---|---|
+| PoolManager | `0x8366a39cc670b4001a1121b8f6a443a643e40951` |
+| V4Quoter (official, deployed block 9074) | `0x8dc178efb8111bb0973dd9d722ebeff267c98f94` |
+| StateView | `0xf3334192d15450cdd385c8b70e03f9a6bd9e673b` |
+| UniversalRouter | `0x8876789976decbfcbbbe364623c63652db8c0904` |
+| Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
+| Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` |
+| PonsV2MemeHook | `0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044` |
+
+These live in `src/pons/quote/protocol.ts` with `QUOTE_SOURCE_REFERENCES`; every quote response carries those references.
+
+- **Quoter:** the official quoter's runtime bytecode equals v4-periphery `6601a199…` built with Uniswap's release settings, so **OnlyPump deploys nothing**.
+- **Hook fee:** the hook takes `hookFeeBps + creatorTaxBps` from `launches(poolId)` on the unspecified leg. `hookFeeBps` is 100 on every pool; creator tax is 0–500.
+- **Pairing:** native ETH is not always `currency0`. 75 of 164 graduated pools pair with an ERC-20 (USDG, cbBTC, tokenized stocks).
+
+### 25.2 Fork verification (`evm-verification/`)
+
+- **Suites:**
+  - The test-hook suite runs in a local PoolManager and needs no RPC.
+  - The **actual-Pons** suite runs against Robinhood Chain at block 62211539. It checks that 68 of 68 quote rows equal executed swaps through the real UniversalRouter, and it records the failure modes.
+- **`scripts/fork-verify.sh`:**
+  - Verifies block number and hash across two providers before forking.
+  - Exit codes: 0 PASS, 1 FAIL, 78 BLOCKED.
+  - Writes `evidence/*.jsonl` and `status.json`.
+- **CI:** CI pins **Foundry v1.8.1**. Robinhood Chain is Arbitrum-based, so the EVM `NUMBER` opcode returns the parent-chain block (25970664 at the pinned block) on 1.8.x. The suite therefore pins by `block.timestamp` and accepts either number.
+- **Simulator:** `src/PonsRouteSimulator.sol` is exported by `scripts/export-simulator.mjs` to `src/pons/quote/generated/routeSimulator.json`, which the TypeScript simulation service loads.
+
+### 25.3 Pinned reads
+
+- **Reads:** `pinnedReads.ts` batches each read group into one Multicall3 `aggregate3` at a single block, inside the block-pinned reader (§24.3).
+- **Precision:** prices use **1e36** scaling. At 1e18, extreme-ratio pools such as LASSIE/USDG truncated to zero impact; a regression test covers this.
+- **Hook fee split:** it is recovered from the net quote and can be ambiguous by 1 base unit, so it is reported as a range (`exact: false`).
+
+### 25.4 Quotes — `POST /tokens/robinhood/:token/quotes`
+
+- **Request:** `{ side: "buy"|"sell", amount: <base units, decimal string>, slippageBps: 1–5000 }`.
+- **Venue by launch phase** (`quoteService.ts`):
+
+  | Phase | Venue |
+  |---|---|
+  | Phase 0 | Bonding curve (`curveQuote.ts`): constant product with a virtual quote amount, fees on the quote leg, clamp and refund at the sellable allocation, sells blocked once ready to graduate |
+  | Inside the 3-second snipe window | **Refused** |
+  | Phase 2 `PoolCreated` | Official V4Quoter via `eth_call` (`v4Quote.ts`) |
+  | Swept, Rescued, Pons V1 | `UNSUPPORTED` |
+
+- **Policy** (`QUOTE_POLICY`, `quote-policy-1`):
+  - 30-second TTL.
+  - Warn at ≥10% all-in impact; refuse at ≥50% (`PRICE_IMPACT_EXCEEDS_POLICY`).
+  - Every quote states `QUOTE_IS_NOT_SELLABILITY`.
+- **Response:** `QUOTED` (with `snapshotId` and the quote), `UNSUPPORTED` or `UNAVAILABLE`, each with reason codes. The quote limiter is 20 per minute.
+
+### 25.5 Simulation — `POST …/simulations`
+
+`{ quoteId }` of an unexpired quote is simulated by `simulationService.ts`.
+
+- **How it runs:** an `eth_call` at the quote's own block, with a state override. It installs the simulator bytecode plus balance/allowance storage on synthetic account `0x0000000000000000000000000000000051350001`, then routes through the real UniversalRouter (V4) or curve.
+- **Balance slots:** each is probed and accepted only if `balanceOf` returns the probed value. Pons tokens and USDG use slot 0; cbBTC and BULL use the OZ v5 ERC-7201 namespace. An ERC-20 input whose slot cannot be verified is quote-only.
+- **Reverts** are decoded against verified selectors (`KNOWN_REVERTS`).
+- **Result:** `SIMULATED` or `REVERTED`, flagged if the simulated output differs from the quote.
+- **Provider support:** a provider without state-override support yields `UNSUPPORTED_CAPABILITY`, and failover moves on.
+
+### 25.6 Market evidence — `GET …/market-evidence`
+
+`marketEvidenceService.ts` produces a block-pinned snapshot of phase, spot price, fees and depth, cached for 8 seconds in `quoteEngineProvider.ts`.
+
+- **Depth:** what fixed reference sizes (0.1%, 1% and 5% of the pair-side reserve) would return, computed by the same methods as quotes.
+- **Liquidity:** raw V4 active liquidity appears only as `advanced.activeLiquidityRaw` and is not presented as an amount.
+- **Curve reserves:** the curve's pricing reserve includes a virtual amount and is labelled as such.
+- **USD:** unavailable.
+- **Unsupported reasons:** `UNKNOWN_TOKEN`, `PROTOCOL_MISMATCH`, `GRADUATION_IN_PROGRESS`, `RESCUED`, `POOL_REGISTRATION_INCONSISTENT`.
+
+### 25.7 Evidence snapshots and paper positions
+
+Migration `20260913200000_add_evidence_snapshots_paper_positions_image_cache` adds three models.
+
+- **`EvidenceSnapshot`:**
+  - Kind `QUOTE` or `SIMULATION`, with parent lineage.
+  - Block number, hash and timestamp, plus policy/calculation version and the full payload.
+  - A database trigger (`evidence_snapshot_reject_mutation`) makes rows **immutable**.
+  - Readable by id at `GET /api/v1/evidence/:snapshotId`. Snapshots are market evidence and carry no user data.
+- **`PaperPosition`:** scoped to the Supabase user (`sub`).
+  - `POST /api/v1/me/paper-positions` takes `{ quoteId, simulationId|null }` and an `Idempotency-Key` header of 8–128 characters.
+  - Uniqueness is on `(userId, idempotencyKey)` plus a request fingerprint:
+    - Same key and same request → `200 created:false`.
+    - Same key and a different request → `IDEMPOTENCY_KEY_REUSED`.
+    - A concurrent insert race is resolved via P2002.
+  - Only an unexpired quote, and only a successful simulation of that same quote, can back a fill. Otherwise the request fails with `QUOTE_EXPIRED`, `SIMULATION_NOT_FOR_QUOTE` or `SIMULATION_NOT_SUCCESSFUL`.
+  - `fillBasis` is `EXECUTION_SIMULATION` or `QUOTE`, and every position carries `paper: true`.
+  - Amounts are `Decimal(78,0)` base units.
+  - `GET` lists only the caller's rows.
+- **`TokenImageCache`:** see §25.8.
+
+Service: `src/services/paperTradingService.ts`. Routes: `src/researchApi/routes/paperTrading.ts`. Contracts: `contracts/paperTrading.ts`.
+
+### 25.8 Token-logo cache
+
+- **Serving:** logos are served from OnlyPump's own origin. The browser never loads a third-party image URL.
+  - `robinhoodTokens` responses carry `logo: { url, status }`.
+  - Read paths enqueue logo URLs idempotently.
+  - `startTokenImageWorker` runs inside the API process.
+- **Fetching:** `safeImageFetch.ts` resolves `ipfs://` through `TOKEN_IMAGE_IPFS_GATEWAYS` and applies an SSRF guard (https only, private addresses rejected, size and redirect limits).
+  - `imageSafety.ts` sniffs the bytes, so the declared type is not trusted.
+  - Failures retry with backoff up to 6 attempts.
+- **Route:** `GET /api/v1/media/token-logos/robinhood/:token` returns bytes with `nosniff` and a sandboxing CSP. Anything not READY is a 404 carrying `X-Image-Status`.
+
+## 26. Phase 7D.3.3 — browser acceptance and two fixes it found
+
+**Status:** commits `8b7963c`, `3d366a5` and `a097263` landed after PR #20 merged, so they are delivered in **PR #21**. It is open and has not been merged.
+
+### 26.1 Acceptance run
+
+Two dedicated, confirmed Supabase test users were created in project `weafhrsgxuwrtabkjbmk` through the admin API (`email_confirm: true`). The project's email confirmation stays enabled, and credentials live only in the gitignored `only-pump-me/.env.e2e.local`.
+
+A Playwright run against this API and the local frontend passed **11/11** checks:
+- User A saves a real quoted and simulated position.
+- A refresh restores the position and its evidence.
+- Sign-out clears private cached state.
+- User B sees none of A's positions, in the UI or via direct API calls with B's token.
+- Repeated and same-tick double saves create exactly one position.
+
+Evidence is in `only-pump-me/docs/phase-7d3-2/auth/` (screenshots, `auth-journey.log`, `auth-results.json`).
+
+**Found and fixed:**
+1. **CORS rejected `Idempotency-Key`** (`3d366a5`), so every browser save failed at preflight. Server-side tests cannot see this.
+2. **The default dev origins omitted the web app's port 8080** (`a097263`). Opening the app at `http://127.0.0.1:8080` was blocked.
+
+### 26.2 `alchemy_getTokenMetadata`
+
+- **Verified 2026-09-14:** the method works on the `ROBINHOOD_RPC_HTTPS3` Alchemy endpoint and returns correct name, symbol and decimals; `logo` is always null.
+- **Elsewhere:** the default public RPC returns `-32601` (method not found).
+- **Status:** progressive enrichment through this method is **pending**. It is not implemented, and discovery enrichment still uses standard ERC-20 reads through failover (§24.3).
+- **If it is added:** it must be an optional, Alchemy-only enhancement. A `-32601` from a non-Alchemy endpoint is a request fault, not a reason to fail over.
+
+### 26.3 Disposable-database guard
+
+`src/testSupport/disposableDatabaseGuard.ts` is a vitest `globalSetup`.
+- **Rule:** if any `*_RUN_DB_TESTS` flag is `true`, the database named in `DATABASE_URL` must look disposable, matching `(^|[_-.])(test|tests|ci|tmp|temp)([_-.]|$)`. The only alternative is `ALLOW_DB_TESTS_ON_NAMED_DATABASE` set to that exact name.
+- **`.env` handling:** it reads `.env` without loading it into `process.env`.
+- **CI:** the database `ci_migrate_test` passes the rule, and CI now also runs `PAPER_RUN_DB_TESTS`.
+
+### 26.4 Why SMA and ~12k other launches show `ORPHANED` locally
+
+**This is not a chain event.** On 2026-09-14 at 00:41:06Z the DB integration suites were run against the development database `solana_bot`.
+- **Damage:** they deleted checkpoints and ran reorg recovery against a fake chain. That marked **11,977** Pons V2 `DiscoveredToken` rows `ORPHANED` and cleared graduation data; locally, graduated pools dropped from 164 to 31.
+- **Evidence the rows are canonical:** 40 of 40 sampled rows still match canonical block hashes.
+- **Why it won't self-heal:** the worker only re-examines heights above its checkpoint, which is about 61.47M.
+
+**Proposed repair (awaiting approval):**
+1. Take a `pg_dump`.
+2. Stop the Pons worker.
+3. Re-verify each row's source hash against the chain and restore `CANONICAL`.
+4. Re-derive graduation fields from `PoolGraduated` events.
+5. Dry-run first.
+
+### 26.5 Test counts, reconciled
+
+- **Earlier phases:** they reported 1,594–1,711 passing tests. Those runs also collected tests vendored under `evm-verification/lib`, `.claude/` worktrees and `.run/`.
+- **Now:** `vitest.config.ts` excludes those directories. The default suite is **1,111 passed, 82 skipped** (2026-09-14). All DB suites on a disposable database: 1,192 passed, 0 failed.
+- **Conclusion:** the drop is the exclusion, not lost coverage.
