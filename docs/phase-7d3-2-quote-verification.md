@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-13 · **Chain:** Robinhood Chain (4663) · **Pinned block:** 62211539,
 hash `0x6554d2c6d1a1b2f99b9782f9d4157c125b6d051129d859df0fdb4395751d4d25`
-(confirmed by `ROBINHOOD_RPC_HTTPS2` and `DEAFULT_RPC_HTTPS`).
+(confirmed by two independent providers on every run). Toolchain: **Foundry 1.8.1**, pinned in CI.
 
 This supersedes the "no V4Quoter deployed" conclusion (G4) in
 `phase-7d3-pool-evidence-research.md`, and the "2% creator tax" fee assumption in §7.3 of that
@@ -138,7 +138,19 @@ ROBINHOOD_FORK_RPC_URL=<archive RPC> scripts/fork-verify.sh   # exit 0 PASS, 1 F
 FOUNDRY_PROFILE=fork forge build && node scripts/export-simulator.mjs   # after editing the simulator
 ```
 
-## 10. Deployment script
+## 10. Toolchain notes (found in CI)
+
+- **`block.number` on this chain.** Robinhood Chain is Arbitrum-based: the `NUMBER` opcode
+  returns the parent-chain block (`l1BlockNumber` in the RPC header). At the pinned block that
+  is 25970664, and Foundry 1.8 emulates it on a fork; Foundry 1.5 reported 62211539. The suite
+  therefore pins the fork in-EVM by `block.timestamp` (1789328376) and accepts either number,
+  while `fork-verify.sh` verifies number and hash against two providers before forking.
+- **Quoter gas estimates depend on the EVM implementation.** Re-running on 1.8.1 changed
+  `quoterGasEstimate` in every V4 row (e.g. 72461 → 84961) and nothing else: every quoted
+  amount and observed balance change is identical. 1.8.1's figures are closer to live mainnet
+  (84044 for a comparable buy). Gas estimates are informational and never used for amounts.
+
+## 11. Deployment script
 
 Not produced. §1.1 makes it unnecessary: the official quoter is deployed and byte-verified.
 Approved with the product owner on 2026-09-13.

@@ -35,6 +35,12 @@ abstract contract PonsForkBase is Test {
     /// Pinned 2026-09-13T19:39:36Z. Hash re-checked across providers by scripts/fork-verify.sh.
     uint256 internal constant FORK_BLOCK = 62211539;
     bytes32 internal constant FORK_BLOCK_HASH = 0x6554d2c6d1a1b2f99b9782f9d4157c125b6d051129d859df0fdb4395751d4d25;
+    /// Robinhood Chain is Arbitrum-based. There the NUMBER opcode returns the parent-chain
+    /// block (`l1BlockNumber` in the RPC block header), and Foundry >= 1.8 emulates that on a
+    /// fork, so `block.number` reads this value rather than FORK_BLOCK. Foundry 1.5 did not.
+    uint256 internal constant FORK_PARENT_BLOCK = 25970664;
+    /// Same under both conventions, so it is the in-EVM check that the fork is at the pin.
+    uint256 internal constant FORK_BLOCK_TIMESTAMP = 1789328376;
 
     address internal constant POOL_MANAGER = 0x8366a39CC670B4001A1121B8F6A443A643e40951;
     address internal constant OFFICIAL_QUOTER = 0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94;
@@ -67,7 +73,11 @@ abstract contract PonsForkBase is Test {
             vm.createSelectFork(rpc, FORK_BLOCK);
         }
         assertEq(block.chainid, CHAIN_ID, "fork is not Robinhood Chain");
-        assertEq(block.number, FORK_BLOCK, "fork is not at the pinned block");
+        // Identity of the pinned block (number + hash) is verified against two providers by
+        // scripts/fork-verify.sh before forking. Inside the EVM, the timestamp pins it under
+        // either block-number convention; see FORK_PARENT_BLOCK.
+        assertEq(block.timestamp, FORK_BLOCK_TIMESTAMP, "fork is not at the pinned block (timestamp)");
+        assertTrue(block.number == FORK_BLOCK || block.number == FORK_PARENT_BLOCK, "fork is not at the pinned block (number)");
 
         // Identity: the factory must still point at the contracts this suite names.
         assertEq(IPonsFactory(PONS_V2_FACTORY).poolManager(), POOL_MANAGER, "factory.poolManager changed");

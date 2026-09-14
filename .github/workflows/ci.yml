@@ -136,8 +136,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Pinned: Foundry's fork semantics change between releases (1.8 reports the
+      # parent-chain block from NUMBER on Arbitrum-based chains like Robinhood Chain;
+      # 1.5 did not). The suite is verified locally with this exact version.
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
 
       - name: Install pinned Solidity dependencies
         run: scripts/install-deps.sh

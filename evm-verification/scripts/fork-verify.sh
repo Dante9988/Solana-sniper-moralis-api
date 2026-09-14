@@ -10,7 +10,7 @@
 #
 # RPC selection, in order: ROBINHOOD_FORK_RPC_URL, then (locally only, with --from-dotenv)
 # the backend's own failover list ROBINHOOD_RPC_HTTPS → ROBINHOOD_RPC_HTTPS2 →
-# DEAFULT_RPC_HTTPS. URLs are never printed; providers are referred to by variable name.
+# ROBINHOOD_RPC_HTTPS3 → DEAFULT_RPC_HTTPS. URLs are never printed; providers are referred to by variable name.
 
 set -uo pipefail
 
@@ -60,7 +60,7 @@ if [ -n "${ROBINHOOD_FORK_RPC_URL:-}" ]; then
   candidates+=("${ROBINHOOD_FORK_RPC_URL}"); names+=("ROBINHOOD_FORK_RPC_URL")
 fi
 if [ "${1:-}" = "--from-dotenv" ]; then
-  for k in ROBINHOOD_RPC_HTTPS ROBINHOOD_RPC_HTTPS2 DEAFULT_RPC_HTTPS; do
+  for k in ROBINHOOD_RPC_HTTPS ROBINHOOD_RPC_HTTPS2 ROBINHOOD_RPC_HTTPS3 DEAFULT_RPC_HTTPS; do
     v="$(dotenv_get "$k")"
     [ -n "$v" ] && { candidates+=("$v"); names+=("$k"); }
   done
