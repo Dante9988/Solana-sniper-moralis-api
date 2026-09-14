@@ -9,6 +9,8 @@ import { configDefaults, defineConfig } from "vitest/config";
  */
 export default defineConfig({
   test: {
+    // Refuses DB-integration suites on a non-disposable database (see the file for why).
+    globalSetup: ["./src/testSupport/disposableDatabaseGuard.ts"],
     exclude: [...configDefaults.exclude, "evm-verification/**", ".run/**", ".claude/**", "dist/**"],
   },
 });

@@ -47,7 +47,10 @@ export function createCorsMiddleware(config: CorsConfig) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type");
+    // Idempotency-Key is required by POST /me/paper-positions. Without it here the browser's
+    // preflight fails and every save is blocked before it reaches the API (found in the
+    // Phase 7D.3.3 browser run; server-side tests cannot see CORS).
+    res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,Idempotency-Key");
     res.setHeader("Access-Control-Max-Age", "600");
 
     if (req.method === "OPTIONS") {
