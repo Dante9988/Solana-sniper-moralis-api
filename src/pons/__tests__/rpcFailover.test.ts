@@ -88,6 +88,22 @@ describe("resolveEndpoints", () => {
     ]);
   });
 
+  it("places the third private key after the second and before the public default", () => {
+    const endpoints = resolveHttpEndpoints({
+      DEAFULT_RPC_HTTPS: "https://public.example/rpc",
+      ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C",
+      ROBINHOOD_RPC_HTTPS: "https://primary.example/v2/KEY_A",
+      ROBINHOOD_RPC_HTTPS2: "https://secondary.example/v2/KEY_B",
+    } as NodeJS.ProcessEnv);
+    expect(endpoints.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "ROBINHOOD_RPC_HTTPS3", "DEAFULT_RPC_HTTPS"]);
+    const ws = resolveWsEndpoints({
+      DEAFULT_RPC_WSS: "wss://public.example",
+      ROBINHOOD_RPC_WSS3: "wss://tertiary.example/v2/KEY_C",
+      ROBINHOOD_RPC_WSS: "wss://primary.example/v2/KEY_A",
+    } as NodeJS.ProcessEnv);
+    expect(ws.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_WSS", "ROBINHOOD_RPC_WSS3", "DEAFULT_RPC_WSS"]);
+  });
+
   it("skips empty and whitespace-only entries", () => {
     const endpoints = resolveHttpEndpoints({
       ROBINHOOD_RPC_HTTPS: "",
@@ -226,6 +242,30 @@ describe("FailoverChainClient", () => {
     const result = await client.getBlockNumber();
     expect(result.status).toBe("AVAILABLE");
     expect(calls).toEqual(["ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "DEAFULT_RPC_HTTPS"]);
+  });
+
+  it("two exhausted keys rotate to the third key, and the exhausted ones stay cooled down", async () => {
+    const env = { ...ENV, ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C" } as NodeJS.ProcessEnv;
+    const { client, calls } = buildClient(
+      {
+        ROBINHOOD_RPC_HTTPS: async () => unavailable(ALCHEMY_QUOTA_MESSAGE),
+        ROBINHOOD_RPC_HTTPS2: async () => unavailable(ALCHEMY_QUOTA_MESSAGE),
+        ROBINHOOD_RPC_HTTPS3: async () => ok(7n),
+        DEAFULT_RPC_HTTPS: async () => unavailable("should not be reached"),
+      },
+      env
+    );
+
+    expect((await client.getBlockNumber()).status).toBe("AVAILABLE");
+    expect(calls).toEqual(["ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "ROBINHOOD_RPC_HTTPS3"]);
+
+    // The next request goes straight to the third key: exhausted keys are not retried every call.
+    calls.length = 0;
+    expect((await client.getBlockNumber()).status).toBe("AVAILABLE");
+    expect(calls).toEqual(["ROBINHOOD_RPC_HTTPS3"]);
+    const health = client.healthSnapshot();
+    expect(health.find((h) => h.label === "ROBINHOOD_RPC_HTTPS")?.lastFailure).toBe("QUOTA_EXHAUSTED");
+    expect(health.find((h) => h.label === "ROBINHOOD_RPC_HTTPS2")?.lastFailure).toBe("QUOTA_EXHAUSTED");
   });
 
   it("complete outage returns a structured unavailable, never a throw", async () => {

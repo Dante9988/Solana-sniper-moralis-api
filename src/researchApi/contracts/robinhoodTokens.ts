@@ -36,7 +36,15 @@ export const DiscoveredTokenSchema = z
     /** Standard ERC-20 name()/symbol() — same enrichment tick as supply. Null while enrichment is PENDING. */
     name: z.string().nullable(),
     symbol: z.string().nullable(),
+    /** The launcher-supplied URL, for provenance only. Never render it directly. */
     logoUrl: z.string().nullable(),
+    /** Phase 7D.3.2 §6 — the logo as served from OnlyPump's origin. Render `url` only when `status` is READY. */
+    logo: z
+      .object({
+        url: z.string().nullable().openapi({ description: "Relative to the API origin. Null when the token has no logo." }),
+        status: z.enum(["NONE", "PENDING", "READY", "FAILED", "REJECTED"]),
+      })
+      .openapi("TokenLogo"),
     description: z.string().nullable(),
     socials: TokenSocialsSchema,
     /** "FOUND" | "UNAVAILABLE" | null (V1 tokens, which have no metadata pipeline yet) — a one-shot outcome, never retried once set (see discoveryV2Listener.ts). */

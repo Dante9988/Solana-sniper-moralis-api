@@ -14,15 +14,22 @@
  */
 
 /** Env var names, in priority order. `DEAFULT` is the real spelling in .env — do not "fix" it. */
+/**
+ * Private provider keys first, in order, then the public default. Adding a key is how quota
+ * exhaustion is absorbed: an exhausted key is cooled down for COOLDOWN_MS.QUOTA_EXHAUSTED and
+ * traffic rotates to the next one without a restart.
+ */
 export const HTTP_ENDPOINT_VARS = [
   "ROBINHOOD_RPC_HTTPS",
   "ROBINHOOD_RPC_HTTPS2",
+  "ROBINHOOD_RPC_HTTPS3",
   "DEAFULT_RPC_HTTPS",
 ] as const;
 
 export const WS_ENDPOINT_VARS = [
   "ROBINHOOD_RPC_WSS",
   "ROBINHOOD_RPC_WSS2",
+  "ROBINHOOD_RPC_WSS3",
   "DEAFULT_RPC_WSS",
 ] as const;
 

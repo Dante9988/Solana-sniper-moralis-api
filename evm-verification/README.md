@@ -3,18 +3,29 @@
 Solidity tests that answer protocol questions this repo's TypeScript cannot, by executing
 the real contracts rather than reasoning about them.
 
-Deliberately **not** wired into `npm test`: it needs Foundry and pulls the Uniswap V4
-sources as git submodules, which would make the Node test suite slow and network-dependent
-for everyone. Run it when a protocol claim needs proving.
+Deliberately **not** wired into `npm test`: it needs Foundry and pinned Uniswap sources.
+CI runs it in its own `foundry-verification` job.
+
+## Two kinds of result — never mix them up
+
+| Suite | Contracts | Needs | Result kind |
+|---|---|---|---|
+| `test/*.t.sol` | v4-core test hooks in a fresh local PoolManager | nothing | **test-hook** |
+| `test/fork/*.t.sol` | the real Robinhood Chain PoolManager, PonsV2MemeHook, curves, UniversalRouter, Permit2, official V4Quoter at block 62211539 | archive RPC | **actual-Pons** |
+
+Full write-up: [`docs/phase-7d3-2-quote-verification.md`](../docs/phase-7d3-2-quote-verification.md).
 
 ## Setup
 
 ```bash
 cd evm-verification
-forge init --no-git .          # once, if lib/ is absent
-forge install Uniswap/v4-periphery --no-git
-forge test -vv
+scripts/install-deps.sh        # v4-periphery 6601a199, v4-core 59d3ecf5 — checked after checkout
+forge test -vv                 # test-hook suite
+ROBINHOOD_FORK_RPC_URL=… scripts/fork-verify.sh   # actual-Pons suite; exit 78 = BLOCKED
 ```
+
+`fork-verify.sh --from-dotenv` uses the backend's own RPC failover list locally. URLs are
+never printed. Curated results land in `evidence/`.
 
 Runs entirely inside Foundry's own EVM: **no RPC, no fork, no private key, no gas.** That
 matters here — it stayed usable while the Alchemy monthly quota was exhausted and every

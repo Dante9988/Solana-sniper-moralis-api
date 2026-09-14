@@ -23,8 +23,11 @@ import type { Abi, AbiEvent } from "viem";
 
 import {
   PonsChainClient,
+  type ChainCaller,
   type ChainClientResult,
   type ChainReader,
+  type EthCallOutcome,
+  type EthCallParams,
   type RawBlockRef,
   type RawTransaction,
 } from "./chainClient";
@@ -104,7 +107,7 @@ function extractHttpDetails(error: unknown): { status?: number; retryAfter?: str
   return { status, retryAfter, message, code };
 }
 
-export class FailoverChainClient implements ChainReader {
+export class FailoverChainClient implements ChainCaller {
   private readonly entries: EndpointEntry[];
   private readonly config: RobinhoodChainConfig;
   private readonly perEndpointRetries: number;
@@ -255,7 +258,15 @@ export class FailoverChainClient implements ChainReader {
    * `ChainClientResult` contract and can surface a structured unavailable state.
    */
   private async run<T>(
-    operation: (client: ChainReader) => Promise<ChainClientResult<T>>
+    operation: (client: ChainReader) => Promise<ChainClientResult<T>>,
+    options: {
+      /**
+       * A successful response this endpoint could not actually serve as asked (e.g. no
+       * state-override support). Moves on to the next endpoint WITHOUT recording a failure
+       * or a cooldown, because the endpoint is healthy for everything else.
+       */
+      advanceWhen?: (result: ChainClientResult<T>) => boolean;
+    } = {}
   ): Promise<ChainClientResult<T>> {
     this.requestCount += 1;
     const startedAt = this.now();
@@ -321,6 +332,11 @@ export class FailoverChainClient implements ChainReader {
             attempts: attempt + 1,
           };
           break; // move to the next endpoint
+        }
+
+        if (result.status === "AVAILABLE" && options.advanceWhen?.(result)) {
+          last = result;
+          break;
         }
 
         if (result.status === "AVAILABLE") {
@@ -390,7 +406,26 @@ export class FailoverChainClient implements ChainReader {
     abi: Abi;
     functionName: string;
     args: readonly unknown[];
+    blockNumber?: bigint;
   }): Promise<ChainClientResult<T>> {
     return this.run((client) => client.readContract<T>(params));
+  }
+
+  call(params: EthCallParams): Promise<ChainClientResult<EthCallOutcome>> {
+    return this.run(
+      (client) =>
+        typeof (client as Partial<ChainCaller>).call === "function"
+          ? (client as ChainCaller).call(params)
+          : Promise.resolve({
+              status: "AVAILABLE" as const,
+              data: { kind: "UNSUPPORTED_CAPABILITY" as const, message: "client does not implement eth_call" },
+              source: "robinhood-chain-rpc",
+              fetchedAt: new Date(),
+              attempts: 1,
+            }),
+      {
+        advanceWhen: (result) => result.status === "AVAILABLE" && result.data.kind === "UNSUPPORTED_CAPABILITY",
+      }
+    );
   }
 }

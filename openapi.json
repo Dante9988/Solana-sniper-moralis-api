@@ -194,6 +194,9 @@
               "null"
             ]
           },
+          "logo": {
+            "$ref": "#/components/schemas/TokenLogo"
+          },
           "description": {
             "type": [
               "string",
@@ -302,6 +305,7 @@
           "name",
           "symbol",
           "logoUrl",
+          "logo",
           "description",
           "socials",
           "richMetadataStatus",
@@ -321,6 +325,32 @@
           "graduationTokenAmount",
           "graduationPairTokenAmount",
           "poolId"
+        ]
+      },
+      "TokenLogo": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relative to the API origin. Null when the token has no logo."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "NONE",
+              "PENDING",
+              "READY",
+              "FAILED",
+              "REJECTED"
+            ]
+          }
+        },
+        "required": [
+          "url",
+          "status"
         ]
       },
       "TokenSocials": {
@@ -1161,6 +1191,1767 @@
           "alertedAt",
           "verifiedAt",
           "shared"
+        ]
+      },
+      "QuoteResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "QUOTED"
+                ]
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "quote": {
+                "$ref": "#/components/schemas/PonsQuote"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "snapshotId",
+              "quote"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNSUPPORTED"
+                ]
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "venue": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/QuoteVenue"
+                  },
+                  {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                ]
+              },
+              "block": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PinnedBlockRef"
+                  },
+                  {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "snapshotId",
+              "reason",
+              "detail",
+              "venue",
+              "block"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail",
+              "retryable"
+            ]
+          }
+        ]
+      },
+      "PonsQuote": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "robinhood"
+            ]
+          },
+          "chainId": {
+            "type": "integer"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "venue": {
+            "$ref": "#/components/schemas/QuoteVenue"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "CURVE_FORMULA_AT_PINNED_BLOCK",
+              "V4_QUOTER_ETH_CALL"
+            ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/AssetAmount"
+          },
+          "output": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AssetAmount"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "expected": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Expected output, already net of every fee.",
+                    "example": "10000000000000000"
+                  },
+                  "minimum": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Expected output reduced by the slippage tolerance. A transaction below it reverts.",
+                    "example": "10000000000000000"
+                  }
+                },
+                "required": [
+                  "expected",
+                  "minimum"
+                ]
+              }
+            ]
+          },
+          "spent": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Input the venue keeps. Below input.amount only for a clamped curve buy.",
+            "example": "10000000000000000"
+          },
+          "refund": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "slippageBps": {
+            "type": "integer"
+          },
+          "fees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuoteFeeLine"
+            }
+          },
+          "priceImpact": {
+            "type": "object",
+            "properties": {
+              "allInBps": {
+                "type": "integer",
+                "description": "Shortfall versus the pre-trade price, fees included."
+              },
+              "poolOnlyBps": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Pool price movement alone, excluding hook fees. Null for curve quotes."
+              },
+              "spotOutPerInX36": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Pre-trade spot, output base units per input base unit, scaled by 1e36.",
+                "example": "10000000000000000"
+              }
+            },
+            "required": [
+              "allInBps",
+              "poolOnlyBps",
+              "spotOutPerInX36"
+            ]
+          },
+          "block": {
+            "$ref": "#/components/schemas/PinnedBlockRef"
+          },
+          "quotedAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "calculationVersion": {
+            "type": "string"
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "venueState": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "curve"
+                    ]
+                  },
+                  "curve": {
+                    "type": "string"
+                  },
+                  "quoteReserve": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Virtual + real quote reserve that prices curve trades. Not an ETH balance.",
+                    "example": "10000000000000000"
+                  },
+                  "tokenReserve": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Non-negative integer in base units, as a decimal string.",
+                    "example": "10000000000000000"
+                  },
+                  "sellableTokens": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Non-negative integer in base units, as a decimal string.",
+                    "example": "10000000000000000"
+                  },
+                  "graduationThreshold": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Non-negative integer in base units, as a decimal string.",
+                    "example": "10000000000000000"
+                  },
+                  "trackedQuote": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Real quote asset the curve holds from trading.",
+                    "example": "10000000000000000"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "curve",
+                  "quoteReserve",
+                  "tokenReserve",
+                  "sellableTokens",
+                  "graduationThreshold",
+                  "trackedQuote"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "pool"
+                    ]
+                  },
+                  "poolId": {
+                    "type": "string"
+                  },
+                  "poolKey": {
+                    "$ref": "#/components/schemas/QuotePoolKey"
+                  },
+                  "sqrtPriceX96": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Non-negative integer in base units, as a decimal string.",
+                    "example": "10000000000000000"
+                  },
+                  "tick": {
+                    "type": "integer"
+                  },
+                  "activeLiquidityRaw": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Uniswap V4 active liquidity L. An advanced protocol parameter — not ETH reserves, not dollars, not available sell proceeds.",
+                    "example": "10000000000000000"
+                  },
+                  "quoter": {
+                    "type": "string"
+                  },
+                  "quoterGasEstimate": {
+                    "type": "string",
+                    "pattern": "^\\d+$",
+                    "description": "Non-negative integer in base units, as a decimal string.",
+                    "example": "10000000000000000"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "poolId",
+                  "poolKey",
+                  "sqrtPriceX96",
+                  "tick",
+                  "activeLiquidityRaw",
+                  "quoter",
+                  "quoterGasEstimate"
+                ]
+              }
+            ]
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceLimitation"
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceLimitation"
+            }
+          },
+          "sourceReferences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceReference"
+            }
+          }
+        },
+        "required": [
+          "chain",
+          "chainId",
+          "tokenAddress",
+          "side",
+          "venue",
+          "method",
+          "input",
+          "output",
+          "spent",
+          "refund",
+          "slippageBps",
+          "fees",
+          "priceImpact",
+          "block",
+          "quotedAt",
+          "expiresAt",
+          "calculationVersion",
+          "policyVersion",
+          "venueState",
+          "warnings",
+          "limitations",
+          "sourceReferences"
+        ]
+      },
+      "QuoteVenue": {
+        "type": "string",
+        "enum": [
+          "PONS_V2_BONDING_CURVE",
+          "PONS_V2_UNISWAP_V4"
+        ]
+      },
+      "AssetAmount": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string",
+            "description": "Token address; 0x000…000 is native ETH."
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decimals": {
+            "type": "integer"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          }
+        },
+        "required": [
+          "currency",
+          "symbol",
+          "decimals",
+          "amount"
+        ]
+      },
+      "QuoteFeeLine": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "CURVE_PROTOCOL_FEE",
+              "CURVE_CREATOR_TAX",
+              "HOOK_FEE",
+              "HOOK_CREATOR_TAX"
+            ]
+          },
+          "bps": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "chargedOn": {
+            "type": "string",
+            "enum": [
+              "INPUT",
+              "OUTPUT"
+            ]
+          },
+          "amount": {
+            "type": "object",
+            "properties": {
+              "min": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "max": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "exact": {
+                "type": "boolean",
+                "description": "False when integer rounding leaves the split known only to within a range (at most 1 base unit)."
+              }
+            },
+            "required": [
+              "min",
+              "max",
+              "exact"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "bps",
+          "currency",
+          "chargedOn",
+          "amount"
+        ]
+      },
+      "PinnedBlockRef": {
+        "type": "object",
+        "properties": {
+          "number": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "hash": {
+            "type": "string",
+            "example": "0x6554d2c6d1a1b2f99b9782f9d4157c125b6d051129d859df0fdb4395751d4d25"
+          },
+          "timestamp": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Block timestamp, Unix seconds.",
+            "example": "10000000000000000"
+          }
+        },
+        "required": [
+          "number",
+          "hash",
+          "timestamp"
+        ]
+      },
+      "QuotePoolKey": {
+        "type": "object",
+        "properties": {
+          "currency0": {
+            "type": "string"
+          },
+          "currency1": {
+            "type": "string"
+          },
+          "fee": {
+            "type": "integer"
+          },
+          "tickSpacing": {
+            "type": "integer"
+          },
+          "hooks": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "currency0",
+          "currency1",
+          "fee",
+          "tickSpacing",
+          "hooks"
+        ]
+      },
+      "EvidenceLimitation": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "SourceReference": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "official-docs",
+              "official-repo",
+              "verified-contract",
+              "fork-execution"
+            ]
+          },
+          "ref": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "accessed": {
+            "type": "string"
+          },
+          "reliedOn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "ref",
+          "version",
+          "accessed",
+          "reliedOn"
+        ]
+      },
+      "QuoteRequest": {
+        "type": "object",
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Exact input in the input asset's base units (pair asset for buys, token for sells).",
+            "example": "10000000000000000"
+          },
+          "slippageBps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          }
+        },
+        "required": [
+          "side",
+          "amount",
+          "slippageBps"
+        ]
+      },
+      "SimulationResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "SIMULATED"
+                ]
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "quoteId": {
+                "type": "string"
+              },
+              "simulation": {
+                "$ref": "#/components/schemas/RouteSimulation"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "snapshotId",
+              "quoteId",
+              "simulation"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "REVERTED"
+                ]
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "quoteId": {
+                "type": "string"
+              },
+              "simulation": {
+                "$ref": "#/components/schemas/RouteSimulation"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "snapshotId",
+              "quoteId",
+              "simulation"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNSUPPORTED"
+                ]
+              },
+              "snapshotId": {
+                "type": "string"
+              },
+              "quoteId": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "snapshotId",
+              "quoteId",
+              "reason",
+              "detail"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail",
+              "retryable"
+            ]
+          }
+        ]
+      },
+      "RouteSimulation": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "SIMULATED",
+              "REVERTED"
+            ]
+          },
+          "block": {
+            "$ref": "#/components/schemas/PinnedBlockRef"
+          },
+          "simulatedAt": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "ETH_CALL_STATE_OVERRIDE"
+            ]
+          },
+          "route": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "UNIVERSAL_ROUTER",
+                  "BONDING_CURVE"
+                ]
+              },
+              "target": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "target"
+            ]
+          },
+          "account": {
+            "type": "string",
+            "description": "Synthetic account the route ran from. Not your wallet."
+          },
+          "simulator": {
+            "type": "object",
+            "properties": {
+              "sourceSha256": {
+                "type": "string"
+              },
+              "runtimeCodeHash": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "sourceSha256",
+              "runtimeCodeHash"
+            ]
+          },
+          "inputBalanceOverride": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "slot": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "currency",
+              "slot"
+            ]
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "success": {
+                "type": "boolean"
+              },
+              "spent": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "received": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "gasUsed": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "expectedOut": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "minimumOut": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "matchesQuote": {
+                "type": "boolean"
+              },
+              "revert": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "selector": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "type": "string"
+                  },
+                  "meaning": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "selector",
+                  "data",
+                  "meaning"
+                ]
+              }
+            },
+            "required": [
+              "success",
+              "spent",
+              "received",
+              "gasUsed",
+              "expectedOut",
+              "minimumOut",
+              "matchesQuote",
+              "revert"
+            ]
+          },
+          "calculationVersion": {
+            "type": "string"
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceLimitation"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "block",
+          "simulatedAt",
+          "method",
+          "route",
+          "account",
+          "simulator",
+          "inputBalanceOverride",
+          "result",
+          "calculationVersion",
+          "limitations"
+        ]
+      },
+      "SimulationRequest": {
+        "type": "object",
+        "properties": {
+          "quoteId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "quoteId"
+        ]
+      },
+      "MarketEvidenceResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AVAILABLE"
+                ]
+              },
+              "evidence": {
+                "$ref": "#/components/schemas/MarketEvidence"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "evidence"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNSUPPORTED"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "UNKNOWN_TOKEN",
+                  "PROTOCOL_MISMATCH",
+                  "GRADUATION_IN_PROGRESS",
+                  "RESCUED",
+                  "POOL_REGISTRATION_INCONSISTENT"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              },
+              "block": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PinnedBlockRef"
+                  },
+                  {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail",
+              "block"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail",
+              "retryable"
+            ]
+          }
+        ]
+      },
+      "MarketEvidence": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "robinhood"
+            ]
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "BONDING_CURVE",
+                  "GRADUATION_IN_PROGRESS",
+                  "UNISWAP_V4_POOL",
+                  "RESCUED"
+                ]
+              },
+              "onChainValue": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "code",
+              "onChainValue"
+            ]
+          },
+          "venue": {
+            "$ref": "#/components/schemas/QuoteVenue"
+          },
+          "block": {
+            "$ref": "#/components/schemas/PinnedBlockRef"
+          },
+          "observedAt": {
+            "type": "string",
+            "description": "When the chain was read. Responses may be shared for a few seconds; this never changes on a cached copy."
+          },
+          "calculationVersion": {
+            "type": "string"
+          },
+          "token": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decimals": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "symbol",
+              "decimals"
+            ]
+          },
+          "pairAsset": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decimals": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "currency",
+              "symbol",
+              "decimals"
+            ]
+          },
+          "spotPrice": {
+            "type": "object",
+            "properties": {
+              "pairBaseUnitsPerWholeTokenX36": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Pair-asset base units per one whole token, scaled by 1e36. Divide by 1e36 × 10^pairAsset.decimals for pair-asset units.",
+                "example": "10000000000000000"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "CURVE_RESERVES",
+                  "POOL_SQRT_PRICE"
+                ]
+              }
+            },
+            "required": [
+              "pairBaseUnitsPerWholeTokenX36",
+              "method"
+            ]
+          },
+          "fees": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "CURVE_PROTOCOL_FEE",
+                    "CURVE_CREATOR_TAX",
+                    "HOOK_FEE",
+                    "HOOK_CREATOR_TAX"
+                  ]
+                },
+                "bps": {
+                  "type": "integer"
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "bps",
+                "source"
+              ]
+            }
+          },
+          "curve": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "realQuoteHeld": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Quote asset the curve actually holds from trading (excludes virtual reserve and pending fees).",
+                "example": "10000000000000000"
+              },
+              "graduationThreshold": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "graduationProgressBps": {
+                "type": "integer"
+              },
+              "sellableTokens": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "snipeWindowOpen": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "address",
+              "realQuoteHeld",
+              "graduationThreshold",
+              "graduationProgressBps",
+              "sellableTokens",
+              "snipeWindowOpen"
+            ]
+          },
+          "depth": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "CURVE_FORMULA_AT_PINNED_BLOCK",
+                  "V4_QUOTER_ETH_CALL"
+                ]
+              },
+              "referenceReserve": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Pair-side reserve the reference sizes (0.1%, 1%, 5%) are taken from.",
+                "example": "10000000000000000"
+              },
+              "rows": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MarketDepthRow"
+                }
+              }
+            },
+            "required": [
+              "method",
+              "referenceReserve",
+              "rows"
+            ]
+          },
+          "advanced": {
+            "type": "object",
+            "properties": {
+              "poolId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "poolKey": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/QuotePoolKey"
+                  },
+                  {
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  }
+                ]
+              },
+              "sqrtPriceX96": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "tick": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "activeLiquidityRaw": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^\\d+$",
+                "description": "Uniswap V4 active liquidity L. Advanced protocol parameter — never ETH reserves, USD or sell proceeds.",
+                "example": "10000000000000000"
+              },
+              "lpFeeHundredthsBip": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "curveQuoteReserveIncludingVirtual": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "curveTokenReserve": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              }
+            },
+            "required": [
+              "poolId",
+              "poolKey",
+              "sqrtPriceX96",
+              "tick",
+              "activeLiquidityRaw",
+              "lpFeeHundredthsBip",
+              "curveQuoteReserveIncludingVirtual",
+              "curveTokenReserve"
+            ]
+          },
+          "usd": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean",
+                "enum": [
+                  false
+                ]
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "available",
+              "reason"
+            ]
+          },
+          "missingEvidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "detail"
+              ]
+            }
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceLimitation"
+            }
+          },
+          "sourceReferences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceReference"
+            }
+          }
+        },
+        "required": [
+          "chain",
+          "tokenAddress",
+          "phase",
+          "venue",
+          "block",
+          "observedAt",
+          "calculationVersion",
+          "token",
+          "pairAsset",
+          "spotPrice",
+          "fees",
+          "curve",
+          "depth",
+          "advanced",
+          "usd",
+          "missingEvidence",
+          "limitations",
+          "sourceReferences"
+        ]
+      },
+      "MarketDepthRow": {
+        "type": "object",
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "amountIn": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "expectedOut": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "allInImpactBps": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "unavailableReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "side",
+          "amountIn",
+          "expectedOut",
+          "allInImpactBps",
+          "unavailableReason"
+        ]
+      },
+      "EvidenceSnapshot": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "QUOTE",
+              "SIMULATION"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string"
+          },
+          "parentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "block": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PinnedBlockRef"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "observedAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "calculationVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policyVersion": {
+            "type": "string"
+          },
+          "payloadSha256": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "sourceReferences": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceReference"
+            }
+          },
+          "missingEvidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "detail"
+              ]
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "chain",
+          "tokenAddress",
+          "side",
+          "parentId",
+          "block",
+          "observedAt",
+          "expiresAt",
+          "calculationVersion",
+          "policyVersion",
+          "payloadSha256",
+          "payload",
+          "sourceReferences",
+          "missingEvidence",
+          "createdAt"
+        ]
+      },
+      "PaperPositionResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "position": {
+            "$ref": "#/components/schemas/PaperPosition"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "position"
+        ]
+      },
+      "PaperPosition": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "venue": {
+            "$ref": "#/components/schemas/QuoteVenue"
+          },
+          "fillBasis": {
+            "type": "string",
+            "enum": [
+              "EXECUTION_SIMULATION",
+              "QUOTE"
+            ]
+          },
+          "input": {
+            "$ref": "#/components/schemas/AssetAmount"
+          },
+          "output": {
+            "$ref": "#/components/schemas/AssetAmount"
+          },
+          "minimumOutput": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "quote": {
+            "$ref": "#/components/schemas/EvidenceSnapshot"
+          },
+          "simulation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceSnapshot"
+              },
+              {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              }
+            ]
+          },
+          "paper": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "Always true. Nothing here was signed or broadcast."
+          }
+        },
+        "required": [
+          "id",
+          "chain",
+          "tokenAddress",
+          "side",
+          "venue",
+          "fillBasis",
+          "input",
+          "output",
+          "minimumOutput",
+          "createdAt",
+          "quote",
+          "simulation",
+          "paper"
+        ]
+      },
+      "CreatePaperPositionRequest": {
+        "type": "object",
+        "properties": {
+          "quoteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "simulationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A successful simulation of the same quote. Omit to save a quote-based fill."
+          }
+        },
+        "required": [
+          "quoteId",
+          "simulationId"
+        ]
+      },
+      "PaperPositionListResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "positions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaperPosition"
+            }
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "positions",
+          "observedAt"
         ]
       }
     },
@@ -2038,7 +3829,8 @@
     },
     "/api/v1/tokens/robinhood/{tokenAddress}/pool": {
       "get": {
-        "summary": "Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
+        "deprecated": true,
+        "summary": "Deprecated by /market-evidence (Phase 7D.3.2), which is block-pinned, covers bonding curves and ERC-20 pair assets, and separates raw liquidity from depth. Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
         "tags": [
           "robinhood-chain"
         ],
@@ -2196,6 +3988,419 @@
             }
           },
           "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/quotes": {
+      "post": {
+        "summary": "Amount-specific quote for a Pons V2 token at one pinned block (curve formula or official V4Quoter). An estimate — not a simulation and not a fill. UNSUPPORTED and UNAVAILABLE are 200 results with a reason.",
+        "tags": [
+          "paper-trading"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Quote, refusal, or unavailable state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/simulations": {
+      "post": {
+        "summary": "Execute a quote's trade through the real route (UniversalRouter or bonding curve) at the quote's block, from a synthetic account via eth_call state override. Nothing is signed or broadcast.",
+        "tags": [
+          "paper-trading"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimulationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Simulation result, refusal, or unavailable state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimulationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "QUOTE_EXPIRED or QUOTE_NOT_FILLABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/market-evidence": {
+      "get": {
+        "summary": "Pinned-block market evidence for a Pons V2 token on either venue: phase, pair asset, spot price, fee terms, curve progress, depth at reference sizes (curve formula or official quoter) and advanced protocol parameters. No USD.",
+        "tags": [
+          "paper-trading"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence, refusal, or unavailable state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketEvidenceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evidence/{snapshotId}": {
+      "get": {
+        "summary": "An immutable quote or simulation evidence snapshot: pinned block/hash, timestamps, versions, sources and missing evidence.",
+        "tags": [
+          "paper-trading"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "snapshotId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evidence snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/paper-positions": {
+      "post": {
+        "summary": "Save a paper fill for the signed-in user from an unexpired quote and, optionally, its successful simulation. Idempotent per Idempotency-Key: a retry returns the original (200); a new fill returns 201.",
+        "tags": [
+          "paper-trading"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePaperPositionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed — the original paper position",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperPositionResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperPositionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "QUOTE_EXPIRED, QUOTE_NOT_FILLABLE, SIMULATION_NOT_FOR_QUOTE or SIMULATION_NOT_SUCCESSFUL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "The signed-in user's paper positions, newest first, each with its evidence snapshots. Separate from real wallet holdings and trades.",
+        "tags": [
+          "paper-trading"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paper positions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperPositionListResponse"
+                }
+              }
+            }
+          },
+          "401": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

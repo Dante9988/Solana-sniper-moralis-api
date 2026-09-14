@@ -20,6 +20,13 @@ export const ErrorCode = {
   WALLET_ALREADY_CLAIMED: "WALLET_ALREADY_CLAIMED",
   RATE_LIMITED: "RATE_LIMITED",
   INTERNAL_ERROR: "INTERNAL_ERROR",
+  // Phase 7D.3.2 — paper trading. Each names the one thing the client must do differently.
+  IDEMPOTENCY_KEY_REQUIRED: "IDEMPOTENCY_KEY_REQUIRED",
+  IDEMPOTENCY_KEY_REUSED: "IDEMPOTENCY_KEY_REUSED",
+  QUOTE_EXPIRED: "QUOTE_EXPIRED",
+  QUOTE_NOT_FILLABLE: "QUOTE_NOT_FILLABLE",
+  SIMULATION_NOT_FOR_QUOTE: "SIMULATION_NOT_FOR_QUOTE",
+  SIMULATION_NOT_SUCCESSFUL: "SIMULATION_NOT_SUCCESSFUL",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -49,6 +56,12 @@ const STATUS_FOR_CODE: Record<ErrorCode, number> = {
   WALLET_ALREADY_CLAIMED: 409,
   RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
+  IDEMPOTENCY_KEY_REQUIRED: 400,
+  IDEMPOTENCY_KEY_REUSED: 422,
+  QUOTE_EXPIRED: 409,
+  QUOTE_NOT_FILLABLE: 409,
+  SIMULATION_NOT_FOR_QUOTE: 409,
+  SIMULATION_NOT_SUCCESSFUL: 409,
 };
 
 export function sendError(res: Response, code: ErrorCode, message: string, requestId: string, status: number = STATUS_FOR_CODE[code]): void {

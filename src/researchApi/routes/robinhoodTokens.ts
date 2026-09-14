@@ -27,6 +27,8 @@ import { resolutionIdToDb, CandleResolutionId } from "../../candles/resolutions"
 import { NullQuoteUsdRateProvider } from "../../candles/usdPricing";
 import { createPoolEvidenceProvider, type PoolEvidenceProvider } from "../poolEvidenceProvider";
 import { toPoolEvidenceJson, toPoolEvidenceUnavailableJson } from "../../presentation/toPoolEvidenceJson";
+import { enqueueTokenLogos, logoStatuses, logoUrlFor, type ImageStatus } from "../../media/tokenImageCache";
+import { logger } from "../lib/logger";
 
 /**
  * Prisma.Decimal#toString() renders large integers in scientific notation
@@ -40,7 +42,7 @@ function decimalToString(value: Prisma.Decimal | null): string | null {
   return value === null ? null : value.toFixed();
 }
 
-function serializeToken(row: DiscoveredToken) {
+function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logoUrl ? "PENDING" : "NONE") {
   return {
     chain: row.chain,
     venue: row.venue,
@@ -56,7 +58,13 @@ function serializeToken(row: DiscoveredToken) {
     // for a launch routed through an unverified intermediary.
     name: row.name,
     symbol: row.symbol,
+    // The launcher's own URL, kept for provenance. Clients must render `logo.url` instead:
+    // it is served from OnlyPump's origin, byte-verified, and never contacts a third party.
     logoUrl: row.logoUrl,
+    logo: {
+      url: row.logoUrl ? logoUrlFor(row.tokenAddress) : null,
+      status: logoStatus,
+    },
     description: row.description,
     socials: {
       website: row.socialWebsite,
@@ -110,6 +118,21 @@ function serializeTrade(row: ChainTrade) {
     sourceIndex: row.sourceIndex,
     observedAt: row.observedAt.toISOString(),
   };
+}
+
+/**
+ * Logo status is decoration: a cache failure must never fail a token read. Enqueueing is
+ * fire-and-forget for the same reason.
+ */
+async function logoStatusesSafely(db: PrismaClient, rows: DiscoveredToken[]): Promise<Map<string, ImageStatus>> {
+  const tokens = rows.map((r) => ({ tokenAddress: r.tokenAddress, logoUrl: r.logoUrl }));
+  enqueueTokenLogos(db, tokens).catch((err) => logger.warn({ err: (err as Error).message }, "[token-images] enqueue failed"));
+  try {
+    return await logoStatuses(db, tokens);
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, "[token-images] status lookup failed");
+    return new Map();
+  }
 }
 
 const PRICING_BASIS =
@@ -188,9 +211,10 @@ export function createRobinhoodTokensRouter(
       });
 
       const nextCursor = rows.length === limit ? rows[rows.length - 1].observedAt.toISOString() : null;
+      const statuses = await logoStatusesSafely(db, rows);
 
       res.json({
-        tokens: rows.map(serializeToken),
+        tokens: rows.map((row) => serializeToken(row, statuses.get(row.tokenAddress.toLowerCase()))),
         nextCursor,
         observedAt: new Date().toISOString(),
       });
@@ -222,8 +246,9 @@ export function createRobinhoodTokensRouter(
         take: limit,
       });
 
+      const statuses = await logoStatusesSafely(db, [token]);
       res.json({
-        token: serializeToken(token),
+        token: serializeToken(token, statuses.get(token.tokenAddress.toLowerCase())),
         trades: trades.map(serializeTrade),
         observedAt: new Date().toISOString(),
       });

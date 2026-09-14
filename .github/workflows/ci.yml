@@ -118,3 +118,59 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Phase 7D.3.2 §2 — Solidity verification, in its own job so a slow or blocked fork never
+  # hides the Node results above, and vice versa.
+  #
+  #   1. The self-contained suite (test-hook results: v4-core FeeTakingHook in a local
+  #      PoolManager). Needs no RPC; always runs.
+  #   2. The actual-Pons suite against the real Robinhood Chain contracts at a pinned block.
+  #      Needs the ROBINHOOD_FORK_RPC_URL secret (an archive-capable RPC). Without it this
+  #      step FAILS with a BLOCKED annotation — a missing fork is never reported as a pass.
+  foundry-verification:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: evm-verification
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned: Foundry's fork semantics change between releases (1.8 reports the
+      # parent-chain block from NUMBER on Arbitrum-based chains like Robinhood Chain;
+      # 1.5 did not). The suite is verified locally with this exact version.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.8.1
+
+      - name: Install pinned Solidity dependencies
+        run: scripts/install-deps.sh
+
+      - name: Test-hook suite (no RPC)
+        run: forge test -vv
+
+      - name: Cache fork state for the pinned block
+        uses: actions/cache@v4
+        with:
+          path: ~/.foundry/cache/rpc
+          key: foundry-rpc-4663-62211539
+
+      - name: Actual-Pons fork suite (pinned block 62211539)
+        env:
+          ROBINHOOD_FORK_RPC_URL: ${{ secrets.ROBINHOOD_FORK_RPC_URL }}
+        run: |
+          set +e
+          scripts/fork-verify.sh
+          code=$?
+          if [ "$code" = "78" ]; then
+            echo "::error title=Fork verification BLOCKED::$(node -e 'process.stdout.write(require("./evidence/status.json").reason||"fork infrastructure unavailable")')"
+          fi
+          exit $code
+
+      - name: Upload fork evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fork-evidence
+          path: evm-verification/evidence/
