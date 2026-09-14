@@ -21,7 +21,8 @@ import type { ChainCaller } from "../chainClient";
 import { buildPoolKey, poolIdFor } from "../v4PoolState";
 import {
   CURVE_QUOTE_CALCULATION_VERSION,
-  curveSpotQuotePerTokenX18,
+  curveSpotQuotePerTokenX36,
+  curveSpotTokenPerQuoteX36,
   quoteCurveBuy,
   quoteCurveSell,
   type CurveState,
@@ -45,7 +46,7 @@ import {
   minimumOutput,
   reconstructHookTake,
   shortfallVsSpotBps,
-  spotOutPerInX18,
+  spotOutPerInX36,
   v4Direction,
   type PoolKeyHex,
   type TradeSide,
@@ -117,7 +118,7 @@ export interface PonsQuote {
   refund: string;
   slippageBps: number;
   fees: FeeLine[];
-  priceImpact: { allInBps: number; poolOnlyBps: number | null; spotOutPerInX18: string };
+  priceImpact: { allInBps: number; poolOnlyBps: number | null; spotOutPerInX36: string };
   block: { number: string; hash: string; timestamp: string };
   quotedAt: string;
   expiresAt: string;
@@ -358,8 +359,8 @@ async function quoteCurve(
   const tokenMeta = assetMeta(token, r[10], r[11]);
   const pairMeta = assetMeta(pairToken, r[12], r[13]);
 
-  const spot = curveSpotQuotePerTokenX18(state);
-  const X18 = 10n ** 18n;
+  const quotePerTokenX36 = curveSpotQuotePerTokenX36(state);
+  const tokenPerQuoteX36 = curveSpotTokenPerQuoteX36(state);
   const venueState = {
     kind: "curve" as const,
     curve,
@@ -373,9 +374,7 @@ async function quoteCurve(
   if (req.side === "buy") {
     const q = quoteCurveBuy(state, req.amountIn, block.timestamp);
     if (!q.ok) throw new Unsupported(q.refusal, `curve refused the buy: ${q.refusal}`, venue);
-    // Spot here is quote per token; a buy's "ideal" output is amountIn / spot.
-    const spotTokensPerQuoteX18 = spot === 0n ? 0n : (X18 * X18) / spot;
-    const allIn = shortfallVsSpotBps({ amountIn: q.spent, outAmount: q.tokensOut, spotX18: spotTokensPerQuoteX18 });
+    const allIn = shortfallVsSpotBps({ amountIn: q.spent, outAmount: q.tokensOut, spotX36: tokenPerQuoteX36 });
     enforceImpact(allIn, venue);
     return {
       ...common,
@@ -395,7 +394,7 @@ async function quoteCurve(
         { kind: "CURVE_PROTOCOL_FEE", bps: Number(state.feeBps), currency: pairToken, chargedOn: "INPUT", amount: exact(q.protocolFee) },
         { kind: "CURVE_CREATOR_TAX", bps: Number(state.creatorTaxBps), currency: pairToken, chargedOn: "INPUT", amount: exact(q.creatorTax) },
       ],
-      priceImpact: { allInBps: allIn, poolOnlyBps: null, spotOutPerInX18: spotTokensPerQuoteX18.toString() },
+      priceImpact: { allInBps: allIn, poolOnlyBps: null, spotOutPerInX36: tokenPerQuoteX36.toString() },
       calculationVersion: CURVE_QUOTE_CALCULATION_VERSION,
       venueState,
       warnings: impactWarnings(allIn, q.clamped ? [{ code: "CLAMPED_FILL", message: "This buy exhausts the curve's remaining allocation. Only part of the amount would be spent; the rest is refunded." }] : []),
@@ -408,7 +407,7 @@ async function quoteCurve(
 
   const q = quoteCurveSell(state, req.amountIn);
   if (!q.ok) throw new Unsupported(q.refusal, `curve refused the sell: ${q.refusal}`, venue);
-  const allIn = shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: q.quoteOut, spotX18: spot });
+  const allIn = shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: q.quoteOut, spotX36: quotePerTokenX36 });
   enforceImpact(allIn, venue);
   return {
     ...common,
@@ -428,7 +427,7 @@ async function quoteCurve(
       { kind: "CURVE_PROTOCOL_FEE", bps: Number(state.feeBps), currency: pairToken, chargedOn: "OUTPUT", amount: exact(q.protocolFee) },
       { kind: "CURVE_CREATOR_TAX", bps: Number(state.creatorTaxBps), currency: pairToken, chargedOn: "OUTPUT", amount: exact(q.creatorTax) },
     ],
-    priceImpact: { allInBps: allIn, poolOnlyBps: null, spotOutPerInX18: spot.toString() },
+    priceImpact: { allInBps: allIn, poolOnlyBps: null, spotOutPerInX36: quotePerTokenX36.toString() },
     calculationVersion: CURVE_QUOTE_CALCULATION_VERSION,
     venueState,
     warnings: impactWarnings(allIn, []),
@@ -491,10 +490,10 @@ async function quotePool(
   const inputMeta = dir.inputCurrency === token ? tokenMeta : pairMeta;
   const outputMeta = dir.outputCurrency === token ? tokenMeta : pairMeta;
 
-  const spot = spotOutPerInX18(sqrtPriceX96, dir.zeroForOne);
+  const spot = spotOutPerInX36(sqrtPriceX96, dir.zeroForOne);
   const take = reconstructHookTake(amountOut, hookFeeBps, creatorTaxBps);
-  const allIn = shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: amountOut, spotX18: spot });
-  const poolOnly = take ? shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: take.candidates[0].grossOut, spotX18: spot }) : null;
+  const allIn = shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: amountOut, spotX36: spot });
+  const poolOnly = take ? shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: take.candidates[0].grossOut, spotX36: spot }) : null;
   enforceImpact(allIn, venue);
 
   const range = (x: { min: bigint; max: bigint }) => ({ min: x.min.toString(), max: x.max.toString(), exact: x.min === x.max });
@@ -520,7 +519,7 @@ async function quotePool(
     spent: req.amountIn.toString(),
     refund: "0",
     fees,
-    priceImpact: { allInBps: allIn, poolOnlyBps: poolOnly, spotOutPerInX18: spot.toString() },
+    priceImpact: { allInBps: allIn, poolOnlyBps: poolOnly, spotOutPerInX36: spot.toString() },
     calculationVersion: V4_QUOTE_CALCULATION_VERSION,
     venueState: {
       kind: "pool",

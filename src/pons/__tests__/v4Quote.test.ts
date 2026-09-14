@@ -9,7 +9,7 @@ import {
   minimumOutput,
   reconstructHookTake,
   shortfallVsSpotBps,
-  spotOutPerInX18,
+  spotOutPerInX36,
   v4Direction,
 } from "../quote/v4Quote";
 
@@ -96,7 +96,7 @@ describe("price impact is measured against the pre-trade pool price", () => {
       shortfallVsSpotBps({
         amountIn: BigInt(r.amountSpecified),
         outAmount: BigInt(r.quoted),
-        spotX18: spotOutPerInX18(BigInt(r.sqrtPriceBefore), true),
+        spotX36: spotOutPerInX36(BigInt(r.sqrtPriceBefore), true),
       })
     );
     expect(impacts[0]).toBeGreaterThanOrEqual(300); // 100 bps hook fee + 200 bps creator tax
@@ -110,10 +110,29 @@ describe("price impact is measured against the pre-trade pool price", () => {
     const impact = shortfallVsSpotBps({
       amountIn: BigInt(oversized.requested),
       outAmount: BigInt(oversized.quotedOut),
-      spotX18: spotOutPerInX18(BigInt(sma.sqrtPriceBefore), true),
+      spotX36: spotOutPerInX36(BigInt(sma.sqrtPriceBefore), true),
     });
     expect(oversized.quoteSucceeded && oversized.executionSucceeded).toBe(true);
     expect(impact).toBeGreaterThan(9_900);
+  });
+});
+
+describe("price impact at extreme price ratios (regression)", () => {
+  // Pools like LASSIE/USDG (tick −407072) and HODLER/cbBTC (tick −470238) price the memecoin
+  // at ~1e-18 to 1e-20 pair base units per token base unit. With 1e18 scaling their sells
+  // read as 0 bps impact despite a 1–3% hook take. Every real swap must show at least the fee.
+  it.each(ROWS.map((r) => [`${r.case} ${r.side} ${r.amountSpecified}`, r]))("%s is at least its hook fee", (_l, row) => {
+    const r = row as V4Row;
+    const [currency0, currency1] = sortCurrencies(r.pairToken, r.token);
+    const poolKey = { currency0, currency1, fee: 0, tickSpacing: 200, hooks: HOOK };
+    const dir = v4Direction({ side: r.side, memecoinIsCurrency0: r.memecoinIsCurrency0, poolKey });
+    const impact = shortfallVsSpotBps({
+      amountIn: BigInt(r.amountSpecified),
+      outAmount: BigInt(r.quoted),
+      spotX36: spotOutPerInX36(BigInt(r.sqrtPriceBefore), dir.zeroForOne),
+    });
+    // Integer flooring of the fee can shave a fraction of a basis point at tiny sizes.
+    expect(impact).toBeGreaterThanOrEqual(r.hookFeeBps + r.creatorTaxBps - 1);
   });
 });
 

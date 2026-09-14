@@ -132,10 +132,17 @@ export function quoteCurveSell(state: CurveState, tokensIn: bigint): CurveQuoteR
 }
 
 /**
- * Spot price before the trade, quote per token scaled by 1e18, from the curve's own
- * constant-product reserves (virtual quote reserve included — that is what prices trades).
+ * Spot price before the trade, quote base units per token base unit scaled by 1e36, from the
+ * curve's constant-product reserves (virtual quote reserve included — that is what prices
+ * trades). 1e36 because a 6-decimal quote asset against an 18-decimal token is ~1e-20 raw.
  */
-export function curveSpotQuotePerTokenX18(state: Pick<CurveState, "quoteReserve" | "tokenReserve">): bigint {
+export function curveSpotQuotePerTokenX36(state: Pick<CurveState, "quoteReserve" | "tokenReserve">): bigint {
   if (state.tokenReserve === 0n) return 0n;
-  return (state.quoteReserve * 10n ** 18n) / state.tokenReserve;
+  return (state.quoteReserve * 10n ** 36n) / state.tokenReserve;
+}
+
+/** The inverse: token base units per quote base unit, scaled by 1e36, computed from reserves. */
+export function curveSpotTokenPerQuoteX36(state: Pick<CurveState, "quoteReserve" | "tokenReserve">): bigint {
+  if (state.quoteReserve === 0n) return 0n;
+  return (state.tokenReserve * 10n ** 36n) / state.quoteReserve;
 }

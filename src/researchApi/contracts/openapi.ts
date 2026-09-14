@@ -23,6 +23,7 @@ import {
   CreatePaperPositionRequestSchema,
   EvidenceSnapshotParamSchema,
   EvidenceSnapshotSchema,
+  MarketEvidenceResponseSchema,
   PaperPositionListResponseSchema,
   PaperPositionResponseSchema,
   QuoteRequestSchema,
@@ -266,8 +267,9 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/api/v1/tokens/robinhood/{tokenAddress}/pool",
+  deprecated: true,
   summary:
-    "Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
+    "Deprecated by /market-evidence (Phase 7D.3.2), which is block-pinned, covers bonding curves and ERC-20 pair assets, and separates raw liquidity from depth. Live Uniswap V4 pool evidence for a graduated Pons V2 token (Phase 7D.3 §5). Native-denominated only — no USD conversion exists for this chain. Always 200: a token with no V4 pool returns status UNAVAILABLE with a reason code.",
   tags: ["robinhood-chain"],
   security: [{ [bearerAuth.name]: [] }],
   request: { params: RobinhoodTokenAddressParamSchema },
@@ -338,6 +340,21 @@ registry.registerPath({
     404: errorResponse,
     409: { description: "QUOTE_EXPIRED or QUOTE_NOT_FILLABLE", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
     429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/market-evidence",
+  summary:
+    "Pinned-block market evidence for a Pons V2 token on either venue: phase, pair asset, spot price, fee terms, curve progress, depth at reference sizes (curve formula or official quoter) and advanced protocol parameters. No USD.",
+  tags: ["paper-trading"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Evidence, refusal, or unavailable state", content: { "application/json": { schema: MarketEvidenceResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
   },
 });
 

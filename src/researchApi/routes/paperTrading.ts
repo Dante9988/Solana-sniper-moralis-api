@@ -3,6 +3,7 @@
  *
  *   POST /api/v1/tokens/robinhood/:tokenAddress/quotes       public read (like /pool)
  *   POST /api/v1/tokens/robinhood/:tokenAddress/simulations  public read
+ *   GET  /api/v1/tokens/robinhood/:tokenAddress/market-evidence  public read, polled
  *   GET  /api/v1/evidence/:snapshotId                        public read
  *   POST /api/v1/me/paper-positions                          Supabase user, Idempotency-Key
  *   GET  /api/v1/me/paper-positions                          Supabase user
@@ -205,6 +206,24 @@ export function createPaperTradingRouter(
         return;
       }
       res.json({ apiVersion: PAPER_TRADING_API_VERSION, status: outcome.status, snapshotId: snapshot.id, quoteId: quoteSnapshot.id, simulation: outcome });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/tokens/robinhood/:tokenAddress/market-evidence", readAuth, readLimiter, validateRobinhoodAddress, async (req, res, next) => {
+    try {
+      const outcome = await engine.marketEvidence(req.normalizedTokenAddress!);
+      if (outcome.status === "UNAVAILABLE") {
+        logger.warn({ requestId: req.requestId, reason: outcome.reason, detail: outcome.detail }, "[market-evidence] unavailable");
+        res.json(unavailable(outcome.reason));
+        return;
+      }
+      if (outcome.status === "UNSUPPORTED") {
+        res.json({ apiVersion: PAPER_TRADING_API_VERSION, status: "UNSUPPORTED", reason: outcome.reason, detail: outcome.detail, block: outcome.block });
+        return;
+      }
+      res.json({ apiVersion: PAPER_TRADING_API_VERSION, status: "AVAILABLE", evidence: outcome.evidence });
     } catch (err) {
       next(err);
     }

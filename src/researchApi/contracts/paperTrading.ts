@@ -86,7 +86,7 @@ export const PonsQuoteSchema = z
     priceImpact: z.object({
       allInBps: z.number().int().openapi({ description: "Shortfall versus the pre-trade price, fees included." }),
       poolOnlyBps: z.number().int().nullable().openapi({ description: "Pool price movement alone, excluding hook fees. Null for curve quotes." }),
-      spotOutPerInX18: DecimalString,
+      spotOutPerInX36: DecimalString.openapi({ description: "Pre-trade spot, output base units per input base unit, scaled by 1e36." }),
     }),
     block: BlockRefSchema,
     quotedAt: z.string(),
@@ -253,3 +253,77 @@ export const PaperPositionResponseSchema = z
 export const PaperPositionListResponseSchema = z
   .object({ apiVersion: z.literal(PAPER_TRADING_API_VERSION), positions: z.array(PaperPositionSchema), observedAt: z.string() })
   .openapi("PaperPositionListResponse");
+
+// --- Market evidence (Phase 7D.3.2 §4) ---
+
+const DepthRowSchema = z
+  .object({
+    side: z.enum(["buy", "sell"]),
+    amountIn: DecimalString,
+    expectedOut: DecimalString.nullable(),
+    allInImpactBps: z.number().int().nullable(),
+    unavailableReason: z.string().nullable(),
+  })
+  .openapi("MarketDepthRow");
+
+export const MarketEvidenceSchema = z
+  .object({
+    chain: z.literal("robinhood"),
+    tokenAddress: z.string(),
+    phase: z.object({ code: z.enum(["BONDING_CURVE", "GRADUATION_IN_PROGRESS", "UNISWAP_V4_POOL", "RESCUED"]), onChainValue: z.number().int() }),
+    venue: VenueSchema,
+    block: BlockRefSchema,
+    observedAt: z.string().openapi({ description: "When the chain was read. Responses may be shared for a few seconds; this never changes on a cached copy." }),
+    calculationVersion: z.string(),
+    token: z.object({ symbol: z.string().nullable(), decimals: z.number().int() }),
+    pairAsset: z.object({ currency: z.string(), symbol: z.string().nullable(), decimals: z.number().int() }),
+    spotPrice: z.object({
+      pairBaseUnitsPerWholeTokenX36: DecimalString.openapi({ description: "Pair-asset base units per one whole token, scaled by 1e36. Divide by 1e36 × 10^pairAsset.decimals for pair-asset units." }),
+      method: z.enum(["CURVE_RESERVES", "POOL_SQRT_PRICE"]),
+    }),
+    fees: z.array(z.object({ kind: z.enum(["CURVE_PROTOCOL_FEE", "CURVE_CREATOR_TAX", "HOOK_FEE", "HOOK_CREATOR_TAX"]), bps: z.number().int(), source: z.string() })),
+    curve: z
+      .object({
+        address: z.string(),
+        realQuoteHeld: DecimalString.openapi({ description: "Quote asset the curve actually holds from trading (excludes virtual reserve and pending fees)." }),
+        graduationThreshold: DecimalString,
+        graduationProgressBps: z.number().int(),
+        sellableTokens: DecimalString,
+        snipeWindowOpen: z.boolean(),
+      })
+      .nullable(),
+    depth: z.object({
+      method: z.enum(["CURVE_FORMULA_AT_PINNED_BLOCK", "V4_QUOTER_ETH_CALL"]),
+      referenceReserve: DecimalString.openapi({ description: "Pair-side reserve the reference sizes (0.1%, 1%, 5%) are taken from." }),
+      rows: z.array(DepthRowSchema),
+    }),
+    advanced: z.object({
+      poolId: z.string().nullable(),
+      poolKey: PoolKeySchema.nullable(),
+      sqrtPriceX96: DecimalString.nullable(),
+      tick: z.number().int().nullable(),
+      activeLiquidityRaw: DecimalString.nullable().openapi({ description: "Uniswap V4 active liquidity L. Advanced protocol parameter — never ETH reserves, USD or sell proceeds." }),
+      lpFeeHundredthsBip: z.number().int().nullable(),
+      curveQuoteReserveIncludingVirtual: DecimalString.nullable(),
+      curveTokenReserve: DecimalString.nullable(),
+    }),
+    usd: z.object({ available: z.literal(false), reason: z.string() }),
+    missingEvidence: z.array(z.object({ code: z.string(), detail: z.string() })),
+    limitations: z.array(LimitationSchema),
+    sourceReferences: z.array(SourceReferenceSchema),
+  })
+  .openapi("MarketEvidence");
+
+export const MarketEvidenceResponseSchema = z
+  .discriminatedUnion("status", [
+    z.object({ apiVersion: z.literal(PAPER_TRADING_API_VERSION), status: z.literal("AVAILABLE"), evidence: MarketEvidenceSchema }),
+    z.object({
+      apiVersion: z.literal(PAPER_TRADING_API_VERSION),
+      status: z.literal("UNSUPPORTED"),
+      reason: z.enum(["UNKNOWN_TOKEN", "PROTOCOL_MISMATCH", "GRADUATION_IN_PROGRESS", "RESCUED", "POOL_REGISTRATION_INCONSISTENT"]),
+      detail: z.string(),
+      block: BlockRefSchema.nullable(),
+    }),
+    Unavailable,
+  ])
+  .openapi("MarketEvidenceResponse");

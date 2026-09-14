@@ -26,6 +26,8 @@ import { createRealtimeTicketsRouter } from "./routes/realtimeTickets";
 import { createRobinhoodTokensRouter } from "./routes/robinhoodTokens";
 import { createCalloutsRouter } from "./routes/callouts";
 import { createPaperTradingRouter } from "./routes/paperTrading";
+import { createMediaRouter } from "./routes/media";
+import { startTokenImageWorker } from "../media/tokenImageCache";
 import { createTokensRouter } from "./routes/tokens";
 import { createWalletsRouter } from "./routes/wallets";
 import { logger } from "./lib/logger";
@@ -72,6 +74,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   // /me/paper-positions. Registered before the GET-only robinhood router; the paths do not
   // overlap, but keeping the more specific writers first keeps the intent obvious.
   app.use("/api/v1", createPaperTradingRouter(db, config, deps));
+  app.use("/api/v1/media", createMediaRouter(db, config));
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
   app.use("/api/v1/tokens", createTokensRouter(db, config, deps, eventBus));
   app.use("/api/v1/callouts", createCalloutsRouter(db, config, deps));
@@ -105,12 +108,15 @@ function main(): void {
   });
 
   const realtime = attachRealtimeServer(server, config, { db, ticketStore, eventBus });
+  // Phase 7D.3.2 §6 — logos are fetched in the background, never on a request path.
+  const stopImageWorker = startTokenImageWorker(db, (msg, meta) => logger.info(meta ?? {}, msg));
 
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, "[api] received signal, shutting down gracefully");
+    stopImageWorker();
     realtime
       .close()
       .catch((err) => logger.error({ err: err instanceof Error ? err.message : String(err) }, "[api] realtime shutdown error"))

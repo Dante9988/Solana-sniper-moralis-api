@@ -20,7 +20,12 @@ import { UNIVERSAL_ROUTER_COMMANDS, V4_ROUTER_ACTIONS } from "./protocol";
 
 const BPS = 10_000n;
 const Q192 = 1n << 192n;
-const X18 = 10n ** 18n;
+/**
+ * Spot prices are scaled by 1e36, not 1e18. Pons pools span extreme price ratios — LASSIE/USDG
+ * sits at tick −407072, about 1.9e-18 USDG base units per token base unit — and 1e18 scaling
+ * truncates that to 1 or 2, which made real 3% shortfalls read as 0 bps.
+ */
+export const PRICE_SCALE = 10n ** 36n;
 
 export const V4_QUOTE_CALCULATION_VERSION = "pons-v2-v4quoter-1";
 
@@ -105,15 +110,15 @@ export function reconstructHookTake(netOut: bigint, hookFeeBps: number, creatorT
 }
 
 /**
- * Pool spot price, output units per input unit scaled by 1e18, in raw base units (no
- * decimal adjustment — both sides of the comparison below are raw).
+ * Pool spot price, output units per input unit scaled by PRICE_SCALE (1e36), in raw base
+ * units (no decimal adjustment — both sides of the comparison below are raw).
  *   zeroForOne: currency1 per currency0 = sqrtP² / 2¹⁹²
  *   else:       currency0 per currency1 = 2¹⁹² / sqrtP²
  */
-export function spotOutPerInX18(sqrtPriceX96: bigint, zeroForOne: boolean): bigint {
+export function spotOutPerInX36(sqrtPriceX96: bigint, zeroForOne: boolean): bigint {
   const p2 = sqrtPriceX96 * sqrtPriceX96;
   if (p2 === 0n) return 0n;
-  return zeroForOne ? (p2 * X18) / Q192 : (Q192 * X18) / p2;
+  return zeroForOne ? (p2 * PRICE_SCALE) / Q192 : (Q192 * PRICE_SCALE) / p2;
 }
 
 /**
@@ -123,12 +128,13 @@ export function spotOutPerInX18(sqrtPriceX96: bigint, zeroForOne: boolean): bigi
  * experiences (pool impact + hook fees), or the reconstructed gross for pool impact alone.
  * Never negative for a correctly-oriented trade; clamped at 0 for rounding at tiny sizes.
  */
-export function shortfallVsSpotBps(params: { amountIn: bigint; outAmount: bigint; spotX18: bigint }): number {
-  if (params.amountIn === 0n || params.spotX18 === 0n) return 0;
-  const ideal = (params.amountIn * params.spotX18) / X18;
-  if (ideal === 0n || params.outAmount >= ideal) return 0;
-  const bps = ((ideal - params.outAmount) * BPS) / ideal;
-  return Number(bps);
+export function shortfallVsSpotBps(params: { amountIn: bigint; outAmount: bigint; spotX36: bigint }): number {
+  if (params.amountIn === 0n || params.spotX36 === 0n) return 0;
+  // Compare in scaled space so a tiny ideal output does not round away before subtracting.
+  const idealScaled = params.amountIn * params.spotX36;
+  const outScaled = params.outAmount * PRICE_SCALE;
+  if (outScaled >= idealScaled) return 0;
+  return Number(((idealScaled - outScaled) * BPS) / idealScaled);
 }
 
 const EXACT_IN_SINGLE_PARAMS = [

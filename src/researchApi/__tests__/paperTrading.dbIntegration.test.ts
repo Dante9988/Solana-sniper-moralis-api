@@ -23,6 +23,7 @@ import type { QuoteEngine } from "../quoteEngineProvider";
 import { createPaperTradingRouter } from "../routes/paperTrading";
 import type { PonsQuote, QuoteOutcome } from "../../pons/quote/quoteService";
 import type { SimulationOutcome } from "../../pons/quote/simulationService";
+import type { MarketEvidenceOutcome } from "../../pons/quote/marketEvidenceService";
 
 const RUN = process.env.PAPER_RUN_DB_TESTS === "true";
 
@@ -72,7 +73,7 @@ function quote(overrides: Partial<PonsQuote> = {}): PonsQuote {
     fees: [
       { kind: "HOOK_FEE", bps: 100, currency: TOKEN, chargedOn: "OUTPUT", amount: { min: "3238399829649750998", max: "3238399829649750998", exact: true } },
     ],
-    priceImpact: { allInBps: 318, poolOnlyBps: 19, spotOutPerInX18: "32435118231651234567890123" },
+    priceImpact: { allInBps: 318, poolOnlyBps: 19, spotOutPerInX36: "32435118231651234567890123000000000000000000" },
     block: { number: "62211539", hash: "0x6554d2c6d1a1b2f99b9782f9d4157c125b6d051129d859df0fdb4395751d4d25", timestamp: "1789328376" },
     quotedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + 30_000).toISOString(),
@@ -124,9 +125,11 @@ describe.skipIf(!RUN)("paper trading — real Postgres + real HTTP", () => {
   const db = new PrismaClient();
   let nextQuote: () => QuoteOutcome = () => ({ status: "QUOTED", quote: quote() });
   let nextSimulation: (q: PonsQuote) => SimulationOutcome = (q) => simulated(q);
+  let nextEvidence: () => MarketEvidenceOutcome = () => ({ status: "UNAVAILABLE", reason: "RPC_UNAVAILABLE", detail: "HTTP 429 https://provider.example/v2/SYNTHETIC_SECRET_KEY" });
   const engine: QuoteEngine = {
     quote: async () => nextQuote(),
     simulate: async (q) => nextSimulation(q),
+    marketEvidence: async () => nextEvidence(),
   };
 
   let app: express.Express;
@@ -252,6 +255,18 @@ describe.skipIf(!RUN)("paper trading — real Postgres + real HTTP", () => {
     await postQuote({ side: "hold", amount: "1", slippageBps: 100 }).expect(400);
     await postQuote({ side: "buy", amount: "1", slippageBps: 9_000 }).expect(400);
     await postQuote({ side: "buy", amount: "0", slippageBps: 100 }).expect(400);
+  });
+
+  it("serves market evidence refusals and outages as results, never leaking provider text", async () => {
+    const outage = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN}/market-evidence`).expect(200);
+    expect(outage.body).toMatchObject({ status: "UNAVAILABLE", retryable: true });
+    expect(JSON.stringify(outage.body)).not.toMatch(/SYNTHETIC_SECRET_KEY|provider\.example|https?:\/\//);
+
+    nextEvidence = () => ({ status: "UNSUPPORTED", reason: "GRADUATION_IN_PROGRESS", detail: "the curve has stopped trading and the V4 pool has not been created yet", block: null });
+    const swept = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN}/market-evidence`).expect(200);
+    expect(swept.body).toMatchObject({ status: "UNSUPPORTED", reason: "GRADUATION_IN_PROGRESS" });
+
+    await request(app).get(`/api/v1/tokens/robinhood/not-an-address/market-evidence`).expect(400);
   });
 
   // ------------------------------------------------------------- simulations
