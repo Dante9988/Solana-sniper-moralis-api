@@ -81,6 +81,12 @@ export function selectCurveTrades(logs: Parameters<typeof ponsV2Adapter.decodeCu
   return { trades, foreign };
 }
 
+/** Whether a getLogs failure is about the window's size (as opposed to rate limits or endpoint health). */
+export function isSizeFailure(reason: string): boolean {
+  if (/no usable RPC endpoint|rate.?limit|429|too many requests|quota|cool/i.test(reason)) return false;
+  return /range|more than \d+ results|too many (results|logs)|response size|exceeds|timeout|timed out|Request failed|deadline/i.test(reason);
+}
+
 export class CurveTradeListener {
   private readonly chainClient: ChainReader & EventLogReader;
   private readonly db: PrismaClient;
@@ -93,6 +99,8 @@ export class CurveTradeListener {
   /** Phase 7D.4 — adaptive log range: halves when a provider refuses a range, grows back on success. */
   private readonly maxRange: bigint;
   private range: bigint;
+  /** After a window of this width failed, growth stops just below it for a while. */
+  private ceiling: { width: bigint; successesLeft: number } | null = null;
   /** Block refs survive failed ticks, so a retry resumes instead of re-reading every block. */
   private readonly blockRefs = new Map<string, { hash: string; timestamp: bigint }>();
 
@@ -175,9 +183,14 @@ export class CurveTradeListener {
 
     const logsResult = await this.chainClient.getLogsByEvents({ events: PONS_V2_CURVE_ABI, fromBlock, toBlock });
     if (logsResult.status === "UNAVAILABLE") {
-      // Too many results, a range cap or a rate limit on a wide range: try a smaller window next.
-      const next = this.range / 2n;
-      this.range = next < 10n ? 10n : next;
+      // A window too large for the provider (result cap, response size, timeout) is retried smaller.
+      // Rate limits and cooled-down endpoints are not about size: wait, keep the window.
+      const width = toBlock - fromBlock + 1n;
+      if (isSizeFailure(logsResult.reason)) {
+        const next = width / 2n;
+        this.range = next < 10n ? 10n : next;
+        this.ceiling = { width: (width * 3n) / 4n, successesLeft: 20 };
+      }
       await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getLogs(CurveBuy|CurveSell) over ${toBlock - fromBlock + 1n} blocks: ${logsResult.reason}`);
       return { status: "UNAVAILABLE", reason: `getLogs: ${logsResult.reason}` };
     }
@@ -266,7 +279,9 @@ export class CurveTradeListener {
     );
 
     for (const h of timestamps.keys()) this.blockRefs.delete(h);
-    if (this.range < this.maxRange) this.range = this.range * 2n > this.maxRange ? this.maxRange : this.range * 2n;
+    if (this.ceiling && --this.ceiling.successesLeft <= 0) this.ceiling = null;
+    const cap = this.ceiling && this.ceiling.width < this.maxRange ? this.ceiling.width : this.maxRange;
+    if (this.range < cap) this.range = this.range * 2n > cap ? cap : this.range * 2n;
     this.logger.info(`pons_v2 curve trade tick: processed blocks ${fromBlock}-${toBlock}, ${trades.length} trade(s) recorded, ${foreign} foreign log(s) dropped.`);
     return { status: "PROCESSED", fromBlock, toBlock, tradesRecorded: trades.length, foreignLogsDropped: foreign };
   }
