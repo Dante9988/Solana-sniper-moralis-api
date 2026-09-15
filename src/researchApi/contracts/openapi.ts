@@ -31,6 +31,7 @@ import {
   SimulationRequestSchema,
   SimulationResponseSchema,
 } from "./paperTrading";
+import { TokenMarketDataResponseSchema } from "./marketData";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -340,6 +341,21 @@ registry.registerPath({
     404: errorResponse,
     409: { description: "QUOTE_EXPIRED or QUOTE_NOT_FILLABLE", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
     429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/market",
+  summary:
+    "Market data from OnlyPump's indexed trades: last traded price (native, and USD from a verified Chainlink feed), total supply and FDV, rolling 5m–24h windows with explicit coverage, and recent trades. Circulating market cap is not provided.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Market data, or an explicit unavailable reason", content: { "application/json": { schema: TokenMarketDataResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
   },
 });
 

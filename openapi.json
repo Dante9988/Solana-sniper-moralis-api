@@ -2164,6 +2164,474 @@
           "quoteId"
         ]
       },
+      "TokenMarketDataResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AVAILABLE"
+                ]
+              },
+              "market": {
+                "$ref": "#/components/schemas/TokenMarketData"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "market"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "UNKNOWN_TOKEN",
+                  "DECIMALS_UNAVAILABLE",
+                  "DECIMALS_CONFLICT",
+                  "DATABASE_ONLY_DEPLOYMENT"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail"
+            ]
+          }
+        ]
+      },
+      "TokenMarketData": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "lifecycle": {
+                "type": "string",
+                "enum": [
+                  "BONDING",
+                  "GRADUATED"
+                ]
+              }
+            },
+            "required": [
+              "address",
+              "symbol",
+              "name",
+              "decimals",
+              "lifecycle"
+            ]
+          },
+          "quoteAsset": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Only set when the address is on an official registry; never inferred from the token's own symbol()."
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "identified": {
+                "type": "boolean"
+              },
+              "usdFeed": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "address",
+              "symbol",
+              "decimals",
+              "identified",
+              "usdFeed"
+            ]
+          },
+          "price": {
+            "type": "object",
+            "properties": {
+              "native": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "lastTradeAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usd": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "usdBasis": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usdUnavailableReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "native",
+              "lastTradeAt",
+              "usd",
+              "usdBasis",
+              "usdUnavailableReason"
+            ]
+          },
+          "valuation": {
+            "type": "object",
+            "properties": {
+              "totalSupply": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "fdvNative": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "fdvUsd": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "TOTAL_SUPPLY_x_LAST_TRADE_PRICE"
+                ]
+              },
+              "circulatingSupply": {
+                "type": "null"
+              },
+              "circulatingSupplyReason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "totalSupply",
+              "fdvNative",
+              "fdvUsd",
+              "basis",
+              "circulatingSupply",
+              "circulatingSupplyReason"
+            ]
+          },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "to": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "truncated",
+              "notes"
+            ]
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketWindow"
+            }
+          },
+          "recentTrades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketRecentTrade"
+            }
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "quoteAsset",
+          "price",
+          "valuation",
+          "coverage",
+          "windows",
+          "recentTrades",
+          "observedAt"
+        ]
+      },
+      "MarketWindow": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string",
+            "enum": [
+              "5m",
+              "15m",
+              "30m",
+              "1h",
+              "24h"
+            ]
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "coverage": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL",
+              "NONE"
+            ],
+            "description": "COMPLETE: ingestion covers the whole window, so zero means no activity. PARTIAL: observed values only. NONE: not covered; all values null."
+          },
+          "trades": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "buys": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sells": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "volumeQuote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Sum of trader-side quote amounts; each trade counted once.",
+            "example": "0.000000014640145702"
+          },
+          "volumeUsd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Sum of per-trade USD at each trade's time; null unless every trade in the window was valued.",
+            "example": "0.000000014640145702"
+          },
+          "tradesValuedUsd": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "priceChangePct": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Latest price vs the last price at or before the window start; null without a baseline.",
+            "example": "0.000000014640145702"
+          }
+        },
+        "required": [
+          "window",
+          "from",
+          "to",
+          "coverage",
+          "trades",
+          "buys",
+          "sells",
+          "volumeQuote",
+          "volumeUsd",
+          "tradesValuedUsd",
+          "priceChangePct"
+        ]
+      },
+      "MarketRecentTrade": {
+        "type": "object",
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "tokenAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "quoteAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "price": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "usd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "trader": {
+            "type": "string"
+          },
+          "txHash": {
+            "type": "string"
+          },
+          "logIndex": {
+            "type": "integer"
+          },
+          "block": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "venue": {
+            "type": "string",
+            "enum": [
+              "BONDING_CURVE",
+              "UNISWAP_V4"
+            ]
+          }
+        },
+        "required": [
+          "side",
+          "tokenAmount",
+          "quoteAmount",
+          "price",
+          "usd",
+          "trader",
+          "txHash",
+          "logIndex",
+          "block",
+          "timestamp",
+          "venue"
+        ]
+      },
       "MarketEvidenceResponse": {
         "oneOf": [
           {
@@ -4150,6 +4618,63 @@
             }
           },
           "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/market": {
+      "get": {
+        "summary": "Market data from OnlyPump's indexed trades: last traded price (native, and USD from a verified Chainlink feed), total supply and FDV, rolling 5m–24h windows with explicit coverage, and recent trades. Circulating market cap is not provided.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Market data, or an explicit unavailable reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenMarketDataResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {
