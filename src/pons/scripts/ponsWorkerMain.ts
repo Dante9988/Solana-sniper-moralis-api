@@ -22,7 +22,9 @@ import { GraduationPoller } from "../graduationPoller";
 import { DiscoveryV2Listener } from "../discoveryV2Listener";
 import { TradeV2Listener } from "../tradeV2Listener";
 import { CurveTradeListener } from "../curveTradeListener";
+import { startMarketSnapshotWorker } from "../market/marketSnapshotWorker";
 import { fillMissingTokenMetadata } from "../metadata/alchemyMetadataFallback";
+import { ChainlinkQuoteUsdRateProvider } from "../usd/chainlinkQuoteUsdRateProvider";
 import { ponsLogger, ponsComponentLogger } from "../logger";
 
 async function main(): Promise<void> {
@@ -87,12 +89,18 @@ async function main(): Promise<void> {
   }, 10 * 60_000);
   metadataTimer.unref();
 
+  // Phase 7D.4 — live price, market cap, liquidity and bonding progress from contract state, so
+  // they do not wait for log ingestion to reach the chain tip.
+  const snapshotLogger = ponsComponentLogger("pons:market-snapshots");
+  const snapshots = startMarketSnapshotWorker({ db, caller: chainClient, usd: new ChainlinkQuoteUsdRateProvider({ chainClient }), log: (msg) => snapshotLogger.info(msg) });
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     ponsLogger.info({ signal }, "received signal, stopping");
     clearInterval(metadataTimer);
+    snapshots.stop();
     discoveryListener.stop();
     tradeListener.stop();
     graduationPoller.stop();
@@ -106,6 +114,7 @@ async function main(): Promise<void> {
       discoveryV2Listener?.waitForIdle() ?? Promise.resolve(),
       tradeV2Listener?.waitForIdle() ?? Promise.resolve(),
       curveTradeListener?.waitForIdle() ?? Promise.resolve(),
+      snapshots.idle(),
     ]);
     await db.$disconnect();
     process.exit(0);

@@ -29,6 +29,7 @@ import { createPaperTradingRouter } from "./routes/paperTrading";
 import { createMarketDataRouter } from "./routes/marketData";
 import { createPracticeRouter } from "./routes/practice";
 import { createVanityRouter } from "./routes/vanity";
+import { createMarketsRouter } from "./routes/markets";
 import { createMediaRouter } from "./routes/media";
 import { startTokenImageWorker } from "../media/tokenImageCache";
 import { createTokensRouter } from "./routes/tokens";
@@ -80,6 +81,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   app.use("/api/v1", createMarketDataRouter(db, config, deps));
   app.use("/api/v1", createPracticeRouter(db, config, deps));
   app.use("/api/v1", createVanityRouter(db, config, deps));
+  app.use("/api/v1", createMarketsRouter(config, deps));
   app.use("/api/v1/media", createMediaRouter(db, config));
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
   app.use("/api/v1/tokens", createTokensRouter(db, config, deps, eventBus));

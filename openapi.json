@@ -299,6 +299,9 @@
               "string",
               "null"
             ]
+          },
+          "market": {
+            "$ref": "#/components/schemas/TokenMarket"
           }
         },
         "required": [
@@ -332,7 +335,8 @@
           "graduationPositionId",
           "graduationTokenAmount",
           "graduationPairTokenAmount",
-          "poolId"
+          "poolId",
+          "market"
         ]
       },
       "QuoteAssetRef": {
@@ -454,6 +458,163 @@
           "telegram",
           "discord",
           "farcaster"
+        ]
+      },
+      "TokenMarket": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "OK",
+              "FAILED",
+              "UNSUPPORTED"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "venue": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "PONS_V2_BONDING_CURVE",
+              "UNISWAP_V4_POOL",
+              null
+            ]
+          },
+          "blockNumber": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asOf": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Timestamp of the block the values were read at."
+          },
+          "priceQuote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Whole quote units per whole token (spot)."
+          },
+          "priceUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marketCapQuote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Total supply × spot price, in whole quote units."
+          },
+          "marketCapUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liquidityQuote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liquidityUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liquidityBasis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "CURVE_REAL_QUOTE",
+              "POOL_FULL_RANGE_EQUIVALENT",
+              null
+            ]
+          },
+          "bondingProgressPct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Share of the curve's sellable allocation bought out (graduation triggers at 100)."
+          },
+          "quoteRaised": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationThreshold": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readyToGraduate": {
+            "type": "boolean"
+          },
+          "marketCapChange1hUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marketCapChange1hPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usdSource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "venue",
+          "blockNumber",
+          "asOf",
+          "priceQuote",
+          "priceUsd",
+          "marketCapQuote",
+          "marketCapUsd",
+          "liquidityQuote",
+          "liquidityUsd",
+          "liquidityBasis",
+          "bondingProgressPct",
+          "quoteRaised",
+          "graduationThreshold",
+          "readyToGraduate",
+          "marketCapChange1hUsd",
+          "marketCapChange1hPct",
+          "usdSource"
         ]
       },
       "RobinhoodStatusResponse": {
@@ -2582,6 +2743,9 @@
               "$ref": "#/components/schemas/MarketRecentTrade"
             }
           },
+          "live": {
+            "$ref": "#/components/schemas/TokenMarket"
+          },
           "observedAt": {
             "type": "string"
           }
@@ -2594,6 +2758,7 @@
           "coverage",
           "windows",
           "recentTrades",
+          "live",
           "observedAt"
         ]
       },
@@ -4386,6 +4551,207 @@
           "reservation",
           "secretRef"
         ]
+      },
+      "MarketListResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "UNAVAILABLE"
+            ]
+          },
+          "segment": {
+            "type": "string",
+            "enum": [
+              "crypto",
+              "stocks"
+            ]
+          },
+          "page": {
+            "type": "integer"
+          },
+          "perPage": {
+            "type": "integer"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketRow"
+            }
+          },
+          "fetchedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "CoinGecko"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "attribution": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "url",
+              "attribution"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "segment",
+          "page",
+          "perPage",
+          "rows",
+          "fetchedAt",
+          "stale",
+          "reason",
+          "source"
+        ]
+      },
+      "MarketRow": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "integer"
+          },
+          "marketCapRank": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "imageUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priceUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marketCapUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fdvUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volume24hUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change1hPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change24hPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change7dPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "circulatingSupply": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastUpdated": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "robinhoodChainAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "officialRobinhoodToken": {
+            "type": "boolean"
+          },
+          "chainlinkFeed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "coingeckoUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "marketCapRank",
+          "id",
+          "symbol",
+          "name",
+          "imageUrl",
+          "priceUsd",
+          "marketCapUsd",
+          "fdvUsd",
+          "volume24hUsd",
+          "change1hPct",
+          "change24hPct",
+          "change7dPct",
+          "circulatingSupply",
+          "lastUpdated",
+          "robinhoodChainAddress",
+          "officialRobinhoodToken",
+          "chainlinkFeed",
+          "coingeckoUrl"
+        ]
       }
     },
     "parameters": {}
@@ -4654,7 +5020,7 @@
     },
     "/api/v1/tokens/robinhood": {
       "get": {
-        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle and search filters with a filtered total, and a verified quote asset per row.",
+        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle (all, bonding, graduated, almost-bonded, trending) and search filters with a filtered total, sorting by newest, market cap, liquidity, bonding progress or 1h market-cap change, a verified quote asset and the live on-chain market snapshot per row.",
         "tags": [
           "robinhood-chain"
         ],
@@ -4678,7 +5044,7 @@
           {
             "schema": {
               "type": "string",
-              "format": "date-time"
+              "maxLength": 64
             },
             "required": false,
             "name": "cursor",
@@ -4690,12 +5056,29 @@
               "enum": [
                 "all",
                 "bonding",
-                "graduated"
+                "graduated",
+                "almost-bonded",
+                "trending"
               ],
               "default": "all"
             },
             "required": false,
             "name": "lifecycle",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "new",
+                "marketCap",
+                "liquidity",
+                "progress",
+                "change1h"
+              ]
+            },
+            "required": false,
+            "name": "sort",
             "in": "query"
           },
           {
@@ -6989,6 +7372,72 @@
             }
           },
           "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/markets/{segment}": {
+      "get": {
+        "summary": "Crypto ranked by market cap, or Robinhood Chain stock tokens, from CoinGecko (cached one minute; stale lists are flagged).",
+        "tags": [
+          "markets"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "crypto",
+                "stocks"
+              ]
+            },
+            "required": true,
+            "name": "segment",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 40,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100,
+              "default": 50
+            },
+            "required": false,
+            "name": "perPage",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Market list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketListResponse"
+                }
+              }
+            }
+          },
+          "400": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

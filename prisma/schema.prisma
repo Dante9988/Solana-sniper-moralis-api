@@ -1190,12 +1190,12 @@ model TokenImageCache {
 /// Phase 7D.4 §5 — Practice: a user's paper-money portfolio. Balances are per quote currency and
 /// explicit; nothing here is a wallet balance, and nothing is ever signed or broadcast.
 model PracticePortfolio {
-  id                 String              @id @default(uuid())
+  id                 String            @id @default(uuid())
   userId             String
   name               String
   idempotencyKey     String
   requestFingerprint String
-  createdAt          DateTime            @default(now())
+  createdAt          DateTime          @default(now())
   balances           PracticeBalance[]
   holdings           PracticeHolding[]
   trades             PracticeTrade[]
@@ -1271,7 +1271,7 @@ model PracticeTrade {
   tokenAddress         String
   side                 String
   venue                String
-  fillBasis            String            // EXECUTION_SIMULATION | QUOTE
+  fillBasis            String // EXECUTION_SIMULATION | QUOTE
   quoteCurrency        String
   inputAmount          Decimal           @db.Decimal(78, 0)
   outputAmount         Decimal           @db.Decimal(78, 0)
@@ -1294,7 +1294,7 @@ model PracticeReview {
   userId    String
   planId    String       @unique
   plan      PracticePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  outcome   String       // MATCHED_PLAN | DEVIATED | STOPPED_EARLY | OTHER
+  outcome   String // MATCHED_PLAN | DEVIATED | STOPPED_EARLY | OTHER
   notes     String
   createdAt DateTime     @default(now())
 }
@@ -1335,26 +1335,84 @@ model PracticeAchievement {
 /// and an opaque reference to server-side, encrypted signing material live here; the secret itself
 /// never enters the database, an API response, a frontend bundle or a log.
 model VanityAddress {
-  id                 String    @id @default(uuid())
-  chain              String    // "solana"
-  address            String    @unique
+  id                    String    @id @default(uuid())
+  chain                 String // "solana"
+  address               String    @unique
   /// How the address was produced: "ed25519-keypair-suffix" (OnlyPump-Vanity-Generator grinds keypairs).
-  generationType     String
-  suffix             String
+  generationType        String
+  suffix                String
   /// Opaque server-side reference, e.g. "keystore:v1:<address>". Never returned by public routes.
-  secretRef          String
-  status             String    @default("AVAILABLE") // AVAILABLE | RESERVED | CONSUMED | RETIRED
-  retiredReason      String?
-  reservationId      String?   @unique
-  reservedBy         String?
-  reservedAt         DateTime?
-  reservationExpiresAt DateTime?
+  secretRef             String
+  status                String    @default("AVAILABLE") // AVAILABLE | RESERVED | CONSUMED | RETIRED
+  retiredReason         String?
+  reservationId         String?   @unique
+  reservedBy            String?
+  reservedAt            DateTime?
+  reservationExpiresAt  DateTime?
   reserveIdempotencyKey String?
-  consumedAt         DateTime?
+  consumedAt            DateTime?
   consumeIdempotencyKey String?
-  importedAt         DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  importedAt            DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   @@unique([reservedBy, reserveIdempotencyKey])
   @@index([chain, status, reservationExpiresAt])
+}
+
+/// Phase 7D.4 — live on-chain market state per Pons token, read with Multicall3 at one pinned block.
+/// Independent of trade ingestion, so price, market cap, liquidity and bonding progress are
+/// available even while log ingestion trails the chain tip. Amounts are integers in base units.
+model TokenMarketSnapshot {
+  id                   String    @id @default(uuid())
+  chain                String
+  tokenAddress         String
+  venue                String? // "PONS_V2_BONDING_CURVE" | "UNISWAP_V4_POOL"
+  status               String    @default("PENDING") // PENDING | OK | FAILED | UNSUPPORTED
+  lastError            String?
+  blockNumber          BigInt?
+  blockTimestamp       DateTime?
+  quoteAddress         String?
+  quoteDecimals        Int?
+  tokenDecimals        Int?
+  totalSupply          Decimal?  @db.Decimal(78, 0)
+  /// Quote base units per token base unit, scaled by 1e36.
+  priceQuoteX36        Decimal?  @db.Decimal(78, 0)
+  marketCapQuote       Decimal?  @db.Decimal(78, 0)
+  /// Curve: real quote held (excludes virtual liquidity and pending fees). Pool: 2 × quote side of the active liquidity at the current price (full-range equivalent).
+  liquidityQuote       Decimal?  @db.Decimal(78, 0)
+  priceUsd             Decimal?  @db.Decimal(60, 30)
+  marketCapUsd         Decimal?  @db.Decimal(38, 6)
+  liquidityUsd         Decimal?  @db.Decimal(38, 6)
+  usdRateSource        String?
+  bondingProgressBps   Int?
+  quoteRaised          Decimal?  @db.Decimal(78, 0)
+  graduationThreshold  Decimal?  @db.Decimal(78, 0)
+  graduated            Boolean   @default(false)
+  readyToGraduate      Boolean   @default(false)
+  marketCapChange1hUsd Decimal?  @db.Decimal(38, 6)
+  marketCapChange1hPct Decimal?  @db.Decimal(20, 6)
+  unchangedReads       Int       @default(0)
+  nextRefreshAt        DateTime?
+  updatedAt            DateTime  @updatedAt
+  createdAt            DateTime  @default(now())
+
+  @@unique([chain, tokenAddress])
+  @@index([chain, status, nextRefreshAt])
+  @@index([chain, bondingProgressBps])
+  @@index([chain, marketCapUsd])
+  @@index([chain, liquidityUsd])
+  @@index([chain, marketCapChange1hUsd])
+}
+
+/// Phase 7D.4 — market-cap samples for the 1h change used by Trending. Pruned after 48h.
+model TokenMarketSample {
+  id            String   @id @default(uuid())
+  chain         String
+  tokenAddress  String
+  at            DateTime
+  marketCapUsd  Decimal? @db.Decimal(38, 6)
+  priceQuoteX36 Decimal? @db.Decimal(78, 0)
+
+  @@index([chain, tokenAddress, at])
+  @@index([at])
 }

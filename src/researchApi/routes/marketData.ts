@@ -16,6 +16,7 @@ import { validateRobinhoodAddress } from "../middleware/validateRobinhoodAddress
 import { loadRobinhoodChainConfig } from "../../pons/config";
 import { FailoverChainClient } from "../../pons/failoverChainClient";
 import { fetchTokenMarketData, type MarketDataOutcome } from "../../pons/market/marketDataService";
+import { serializeMarket } from "./robinhoodTokens";
 import { ChainlinkQuoteUsdRateProvider } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
 
 export const MARKET_DATA_CACHE_MS = 10_000;
@@ -53,7 +54,11 @@ export function createMarketDataRouter(db: PrismaClient, config: ApiConfig, deps
     try {
       const outcome = await engine(req.normalizedTokenAddress!);
       if (outcome.status === "AVAILABLE") {
-        res.json({ apiVersion: MARKET_DATA_API_VERSION, status: "AVAILABLE", market: outcome.market });
+        // The live snapshot is additive: failing to read it must not fail trade-derived market data.
+        const snapshot = await Promise.resolve()
+          .then(() => db.tokenMarketSnapshot.findUnique({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: req.normalizedTokenAddress!.toLowerCase() } } }))
+          .catch(() => null);
+        res.json({ apiVersion: MARKET_DATA_API_VERSION, status: "AVAILABLE", market: { ...outcome.market, live: serializeMarket(snapshot) } });
       } else if (outcome.status === "UNKNOWN_TOKEN") {
         res.json({ apiVersion: MARKET_DATA_API_VERSION, status: "UNAVAILABLE", reason: "UNKNOWN_TOKEN", detail: "This token has not been discovered by OnlyPump." });
       } else if (outcome.status === "NOT_CONFIGURED") {

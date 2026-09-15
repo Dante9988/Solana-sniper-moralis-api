@@ -46,6 +46,7 @@ import {
   ReviewPracticePlanRequestSchema,
 } from "./practice";
 import { ActiveVanityReservationResponseSchema, ConsumeVanityResponseSchema, ReserveVanityRequestSchema, VanityAvailabilityResponseSchema, VanityChainQuerySchema, VanityReservationResponseSchema } from "./vanity";
+import { MarketListQuerySchema, MarketListResponseSchema, MarketSegmentParamSchema } from "./markets";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -126,7 +127,7 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/api/v1/tokens/robinhood",
-  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle and search filters with a filtered total, and a verified quote asset per row.",
+  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle (all, bonding, graduated, almost-bonded, trending) and search filters with a filtered total, sorting by newest, market cap, liquidity, bonding progress or 1h market-cap change, a verified quote asset and the live on-chain market snapshot per row.",
   tags: ["robinhood-chain"],
   security: [{ [bearerAuth.name]: [] }],
   request: { query: RobinhoodTokenListQuerySchema },
@@ -581,6 +582,16 @@ registry.registerPath({
   security: [{ [bearerAuth.name]: [] }],
   request: { headers: z.object({ "idempotency-key": z.string() }), params: z.object({ reservationId: z.string() }) },
   responses: { 200: { description: "Replayed", content: { "application/json": { schema: ConsumeVanityResponseSchema } } }, 201: { description: "Consumed", content: { "application/json": { schema: ConsumeVanityResponseSchema } } }, ...vanityErrors },
+});
+
+// Phase 7D.4 — ranked market lists from CoinGecko.
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/markets/{segment}",
+  summary: "Crypto ranked by market cap, or Robinhood Chain stock tokens, from CoinGecko (cached one minute; stale lists are flagged).",
+  tags: ["markets"],
+  request: { params: MarketSegmentParamSchema, query: MarketListQuerySchema },
+  responses: { 200: { description: "Market list", content: { "application/json": { schema: MarketListResponseSchema } } }, 400: errorResponse },
 });
 
 export function generateOpenApiDocument() {

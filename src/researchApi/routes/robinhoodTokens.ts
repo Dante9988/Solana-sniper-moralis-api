@@ -7,7 +7,7 @@
  * rate limiting, error envelope, validateMint-style param validation).
  */
 
-import { DiscoveredToken, ChainTrade, PrismaClient, Prisma } from "@prisma/client";
+import { DiscoveredToken, ChainTrade, PrismaClient, Prisma, type TokenMarketSnapshot } from "@prisma/client";
 import { Router } from "express";
 import { ApiConfig } from "../config";
 import { AuthenticateDeps, createAuthenticateUnlessPublicReads } from "../middleware/authenticate";
@@ -30,6 +30,7 @@ import { toPoolEvidenceJson, toPoolEvidenceUnavailableJson } from "../../present
 import { enqueueTokenLogos, logoStatuses, logoUrlFor, type ImageStatus } from "../../media/tokenImageCache";
 import { logger } from "../lib/logger";
 import { lookupQuoteAsset } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
+import { formatScaled } from "../../pons/market/marketSnapshot";
 
 /**
  * Prisma.Decimal#toString() renders large integers in scientific notation
@@ -50,7 +51,43 @@ function quoteAssetRef(address: string) {
     : { identified: false, symbol: null, name: null, decimals: null, kind: null, usdFeed: null };
 }
 
-function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logoUrl ? "PENDING" : "NONE") {
+const TEN = 10n;
+
+/** Phase 7D.4 — the live snapshot in whole units. Never a bare Decimal.toString() (exponent form). */
+export function serializeMarket(s: TokenMarketSnapshot | null | undefined) {
+  if (!s) return null;
+  const big = (d: Prisma.Decimal | null) => (d === null ? null : BigInt(d.toFixed(0)));
+  const whole = (raw: bigint | null, decimals: number | null) => (raw === null || decimals === null ? null : formatScaled(raw, decimals));
+  const priceX36 = big(s.priceQuoteX36);
+  const priceQuote =
+    priceX36 === null || s.tokenDecimals === null || s.quoteDecimals === null
+      ? null
+      : formatScaled((priceX36 * TEN ** BigInt(s.tokenDecimals)) / TEN ** BigInt(s.quoteDecimals), 36);
+  const ok = s.status === "OK";
+  return {
+    status: s.status as "PENDING" | "OK" | "FAILED" | "UNSUPPORTED",
+    reason: s.status === "OK" ? null : s.status === "PENDING" ? "not read yet" : s.lastError,
+    venue: (s.venue as "PONS_V2_BONDING_CURVE" | "UNISWAP_V4_POOL" | null) ?? null,
+    blockNumber: s.blockNumber?.toString() ?? null,
+    asOf: s.blockTimestamp?.toISOString() ?? null,
+    priceQuote: ok ? priceQuote : null,
+    priceUsd: ok ? decimalToString(s.priceUsd) : null,
+    marketCapQuote: ok ? whole(big(s.marketCapQuote), s.quoteDecimals) : null,
+    marketCapUsd: ok ? decimalToString(s.marketCapUsd) : null,
+    liquidityQuote: ok ? whole(big(s.liquidityQuote), s.quoteDecimals) : null,
+    liquidityUsd: ok ? decimalToString(s.liquidityUsd) : null,
+    liquidityBasis: !ok ? null : s.venue === "UNISWAP_V4_POOL" ? ("POOL_FULL_RANGE_EQUIVALENT" as const) : ("CURVE_REAL_QUOTE" as const),
+    bondingProgressPct: ok && s.bondingProgressBps !== null ? s.bondingProgressBps / 100 : null,
+    quoteRaised: ok ? whole(big(s.quoteRaised), s.quoteDecimals) : null,
+    graduationThreshold: ok ? whole(big(s.graduationThreshold), s.quoteDecimals) : null,
+    readyToGraduate: ok && s.readyToGraduate,
+    marketCapChange1hUsd: ok ? decimalToString(s.marketCapChange1hUsd) : null,
+    marketCapChange1hPct: ok ? decimalToString(s.marketCapChange1hPct) : null,
+    usdSource: ok ? s.usdRateSource : null,
+  };
+}
+
+function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logoUrl ? "PENDING" : "NONE", market: TokenMarketSnapshot | null = null) {
   return {
     chain: row.chain,
     venue: row.venue,
@@ -105,7 +142,19 @@ function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logo
     graduationTokenAmount: decimalToString(row.graduationTokenAmount),
     graduationPairTokenAmount: decimalToString(row.graduationPairTokenAmount),
     poolId: row.poolId,
+    market: serializeMarket(market),
   };
+}
+
+async function snapshotsFor(db: PrismaClient, addresses: string[]): Promise<Map<string, TokenMarketSnapshot>> {
+  if (addresses.length === 0) return new Map();
+  try {
+    const rows = await db.tokenMarketSnapshot.findMany({ where: { chain: "robinhood", tokenAddress: { in: addresses.map((a) => a.toLowerCase()) } } });
+    return new Map(rows.map((r) => [r.tokenAddress, r]));
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "market snapshots unavailable");
+    return new Map();
+  }
 }
 
 function serializeTrade(row: ChainTrade) {
@@ -205,34 +254,55 @@ export function createRobinhoodTokensRouter(
         return;
       }
       const { limit, cursor, lifecycle, q } = parsed.data;
+      const sort = parsed.data.sort ?? (lifecycle === "almost-bonded" ? "progress" : lifecycle === "trending" ? "change1h" : "new");
 
-      const filter = {
-        chain: "robinhood",
-        // Phase 7B.5A §2/§9 — a row reorg recovery marked ORPHANED is no
-        // longer a canonical fact; API consumers must never mistake it
-        // for one (phase7b5a.txt §2, requirement 118).
-        canonicalStatus: "CANONICAL" as const,
-        ...(lifecycle === "graduated" ? { graduated: true } : lifecycle === "bonding" ? { graduated: false } : {}),
-        ...(q
-          ? /^0x[0-9a-fA-F]{2,40}$/.test(q)
-            ? { tokenAddress: { startsWith: q.toLowerCase() } }
-            : { OR: [{ name: { contains: q, mode: "insensitive" as const } }, { symbol: { contains: q, mode: "insensitive" as const } }] }
-          : {}),
-      };
-      const [rows, total] = await Promise.all([
-        db.discoveredToken.findMany({
-          where: { ...filter, ...(cursor ? { observedAt: { lt: new Date(cursor) } } : {}) },
-          orderBy: { observedAt: "desc" },
-          take: limit,
-        }),
-        db.discoveredToken.count({ where: filter }),
+      // Phase 7D.4 — filters and orderings over the token and its live snapshot, in one query.
+      const conds: Prisma.Sql[] = [Prisma.sql`d.chain = 'robinhood'`, Prisma.sql`d."canonicalStatus" = 'CANONICAL'`];
+      if (lifecycle === "graduated") conds.push(Prisma.sql`d.graduated = true`);
+      if (lifecycle === "bonding") conds.push(Prisma.sql`d.graduated = false`);
+      if (lifecycle === "almost-bonded") conds.push(Prisma.sql`d.graduated = false AND s.status = 'OK' AND s.graduated = false AND s."bondingProgressBps" > 0`);
+      if (lifecycle === "trending") conds.push(Prisma.sql`s.status = 'OK' AND s."marketCapChange1hUsd" > 0`);
+      if (q) {
+        if (/^0x[0-9a-fA-F]{2,40}$/.test(q)) conds.push(Prisma.sql`d."tokenAddress" LIKE ${q.toLowerCase() + "%"}`);
+        else conds.push(Prisma.sql`(d.name ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"} OR d.symbol ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"})`);
+      }
+      const where = Prisma.join(conds, " AND ");
+      const order = {
+        new: Prisma.sql`d."observedAt" DESC, d."tokenAddress" DESC`,
+        marketCap: Prisma.sql`s."marketCapUsd" DESC NULLS LAST, d."observedAt" DESC`,
+        liquidity: Prisma.sql`s."liquidityUsd" DESC NULLS LAST, d."observedAt" DESC`,
+        progress: Prisma.sql`s."bondingProgressBps" DESC NULLS LAST, s."quoteRaised" DESC NULLS LAST, d."observedAt" DESC`,
+        change1h: Prisma.sql`s."marketCapChange1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
+      }[sort];
+      // "new" pages by time so rows discovered meanwhile don't shift pages; other orders page by offset.
+      let offset = 0;
+      if (cursor) {
+        if (sort === "new") {
+          const at = cursor.startsWith("t:") ? cursor.slice(2) : cursor;
+          if (Number.isNaN(Date.parse(at))) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
+          conds.push(Prisma.sql`d."observedAt" < ${new Date(at)}`);
+        } else {
+          const m = /^o:(\d{1,6})$/.exec(cursor);
+          if (!m) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
+          offset = Number(m[1]);
+        }
+      }
+      const from = Prisma.sql`FROM "DiscoveredToken" d LEFT JOIN "TokenMarketSnapshot" s ON s.chain = d.chain AND s."tokenAddress" = d."tokenAddress"`;
+      const [ids, counted] = await Promise.all([
+        db.$queryRaw<Array<{ tokenAddress: string; observedAt: Date }>>`SELECT d."tokenAddress", d."observedAt" ${from} WHERE ${Prisma.join(conds, " AND ")} ORDER BY ${order} OFFSET ${offset} LIMIT ${limit}`,
+        db.$queryRaw<Array<{ n: bigint }>>`SELECT count(*)::bigint AS n ${from} WHERE ${where}`,
       ]);
+      const total = Number(counted[0]?.n ?? 0);
+      const found = await db.discoveredToken.findMany({ where: { chain: "robinhood", tokenAddress: { in: ids.map((r) => r.tokenAddress) } } });
+      const byAddress = new Map(found.map((r) => [r.tokenAddress, r]));
+      const rows = ids.map((r) => byAddress.get(r.tokenAddress)).filter((r): r is DiscoveredToken => Boolean(r));
 
-      const nextCursor = rows.length === limit ? rows[rows.length - 1].observedAt.toISOString() : null;
-      const statuses = await logoStatusesSafely(db, rows);
+      const last = ids[ids.length - 1];
+      const nextCursor = ids.length < limit || !last ? null : sort === "new" ? `t:${last.observedAt.toISOString()}` : `o:${offset + ids.length}`;
+      const [statuses, snapshots] = await Promise.all([logoStatusesSafely(db, rows), snapshotsFor(db, rows.map((r) => r.tokenAddress))]);
 
       res.json({
-        tokens: rows.map((row) => serializeToken(row, statuses.get(row.tokenAddress.toLowerCase()))),
+        tokens: rows.map((row) => serializeToken(row, statuses.get(row.tokenAddress.toLowerCase()), snapshots.get(row.tokenAddress.toLowerCase()) ?? null)),
         nextCursor,
         total,
         observedAt: new Date().toISOString(),
@@ -265,9 +335,9 @@ export function createRobinhoodTokensRouter(
         take: limit,
       });
 
-      const statuses = await logoStatusesSafely(db, [token]);
+      const [statuses, snapshots] = await Promise.all([logoStatusesSafely(db, [token]), snapshotsFor(db, [token.tokenAddress])]);
       res.json({
-        token: serializeToken(token, statuses.get(token.tokenAddress.toLowerCase())),
+        token: serializeToken(token, statuses.get(token.tokenAddress.toLowerCase()), snapshots.get(token.tokenAddress.toLowerCase()) ?? null),
         trades: trades.map(serializeTrade),
         observedAt: new Date().toISOString(),
       });

@@ -332,3 +332,85 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — list filters, filtered totals and
     expect(by[UNKNOWN_PAIR]).toMatchObject({ identified: false, symbol: null });
   });
 });
+
+describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bonded, Trending and sorting", () => {
+  const prisma = new PrismaClient();
+  const A = "0xabababababababababababababababababab0001"; // 80 % bonded, small cap
+  const B = "0xabababababababababababababababababab0002"; // 20 % bonded, biggest cap, trending
+  const C = "0xabababababababababababababababababab0003"; // graduated
+  const D = "0xabababababababababababababababababab0004"; // never read
+  const ids = [A, B, C, D];
+
+  const token = (tokenAddress: string, i: number, graduated = false) =>
+    prisma.discoveredToken.create({
+      data: {
+        chain: CHAIN, venue: "pons_v2", tokenAddress, name: `Kestrel Sort ${i}`, symbol: `KS${i}`, graduated,
+        deployer: "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead", quoteAddress: "0x0000000000000000000000000000000000000000",
+        initialBuyAmount: "0", sourceHeight: BigInt(i), sourceHash: "0xhash", sourceTxHash: `0x${tokenAddress.slice(2).padEnd(64, "1")}`, sourceIndex: i,
+        observedAt: new Date(Date.UTC(2026, 8, 15, 0, i)),
+      },
+    });
+  const snap = (tokenAddress: string, over: Record<string, unknown>) =>
+    prisma.tokenMarketSnapshot.create({
+      data: {
+        chain: CHAIN, tokenAddress, status: "OK", venue: "PONS_V2_BONDING_CURVE", blockNumber: 63_000_000n, blockTimestamp: new Date("2026-09-15T14:00:00Z"),
+        quoteAddress: "0x0000000000000000000000000000000000000000", quoteDecimals: 18, tokenDecimals: 18, totalSupply: "1000000000000000000000000000",
+        priceQuoteX36: "1811025900000000000000000000", marketCapQuote: "1811025900000000000", liquidityQuote: "64286899831547514", usdRateSource: "chainlink:ETH / USD",
+        ...over,
+      } as never,
+    });
+  const cleanup = async () => {
+    await prisma.tokenMarketSnapshot.deleteMany({ where: { tokenAddress: { in: ids } } });
+    await prisma.discoveredToken.deleteMany({ where: { tokenAddress: { in: ids } } });
+  };
+
+  beforeAll(async () => {
+    await cleanup();
+    await token(A, 1);
+    await token(B, 2);
+    await token(C, 3, true);
+    await token(D, 4);
+    await snap(A, { bondingProgressBps: 8000, marketCapUsd: "1000", liquidityUsd: "300", priceUsd: "0.000001", marketCapChange1hUsd: "-5", marketCapChange1hPct: "-0.5" });
+    await snap(B, { bondingProgressBps: 2000, marketCapUsd: "90000", liquidityUsd: "50", priceUsd: "0.00009", marketCapChange1hUsd: "40000", marketCapChange1hPct: "80" });
+    await snap(C, { venue: "UNISWAP_V4_POOL", graduated: true, bondingProgressBps: 10000, marketCapUsd: "5000", liquidityUsd: "9000", priceUsd: "0.000005", marketCapChange1hUsd: "10", marketCapChange1hPct: "0.2" });
+  });
+  afterAll(async () => {
+    await cleanup();
+    await prisma.$disconnect();
+  });
+
+  const list = (query: string) => request(buildApp(prisma)).get(`/api/v1/tokens/robinhood?q=Kestrel%20Sort&${query}`);
+  const addrs = (res: request.Response) => res.body.tokens.map((t: { tokenAddress: string }) => t.tokenAddress);
+
+  it("returns whole-unit market values with their basis, and an honest pending state", async () => {
+    const res = await list("lifecycle=all");
+    expect(res.status).toBe(200);
+    const by = Object.fromEntries(res.body.tokens.map((t: { tokenAddress: string; market: unknown }) => [t.tokenAddress, t.market]));
+    expect(by[A]).toMatchObject({ status: "OK", bondingProgressPct: 80, liquidityBasis: "CURVE_REAL_QUOTE", marketCapQuote: "1.8110259", liquidityQuote: "0.064286899831547514", marketCapUsd: "1000" });
+    expect(by[A].priceQuote).toBe("0.0000000018110259");
+    expect(by[C]).toMatchObject({ liquidityBasis: "POOL_FULL_RANGE_EQUIVALENT" });
+    expect(by[D]).toBeNull();
+    expect(JSON.stringify(res.body)).not.toMatch(/\de[+-]\d/);
+  });
+
+  it("Almost bonded lists bonding tokens by progress; Trending lists rising market caps", async () => {
+    const almost = await list("lifecycle=almost-bonded");
+    expect(addrs(almost)).toEqual([A, B]);
+    expect(almost.body.total).toBe(2);
+    const trending = await list("lifecycle=trending");
+    expect(addrs(trending)).toEqual([B, C]);
+  });
+
+  it("sorts by market cap and liquidity with unread tokens last, and pages by offset", async () => {
+    expect(addrs(await list("sort=marketCap"))).toEqual([B, C, A, D]);
+    expect(addrs(await list("sort=liquidity"))).toEqual([C, A, B, D]);
+    const page1 = await list("sort=marketCap&limit=2");
+    expect(page1.body.nextCursor).toBe("o:2");
+    const page2 = await list(`sort=marketCap&limit=2&cursor=${page1.body.nextCursor}`);
+    expect(addrs(page2)).toEqual([A, D]);
+    const newest = await list("limit=2");
+    expect(addrs(newest)).toEqual([D, C]);
+    expect(addrs(await list(`limit=2&cursor=${encodeURIComponent(newest.body.nextCursor)}`))).toEqual([B, A]);
+    expect((await list("sort=marketCap&cursor=bogus")).status).toBe(400);
+  });
+});

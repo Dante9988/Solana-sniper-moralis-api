@@ -3,6 +3,7 @@
  * relevant decimals), because this feeds display; raw base units stay in quotes and trades.
  */
 
+import { TokenMarketSchema } from "./robinhoodTokens";
 import { z } from "./zodOpenApi";
 
 export const MARKET_DATA_API_VERSION = 1 as const;
@@ -63,6 +64,8 @@ export const TokenMarketDataSchema = z
     coverage: z.object({ from: z.string().nullable(), to: z.string().nullable(), truncated: z.boolean(), notes: z.array(z.string()) }),
     windows: z.array(WindowSchema),
     recentTrades: z.array(RecentTradeSchema),
+    /** Phase 7D.4 — spot price, market cap, liquidity and bonding progress from contract state; independent of trade coverage. */
+    live: TokenMarketSchema.nullable(),
     observedAt: z.string(),
   })
   .openapi("TokenMarketData");
