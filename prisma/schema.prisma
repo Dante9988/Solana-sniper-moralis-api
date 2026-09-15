@@ -1182,3 +1182,147 @@ model TokenImageCache {
   @@unique([chain, tokenAddress, sourceUrl])
   @@index([status, nextAttemptAt])
 }
+
+/// Phase 7D.4 §5 — Practice: a user's paper-money portfolio. Balances are per quote currency and
+/// explicit; nothing here is a wallet balance, and nothing is ever signed or broadcast.
+model PracticePortfolio {
+  id                 String              @id @default(uuid())
+  userId             String
+  name               String
+  idempotencyKey     String
+  requestFingerprint String
+  createdAt          DateTime            @default(now())
+  balances           PracticeBalance[]
+  holdings           PracticeHolding[]
+  trades             PracticeTrade[]
+  plans              PracticePlan[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+}
+
+/// Paper cash in one quote currency (address; the zero address is native ETH), in base units.
+model PracticeBalance {
+  portfolioId    String
+  portfolio      PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  currency       String
+  symbol         String
+  decimals       Int
+  startingAmount Decimal           @db.Decimal(78, 0)
+  amount         Decimal           @db.Decimal(78, 0)
+  updatedAt      DateTime          @updatedAt
+
+  @@id([portfolioId, currency])
+}
+
+/// Tokens held on paper, with cost basis in the quote currency they were bought with.
+model PracticeHolding {
+  portfolioId   String
+  portfolio     PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  chain         String
+  tokenAddress  String
+  quoteCurrency String
+  amount        Decimal           @db.Decimal(78, 0)
+  /// Quote spent on what is still held (fees included), in quote base units.
+  costBasis     Decimal           @db.Decimal(78, 0)
+  /// Realized result of sells so far, quote base units (signed).
+  realizedPnl   Decimal           @db.Decimal(78, 0)
+  updatedAt     DateTime          @updatedAt
+
+  @@id([portfolioId, chain, tokenAddress])
+}
+
+/// A saved trade plan: what the user intends and why. Exit ideas are notes, never automatic orders.
+model PracticePlan {
+  id                 String            @id @default(uuid())
+  userId             String
+  portfolioId        String
+  portfolio          PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  chain              String
+  tokenAddress       String
+  thesis             String
+  sizeNote           String?
+  exitNote           String?
+  status             String            @default("OPEN") // OPEN | CLOSED
+  idempotencyKey     String
+  requestFingerprint String
+  createdAt          DateTime          @default(now())
+  closedAt           DateTime?
+  review             PracticeReview?
+  trades             PracticeTrade[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, portfolioId, createdAt])
+}
+
+/// One paper entry or exit, backed by an unexpired quote and optionally its successful simulation.
+model PracticeTrade {
+  id                   String            @id @default(uuid())
+  userId               String
+  portfolioId          String
+  portfolio            PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  planId               String?
+  plan                 PracticePlan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+  chain                String
+  tokenAddress         String
+  side                 String
+  venue                String
+  fillBasis            String            // EXECUTION_SIMULATION | QUOTE
+  quoteCurrency        String
+  inputAmount          Decimal           @db.Decimal(78, 0)
+  outputAmount         Decimal           @db.Decimal(78, 0)
+  minimumOutput        Decimal           @db.Decimal(78, 0)
+  /// All-in shortfall vs the pre-trade price, basis points, from the quote.
+  allInCostBps         Int
+  realizedPnl          Decimal?          @db.Decimal(78, 0)
+  quoteSnapshotId      String
+  simulationSnapshotId String?
+  idempotencyKey       String
+  requestFingerprint   String
+  createdAt            DateTime          @default(now())
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, portfolioId, createdAt])
+}
+
+model PracticeReview {
+  id        String       @id @default(uuid())
+  userId    String
+  planId    String       @unique
+  plan      PracticePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  outcome   String       // MATCHED_PLAN | DEVIATED | STOPPED_EARLY | OTHER
+  notes     String
+  createdAt DateTime     @default(now())
+}
+
+model PracticeJournalEntry {
+  id          String   @id @default(uuid())
+  userId      String
+  portfolioId String?
+  planId      String?
+  tradeId     String?
+  text        String
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model PracticeLessonProgress {
+  userId      String
+  lessonId    String
+  steps       String[]
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@id([userId, lessonId])
+}
+
+/// Phase 7D.4 §6 — personal learning achievements. One row per user and code; evidence records why.
+model PracticeAchievement {
+  userId    String
+  code      String
+  evidence  Json
+  awardedAt DateTime @default(now())
+
+  @@id([userId, code])
+}

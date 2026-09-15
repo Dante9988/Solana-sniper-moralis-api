@@ -32,6 +32,19 @@ import {
   SimulationResponseSchema,
 } from "./paperTrading";
 import { TokenMarketDataResponseSchema } from "./marketData";
+import {
+  CompareSizesRequestSchema,
+  CreatePracticePlanRequestSchema,
+  CreatePracticePortfolioRequestSchema,
+  CreatePracticeTradeRequestSchema,
+  LessonStepRequestSchema,
+  PracticeLessonResponseSchema,
+  PracticeOverviewResponseSchema,
+  PracticePlanResponseSchema,
+  PracticePortfolioResponseSchema,
+  PracticeTradeResponseSchema,
+  ReviewPracticePlanRequestSchema,
+} from "./practice";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -430,6 +443,96 @@ registry.registerPath({
     200: { description: "Paper positions", content: { "application/json": { schema: PaperPositionListResponseSchema } } },
     401: errorResponse,
   },
+});
+
+// Phase 7D.4 §5/§6 — Practice (paper money, live market data). Signed-in users only.
+const practiceIdem = z.object({ "Idempotency-Key": z.string().regex(/^[A-Za-z0-9_-]{8,128}$/) });
+const practiceErrors = {
+  400: errorResponse,
+  401: errorResponse,
+  404: errorResponse,
+  409: { description: "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+  422: { description: "IDEMPOTENCY_KEY_REUSED", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+};
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/practice",
+  summary: "The signed-in user's practice portfolios (paper balances, holdings, trades, plans) and intro-lesson progress with achievements. Never a wallet balance.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Practice overview", content: { "application/json": { schema: PracticeOverviewResponseSchema } } }, 401: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/portfolios",
+  summary: "Start a practice portfolio with explicit paper balances in verified quote assets. Idempotent per Idempotency-Key.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { headers: practiceIdem, body: { content: { "application/json": { schema: CreatePracticePortfolioRequestSchema } } } },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: PracticePortfolioResponseSchema } } }, 201: { description: "Created", content: { "application/json": { schema: PracticePortfolioResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/practice/portfolios/{portfolioId}",
+  summary: "One of the signed-in user's practice portfolios.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ portfolioId: z.string() }) },
+  responses: { 200: { description: "Portfolio", content: { "application/json": { schema: PracticePortfolioResponseSchema } } }, 401: errorResponse, 404: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/portfolios/{portfolioId}/plans",
+  summary: "Record a trade plan: why, how much, and exit notes. Exit notes are never executed automatically.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ portfolioId: z.string() }), headers: practiceIdem, body: { content: { "application/json": { schema: CreatePracticePlanRequestSchema } } } },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: PracticePlanResponseSchema } } }, 201: { description: "Created", content: { "application/json": { schema: PracticePlanResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/portfolios/{portfolioId}/trades",
+  summary:
+    "Place a paper entry or exit from an unexpired quote and, optionally, its successful simulation. Buys need paper cash in the pair's currency; sells need the tokens. The real pool is not changed.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ portfolioId: z.string() }), headers: practiceIdem, body: { content: { "application/json": { schema: CreatePracticeTradeRequestSchema } } } },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: PracticeTradeResponseSchema } } }, 201: { description: "Filled on paper", content: { "application/json": { schema: PracticeTradeResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/plans/{planId}/review",
+  summary: "Review a plan after its practice entry and exit.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ planId: z.string() }), body: { content: { "application/json": { schema: ReviewPracticePlanRequestSchema } } } },
+  responses: { 201: { description: "Reviewed", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/practice/lesson",
+  summary: "Intro lesson progress, derived from what the user has actually done, and learning achievements.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 401: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/lesson/compare-sizes",
+  summary: "Record a comparison of two quotes for the same token and side at different sizes.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: CompareSizesRequestSchema } } } },
+  responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 400: errorResponse, 401: errorResponse, 404: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/lesson/steps",
+  summary: "Mark a reading step (preview-costs, track) as done. Other steps complete by doing them.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: LessonStepRequestSchema } } } },
+  responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 400: errorResponse, 401: errorResponse },
 });
 
 export function generateOpenApiDocument() {

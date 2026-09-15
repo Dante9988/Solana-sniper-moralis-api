@@ -27,6 +27,7 @@ import { createRobinhoodTokensRouter } from "./routes/robinhoodTokens";
 import { createCalloutsRouter } from "./routes/callouts";
 import { createPaperTradingRouter } from "./routes/paperTrading";
 import { createMarketDataRouter } from "./routes/marketData";
+import { createPracticeRouter } from "./routes/practice";
 import { createMediaRouter } from "./routes/media";
 import { startTokenImageWorker } from "../media/tokenImageCache";
 import { createTokensRouter } from "./routes/tokens";
@@ -76,6 +77,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   // overlap, but keeping the more specific writers first keeps the intent obvious.
   app.use("/api/v1", createPaperTradingRouter(db, config, deps));
   app.use("/api/v1", createMarketDataRouter(db, config, deps));
+  app.use("/api/v1", createPracticeRouter(db, config, deps));
   app.use("/api/v1/media", createMediaRouter(db, config));
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
   app.use("/api/v1/tokens", createTokensRouter(db, config, deps, eventBus));

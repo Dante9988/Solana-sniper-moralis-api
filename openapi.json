@@ -3557,6 +3557,631 @@
           "positions",
           "observedAt"
         ]
+      },
+      "PracticeOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "portfolios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticePortfolio"
+            }
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/PracticeLesson"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "portfolios",
+          "lesson"
+        ]
+      },
+      "PracticePortfolio": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "balances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeBalance"
+            }
+          },
+          "holdings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeHolding"
+            }
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeTrade"
+            }
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticePlan"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "balances",
+          "holdings",
+          "trades",
+          "plans"
+        ]
+      },
+      "PracticeBalance": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "decimals": {
+            "type": "integer"
+          },
+          "startingAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          }
+        },
+        "required": [
+          "currency",
+          "symbol",
+          "decimals",
+          "startingAmount",
+          "amount"
+        ]
+      },
+      "PracticeHolding": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "quoteCurrency": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "costBasis": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "realizedPnl": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "chain",
+          "tokenAddress",
+          "quoteCurrency",
+          "amount",
+          "costBasis",
+          "realizedPnl",
+          "updatedAt"
+        ]
+      },
+      "PracticeTrade": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "planId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "venue": {
+            "type": "string"
+          },
+          "fillBasis": {
+            "type": "string",
+            "enum": [
+              "EXECUTION_SIMULATION",
+              "QUOTE"
+            ]
+          },
+          "quoteCurrency": {
+            "type": "string"
+          },
+          "inputAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "outputAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "minimumOutput": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "allInCostBps": {
+            "type": "integer",
+            "description": "Shortfall versus the pre-trade price, fees included, from the quote."
+          },
+          "realizedPnl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "quoteSnapshotId": {
+            "type": "string"
+          },
+          "simulationSnapshotId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "paper": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "planId",
+          "tokenAddress",
+          "side",
+          "venue",
+          "fillBasis",
+          "quoteCurrency",
+          "inputAmount",
+          "outputAmount",
+          "minimumOutput",
+          "allInCostBps",
+          "realizedPnl",
+          "quoteSnapshotId",
+          "simulationSnapshotId",
+          "createdAt",
+          "paper"
+        ]
+      },
+      "PracticePlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          },
+          "sizeNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exitNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "CLOSED"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "closedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "outcome": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome",
+              "notes",
+              "createdAt"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "tokenAddress",
+          "thesis",
+          "sizeNote",
+          "exitNote",
+          "status",
+          "createdAt",
+          "closedAt",
+          "review"
+        ]
+      },
+      "PracticeLesson": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "done": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "done"
+              ]
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "achievements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "earned": {
+                  "type": "boolean"
+                },
+                "awardedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "code",
+                "title",
+                "description",
+                "earned",
+                "awardedAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "lessonId",
+          "steps",
+          "complete",
+          "achievements"
+        ]
+      },
+      "PracticePortfolioResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "portfolio": {
+            "$ref": "#/components/schemas/PracticePortfolio"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "portfolio"
+        ]
+      },
+      "CreatePracticePortfolioRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "balances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-fA-F]{40}$"
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                }
+              },
+              "required": [
+                "currency",
+                "amount"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 4
+          }
+        },
+        "required": [
+          "name",
+          "balances"
+        ]
+      },
+      "PracticePlanResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/PracticePlan"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "plan"
+        ]
+      },
+      "CreatePracticePlanRequest": {
+        "type": "object",
+        "properties": {
+          "tokenAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "thesis": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "sizeNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "exitNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "tokenAddress",
+          "thesis"
+        ]
+      },
+      "PracticeTradeResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "trade": {
+            "$ref": "#/components/schemas/PracticeTrade"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "trade"
+        ]
+      },
+      "CreatePracticeTradeRequest": {
+        "type": "object",
+        "properties": {
+          "quoteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "simulationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "planId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "quoteId",
+          "simulationId"
+        ]
+      },
+      "PracticeLessonResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/PracticeLesson"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "lesson"
+        ]
+      },
+      "ReviewPracticePlanRequest": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "MATCHED_PLAN",
+              "DEVIATED",
+              "STOPPED_EARLY",
+              "OTHER"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "outcome",
+          "notes"
+        ]
+      },
+      "CompareSizesRequest": {
+        "type": "object",
+        "properties": {
+          "quoteIds": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "string",
+                "format": "uuid"
+              }
+            ]
+          }
+        },
+        "required": [
+          "quoteIds"
+        ]
+      },
+      "LessonStepRequest": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string",
+            "enum": [
+              "preview-costs",
+              "track"
+            ]
+          }
+        },
+        "required": [
+          "step"
+        ]
       }
     },
     "parameters": {}
@@ -5137,6 +5762,674 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PaperPositionListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice": {
+      "get": {
+        "summary": "The signed-in user's practice portfolios (paper balances, holdings, trades, plans) and intro-lesson progress with achievements. Never a wallet balance.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Practice overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeOverviewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios": {
+      "post": {
+        "summary": "Start a practice portfolio with explicit paper balances in verified quote assets. Idempotent per Idempotency-Key.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePracticePortfolioRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePortfolioResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePortfolioResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios/{portfolioId}": {
+      "get": {
+        "summary": "One of the signed-in user's practice portfolios.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "portfolioId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Portfolio",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePortfolioResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios/{portfolioId}/plans": {
+      "post": {
+        "summary": "Record a trade plan: why, how much, and exit notes. Exit notes are never executed automatically.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "portfolioId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePracticePlanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePlanResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios/{portfolioId}/trades": {
+      "post": {
+        "summary": "Place a paper entry or exit from an unexpired quote and, optionally, its successful simulation. Buys need paper cash in the pair's currency; sells need the tokens. The real pool is not changed.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "portfolioId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePracticeTradeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeTradeResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Filled on paper",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeTradeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/plans/{planId}/review": {
+      "post": {
+        "summary": "Review a plan after its practice entry and exit.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "planId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewPracticePlanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reviewed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/lesson": {
+      "get": {
+        "summary": "Intro lesson progress, derived from what the user has actually done, and learning achievements.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lesson",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/lesson/compare-sizes": {
+      "post": {
+        "summary": "Record a comparison of two quotes for the same token and side at different sizes.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareSizesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lesson",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/lesson/steps": {
+      "post": {
+        "summary": "Mark a reading step (preview-costs, track) as done. Other steps complete by doing them.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonStepRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lesson",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
                 }
               }
             }
