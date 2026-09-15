@@ -8,7 +8,8 @@
  * practical. The query is by event topic only (CurveBuy, CurveSell) and every log is then
  * accepted only if its emitter is the curve the factory registered for a discovered token
  * (DiscoveredToken.curveAddress, taken from TokenLaunched). Any contract can emit a look-alike
- * event; those are counted and dropped, never stored.
+ * event; those are counted and dropped, never stored. So are real curves whose launch predates this
+ * database's discovery history — until discovery is backfilled, their trades are not ingested.
  *
  * Same checkpoint / reorg / discovery-before-trades discipline as tradeV2Listener.ts, barriered
  * against the V2 discovery checkpoint so a trade is never recorded for a curve discovery has not
@@ -166,7 +167,9 @@ export class CurveTradeListener {
 
     const curves = await this.loadCurves([...new Set(logsResult.data.map((l) => l.address.toLowerCase()))]);
     const { trades, foreign } = selectCurveTrades(logsResult.data, curves);
-    if (foreign > 0) this.logger.warn(`dropped ${foreign} curve-trade-shaped log(s) from contracts that are not registered Pons V2 curves (blocks ${fromBlock}-${toBlock}).`);
+    // Not proof of spoofing: a real curve whose launch predates this database's discovery history is
+    // indistinguishable here from a look-alike, and both are dropped. Backfilling discovery is the fix.
+    if (foreign > 0) this.logger.info(`dropped ${foreign} curve-trade-shaped log(s) whose emitter is not the curve of any discovered token (blocks ${fromBlock}-${toBlock}).`);
 
     const toBlockRef = await this.chainClient.getBlockRef(toBlock);
     if (toBlockRef.status === "UNAVAILABLE") {
