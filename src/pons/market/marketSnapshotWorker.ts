@@ -270,11 +270,11 @@ export function startMarketSnapshotWorker(options: SnapshotWorkerOptions & { int
   const timer = setInterval(() => {
     if (running) return;
     running = (async () => {
-      if (ticks % 30 === 0) {
-        const seeded = await seedSnapshots(options.db);
-        if (seeded > 0) options.log?.(`market snapshots: queued ${seeded} token(s)`);
-        await pruneSamples(options.db);
-      }
+      // Newly discovered tokens are queued every tick, newest first, so a launch gets its first
+      // reading within a tick or two instead of waiting behind the backlog.
+      const seeded = await seedSnapshots(options.db, 2_000);
+      if (seeded > 0) options.log?.(`market snapshots: queued ${seeded} token(s)`);
+      if (ticks % 360 === 0) await pruneSamples(options.db);
       ticks += 1;
       const s = await runSnapshotBatch(options);
       if (s.read > 0 || s.failed > 0) options.log?.(`market snapshots: ${s.ok} ok, ${s.failed} failed`);
