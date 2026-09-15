@@ -95,7 +95,13 @@ async function main(): Promise<void> {
   // they do not wait for log ingestion to reach the chain tip.
   const snapshotLogger = ponsComponentLogger("pons:market-snapshots");
   const usdRates = new ChainlinkQuoteUsdRateProvider({ chainClient });
-  const snapshots = startMarketSnapshotWorker({ db, caller: chainClient, usd: usdRates, log: (msg) => snapshotLogger.info(msg) });
+  let factoryAddress: string | undefined;
+  try {
+    factoryAddress = loadPonsV2Config().factoryAddress;
+  } catch {
+    factoryAddress = undefined;
+  }
+  const snapshots = startMarketSnapshotWorker({ db, caller: chainClient, usd: usdRates, factoryAddress, log: (msg) => snapshotLogger.info(msg) });
   // Phase 7D.4 — Trending by trade-volume surge, recomputed every minute from indexed trades.
   let trendingRunning = false;
   const trendingTimer = setInterval(() => {

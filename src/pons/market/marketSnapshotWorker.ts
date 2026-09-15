@@ -16,7 +16,9 @@ import { parseAbi } from "viem";
 import type { QuoteUsdRateProvider } from "../../candles/usdPricing";
 import type { ChainCaller } from "../chainClient";
 import { multicallAt, snapshotAt, type ContractRead, type ReadResult } from "../quote/pinnedReads";
-import { STATE_VIEW_ABI, UNISWAP_V4_ROBINHOOD } from "../quote/protocol";
+import { PONS_V2_FACTORY_ABI } from "../abiV2";
+import { PONS_MEME_HOOK_ABI, PONS_V2_PHASE, STATE_VIEW_ABI, UNISWAP_V4_ROBINHOOD } from "../quote/protocol";
+import { buildPoolKey, poolIdFor } from "../v4PoolState";
 import { lookupQuoteAsset } from "../usd/chainlinkQuoteUsdRateProvider";
 import { curveSnapshot, nextRefreshDelayMs, poolSnapshot, toUsd, type QuoteDenominatedSnapshot } from "./marketSnapshot";
 
@@ -51,6 +53,8 @@ export interface SnapshotWorkerOptions {
   caller: ChainCaller;
   usd: QuoteUsdRateProvider;
   now?: () => Date;
+  /** Pons V2 factory; lets a token that graduated after discovery's height be priced from its pool. */
+  factoryAddress?: string;
   batchTokens?: number;
   tokensPerMulticall?: number;
   log?: (msg: string) => void;
@@ -149,6 +153,76 @@ class GraduatedWithoutPool extends Error {
   }
 }
 
+class PoolUnresolved extends Error {
+  constructor(
+    message: string,
+    readonly retryMs: number
+  ) {
+    super(message);
+  }
+}
+
+type PoolResolution = { ok: true; snap: QuoteDenominatedSnapshot; tokenDecimals: number; quoteDecimals: number } | { ok: false; reason: string; retryMs: number };
+
+/**
+ * For tokens whose curve reports graduated but whose pool discovery has not recorded yet: derive
+ * the pool the way the quoter does (factory `getLaunchedToken` → PoolKey with the factory's meme
+ * hook → PoolId, verified against persisted PoolIds) and accept it only if the hook's registration
+ * names this token. Read at the same pinned block as the curve reads.
+ */
+export async function resolveGraduatedPools(caller: ChainCaller, factory: string, blockNumber: bigint, tokens: DueToken[]): Promise<Map<string, PoolResolution>> {
+  const out = new Map<string, PoolResolution>();
+  if (tokens.length === 0) return out;
+  const first = await multicallAt(caller, blockNumber, [
+    { address: factory, abi: PONS_V2_FACTORY_ABI as never, functionName: "memeHook" },
+    ...tokens.map((t) => ({ address: factory, abi: PONS_V2_FACTORY_ABI as never, functionName: "getLaunchedToken", args: [t.tokenAddress] })),
+  ]);
+  const hooks = (first[0]?.ok ? String(first[0].value) : "").toLowerCase();
+  const plans: Array<{ token: DueToken; start: number; tokenIsCurrency0: boolean; quoteIndex: number | null }> = [];
+  const reads: ContractRead[] = [];
+  tokens.forEach((t, i) => {
+    const r = first[i + 1];
+    if (!hooks || !r?.ok) return out.set(t.tokenAddress, { ok: false, reason: "factory launch record unavailable", retryMs: 5 * 60_000 });
+    const launch = r.value as { pairToken: string; poolFee: number; tickSpacing: number; phase: number; exists: boolean };
+    if (!launch.exists) return out.set(t.tokenAddress, { ok: false, reason: "factory has no launch for this token", retryMs: 6 * 3_600_000 });
+    if (Number(launch.phase) === PONS_V2_PHASE.SWEPT) return out.set(t.tokenAddress, { ok: false, reason: "graduating: curve closed, pool not created yet", retryMs: 60_000 });
+    if (Number(launch.phase) === PONS_V2_PHASE.RESCUED) return out.set(t.tokenAddress, { ok: false, reason: "graduation was rescued; no venue trades", retryMs: 6 * 3_600_000 });
+    const key = buildPoolKey({ tokenAddress: t.tokenAddress, pairToken: launch.pairToken, poolFee: Number(launch.poolFee), tickSpacing: Number(launch.tickSpacing), hooks });
+    const poolId = poolIdFor(key);
+    const start = reads.length;
+    reads.push(
+      { address: hooks, abi: PONS_MEME_HOOK_ABI, functionName: "launches", args: [poolId] },
+      { address: UNISWAP_V4_ROBINHOOD.stateView, abi: STATE_VIEW_ABI, functionName: "getSlot0", args: [poolId] },
+      { address: UNISWAP_V4_ROBINHOOD.stateView, abi: STATE_VIEW_ABI, functionName: "getLiquidity", args: [poolId] },
+      { address: t.tokenAddress, abi: ERC20_SUPPLY_ABI, functionName: "totalSupply" },
+      { address: t.tokenAddress, abi: ERC20_SUPPLY_ABI, functionName: "decimals" }
+    );
+    let quoteIndex: number | null = null;
+    if (t.quoteAddress !== NATIVE) {
+      quoteIndex = reads.length;
+      reads.push({ address: t.quoteAddress, abi: ERC20_SUPPLY_ABI, functionName: "decimals" });
+    }
+    plans.push({ token: t, start, tokenIsCurrency0: key.currency0 === t.tokenAddress.toLowerCase(), quoteIndex });
+  });
+  if (reads.length === 0) return out;
+  const r = await multicallAt(caller, blockNumber, reads);
+  for (const plan of plans) {
+    try {
+      const info = ok<readonly unknown[]>(r[plan.start]);
+      if (!info[0] || Boolean(info[1]) !== plan.tokenIsCurrency0 || String(info[2]).toLowerCase() !== plan.token.tokenAddress) {
+        out.set(plan.token.tokenAddress, { ok: false, reason: "hook registration does not match the factory record", retryMs: 30 * 60_000 });
+        continue;
+      }
+      const [sqrtPriceX96] = ok<readonly [bigint, number, number, number]>(r[plan.start + 1]);
+      const snap = poolSnapshot({ sqrtPriceX96, liquidity: ok<bigint>(r[plan.start + 2]), tokenIsCurrency0: plan.tokenIsCurrency0, totalSupply: ok<bigint>(r[plan.start + 3]) });
+      out.set(plan.token.tokenAddress, { ok: true, snap, tokenDecimals: Number(ok<number>(r[plan.start + 4])), quoteDecimals: plan.quoteIndex === null ? 18 : Number(ok<number>(r[plan.quoteIndex])) });
+    } catch (err) {
+      out.set(plan.token.tokenAddress, { ok: false, reason: `pool read failed: ${err instanceof Error ? err.message.slice(0, 80) : String(err)}`, retryMs: 5 * 60_000 });
+    }
+  }
+  return out;
+}
+
 export async function runSnapshotBatch(options: SnapshotWorkerOptions): Promise<{ read: number; ok: number; failed: number }> {
   const { db, caller, usd } = options;
   const now = (options.now ?? (() => new Date()))();
@@ -160,11 +234,20 @@ export async function runSnapshotBatch(options: SnapshotWorkerOptions): Promise<
     const chunk = due.slice(i, i + per);
     const { reads, plans } = buildReads(chunk);
     let results: ReadResult[];
+    let pools: Map<string, PoolResolution>;
     let block: { number: bigint; timestamp: bigint };
     try {
-      const snap = await snapshotAt(caller, async (b) => multicallAt(caller, b.number, reads));
+      const snap = await snapshotAt(caller, async (b) => {
+        const main = await multicallAt(caller, b.number, reads);
+        // Curves that report graduated while discovery has no pool yet: resolve their pools at this block.
+        const graduatedUnindexed = options.factoryAddress
+          ? plans.filter((p) => p.kind === "curve" && main[p.start + 5]?.ok && main[p.start + 5].ok && (main[p.start + 5] as { value: unknown }).value === true).map((p) => p.token)
+          : [];
+        return { main, pools: options.factoryAddress ? await resolveGraduatedPools(caller, options.factoryAddress, b.number, graduatedUnindexed) : new Map<string, PoolResolution>() };
+      });
       if (snap.status !== "OK" || !snap.block || !snap.data) throw new Error(`no consistent block: ${snap.failure ?? "unknown"} ${snap.detail ?? ""}`.trim());
-      results = snap.data;
+      results = snap.data.main;
+      pools = snap.data.pools;
       block = snap.block;
     } catch (err) {
       // The whole batch failed on RPC: retry soon, keep the last good values.
@@ -184,7 +267,9 @@ export async function runSnapshotBatch(options: SnapshotWorkerOptions): Promise<
       stats.read += 1;
       const t = plan.token;
       try {
-        const { snap, tokenDecimals, quoteDecimals } = interpret(plan, results);
+        const resolved = pools.get(t.tokenAddress);
+        if (resolved && !resolved.ok) throw new PoolUnresolved(resolved.reason, resolved.retryMs);
+        const { snap, tokenDecimals, quoteDecimals } = resolved?.ok ? resolved : interpret(plan, results);
         if (!rates.has(t.quoteAddress)) rates.set(t.quoteAddress, lookupQuoteAsset(t.quoteAddress) ? await usd.getHistoricalRate({ chain: "robinhood", quoteAddress: t.quoteAddress, at: blockTime }) : { status: "UNAVAILABLE", reason: "unregistered quote" });
         const rate = rates.get(t.quoteAddress)!;
         const usdValues = rate.status === "AVAILABLE" ? toUsd(snap, { token: tokenDecimals, quote: quoteDecimals }, rate.rate.rateUsdPerQuote) : null;
@@ -222,10 +307,11 @@ export async function runSnapshotBatch(options: SnapshotWorkerOptions): Promise<
         if (usdValues) await recordSampleAndChange(db, t.tokenAddress, now, usdValues.marketCapUsd, snap.priceQuoteX36);
         stats.ok += 1;
       } catch (err) {
-        const message = err instanceof GraduatedWithoutPool ? err.message : `read failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`;
+        const message = err instanceof GraduatedWithoutPool || err instanceof PoolUnresolved ? err.message : `read failed: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`;
+        const retry = err instanceof PoolUnresolved ? err.retryMs : err instanceof GraduatedWithoutPool ? 5 * 60_000 : Math.min(30 * 60_000 * 2 ** Math.min(t.unchangedReads, 4), 6 * 3_600_000);
         await db.tokenMarketSnapshot.update({
           where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: t.tokenAddress } },
-          data: { status: "FAILED", lastError: message, unchangedReads: t.unchangedReads + 1, nextRefreshAt: new Date(now.getTime() + Math.min(30 * 60_000 * 2 ** Math.min(t.unchangedReads, 4), 6 * 3_600_000)) },
+          data: { status: "FAILED", lastError: message, unchangedReads: t.unchangedReads + 1, nextRefreshAt: new Date(now.getTime() + retry) },
         });
         stats.failed += 1;
       }

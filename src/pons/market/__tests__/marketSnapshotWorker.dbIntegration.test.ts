@@ -8,7 +8,9 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { QuoteUsdRateProvider } from "../../../candles/usdPricing";
 import type { ChainCaller } from "../../chainClient";
-import { MULTICALL3_ABI, STATE_VIEW_ABI } from "../../quote/protocol";
+import { PONS_V2_FACTORY_ABI } from "../../abiV2";
+import { MULTICALL3_ABI, PONS_MEME_HOOK_ABI, STATE_VIEW_ABI } from "../../quote/protocol";
+import { buildPoolKey, poolIdFor } from "../../v4PoolState";
 import { recordSampleAndChange, runSnapshotBatch, seedSnapshots, SNAPSHOT_CURVE_ABI } from "../marketSnapshotWorker";
 
 const RUN = process.env.PONS_RUN_DB_TESTS === "true";
@@ -25,12 +27,14 @@ const POOL = "0x87c656041aa50a6e216ffdaa5a9df308bfe69751c4179ce04112a044217e26a5
 const STALE = "0x5555555555555555555555555555555555555555"; // DB says bonding, chain says graduated
 const STALE_CURVE = "0x5555555555555555555555555555555555555556";
 const NATIVE = "0x0000000000000000000000000000000000000000";
+const FACTORY = "0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e";
+const HOOK = "0x1111111111111111111111111111111111110044";
 const TOKENS = [BONDING, GRAD, STALE];
 
 type Handler = (fn: string, args: readonly unknown[]) => unknown;
 
 /** Real mainnet values from 2026-09-15 (see marketSnapshot.test.ts). */
-function chain(overrides: { reserves?: [bigint, bigint]; failRpc?: boolean } = {}): ChainCaller & { calls: number } {
+function chain(overrides: { reserves?: [bigint, bigint]; failRpc?: boolean; phase?: number; hookMemecoin?: string } = {}): ChainCaller & { calls: number } {
   const curve: Record<string, unknown> = {
     getReserves: overrides.reserves ?? [1744286899831547514n, 963144308520716522580550845n],
     realQuoteReserve: 64286899831547514n,
@@ -50,6 +54,21 @@ function chain(overrides: { reserves?: [bigint, bigint]; failRpc?: boolean } = {
     },
   };
   for (const t of TOKENS) targets[t] = { abi: ERC20, handle: (fn) => (fn === "decimals" ? 18 : 10n ** 27n) };
+  const staleKey = buildPoolKey({ tokenAddress: STALE, pairToken: NATIVE, poolFee: 10_000, tickSpacing: 200, hooks: HOOK });
+  targets[FACTORY] = {
+    abi: PONS_V2_FACTORY_ABI as Abi,
+    handle: (fn, args) =>
+      fn === "memeHook"
+        ? HOOK
+        : { token: args[0], curve: STALE_CURVE, deployer: NATIVE, creatorFeeRecipient: NATIVE, pairToken: NATIVE, graduationThreshold: 1n, poolFee: 10_000, tickSpacing: 200, creatorTaxBps: 0, buybackEnabled: false, phase: overrides.phase ?? 2, sweptQuote: 0n, sweptTokens: 0n, sweptAt: 0n, exists: true },
+  };
+  targets[HOOK] = {
+    abi: PONS_MEME_HOOK_ABI as Abi,
+    handle: (_fn, args) => {
+      const registered = args[0] === poolIdFor(staleKey);
+      return [registered, staleKey.currency0 === STALE, overrides.hookMemecoin ?? STALE, NATIVE, NATIVE, NATIVE, NATIVE, 0, 0, 0, 0, 0, false];
+    },
+  };
   const fake = {
     calls: 0,
     async getBlockNumber() {
@@ -166,5 +185,28 @@ describe.skipIf(!RUN)("market snapshot worker — real Postgres", () => {
     snap = await db.tokenMarketSnapshot.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: BONDING } } });
     expect(Number(snap.marketCapChange1hUsd)).toBe(500);
     expect(Number(snap.marketCapChange1hPct)).toBe(50);
+  });
+
+  it("prices a token that graduated after discovery's height from its derived, hook-verified pool", async () => {
+    await seedSnapshots(db);
+    const stats = await runSnapshotBatch({ db, caller: chain(), usd, factoryAddress: FACTORY });
+    expect(stats.failed).toBe(0);
+    const s = await db.tokenMarketSnapshot.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: STALE } } });
+    expect(s).toMatchObject({ status: "OK", venue: "UNISWAP_V4_POOL", graduated: true });
+    expect(s.priceQuoteX36).not.toBeNull();
+  });
+
+  it("refuses a derived pool the hook does not register for this token, and retries a sweep in progress soon", async () => {
+    await seedSnapshots(db);
+    const now = new Date();
+    await runSnapshotBatch({ db, caller: chain({ hookMemecoin: "0x9999999999999999999999999999999999999999" }), usd, factoryAddress: FACTORY, now: () => now });
+    let s = await db.tokenMarketSnapshot.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: STALE } } });
+    expect(s).toMatchObject({ status: "FAILED", lastError: "hook registration does not match the factory record", priceQuoteX36: null });
+
+    await db.tokenMarketSnapshot.updateMany({ where: { tokenAddress: STALE }, data: { nextRefreshAt: now } });
+    await runSnapshotBatch({ db, caller: chain({ phase: 1 }), usd, factoryAddress: FACTORY, now: () => now });
+    s = await db.tokenMarketSnapshot.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: STALE } } });
+    expect(s).toMatchObject({ status: "FAILED", lastError: "graduating: curve closed, pool not created yet" });
+    expect(s.nextRefreshAt!.getTime() - now.getTime()).toBe(60_000);
   });
 });
