@@ -97,6 +97,23 @@ describe("ChainlinkQuoteUsdRateProvider", () => {
     expect(result.status === "UNAVAILABLE" && result.reason).toMatch(/not reachable/);
   });
 
+  it("retries a transient round read instead of turning a rate limit into missing USD", async () => {
+    const { reader } = fakeFeed({ rounds });
+    let failures = 1;
+    const flaky: ChainReader = {
+      ...reader,
+      readContract: (async (p: { functionName: string }) => {
+        if (p.functionName === "getRoundData" && failures > 0) {
+          failures -= 1;
+          return fail("rate limit exceeded");
+        }
+        return (reader.readContract as (x: unknown) => Promise<unknown>)(p);
+      }) as ChainReader["readContract"],
+    };
+    const result = await new ChainlinkQuoteUsdRateProvider({ chainClient: flaky, now: () => NOW, retryDelayMs: 0 }).getHistoricalRate({ ...ETH, at: new Date((NOW - 15_000) * 1000) });
+    expect(result.status).toBe("AVAILABLE");
+  });
+
   it("caches settled rounds so repeated lookups do not re-read the chain", async () => {
     const { reader, calls } = fakeFeed({ rounds });
     const provider = new ChainlinkQuoteUsdRateProvider({ chainClient: reader, now: () => NOW });

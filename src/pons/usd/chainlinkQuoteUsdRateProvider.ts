@@ -93,6 +93,8 @@ export interface ChainlinkProviderOptions {
   maxChainStallSec?: number;
   /** Cap on rounds walked back per lookup. */
   maxRoundWalk?: number;
+  /** Base delay between retries of a failed round read. */
+  retryDelayMs?: number;
   now?: () => number;
 }
 
@@ -102,6 +104,7 @@ export class ChainlinkQuoteUsdRateProvider implements QuoteUsdRateProvider {
   private readonly maxChainStallSec: number;
   private readonly maxRoundWalk: number;
   private readonly now: () => number;
+  private readonly retryDelayMs: number;
   private readonly verified = new Map<string, Promise<string | null>>();
   private readonly rounds = new Map<string, Map<bigint, Round>>();
 
@@ -110,6 +113,7 @@ export class ChainlinkQuoteUsdRateProvider implements QuoteUsdRateProvider {
     this.maxChainStallSec = options.maxChainStallSec ?? 300;
     this.maxRoundWalk = options.maxRoundWalk ?? 2_000;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1000));
+    this.retryDelayMs = options.retryDelayMs ?? 1_000;
   }
 
   async getHistoricalRate(params: { chain: string; quoteAddress: string; at: Date }): Promise<QuoteUsdRateResult> {
@@ -186,19 +190,32 @@ export class ChainlinkQuoteUsdRateProvider implements QuoteUsdRateProvider {
     return age > this.maxChainStallSec ? `chain has not produced a block for ${age}s; prices may be stale (possible sequencer outage)` : null;
   }
 
+  private readonly latest = new Map<string, { round: Round; readAt: number }>();
+
   private async readRound(feed: RegistryFeed, roundId: bigint | "latest"): Promise<Round | string> {
     const cache = this.rounds.get(feed.proxy) ?? new Map<bigint, Round>();
     this.rounds.set(feed.proxy, cache);
     if (roundId !== "latest" && cache.has(roundId)) return cache.get(roundId)!;
-    const r =
-      roundId === "latest"
-        ? await this.chainClient.readContract<RoundTuple>({ address: feed.proxy, abi: AGGREGATOR_V3_ABI, functionName: "latestRoundData", args: [] })
-        : await this.chainClient.readContract<RoundTuple>({ address: feed.proxy, abi: AGGREGATOR_V3_ABI, functionName: "getRoundData", args: [roundId] });
-    if (r.status !== "AVAILABLE") return `${feed.name} round ${roundId.toString()} unavailable`;
-    const round = { roundId: BigInt(r.data[0]), answer: BigInt(r.data[1]), updatedAt: Number(r.data[3]) };
-    // The latest round can still move; only settled historical rounds are cached.
-    if (roundId !== "latest") cache.set(round.roundId, round);
-    return round;
+    // The latest round moves, so it is only reused briefly. Candles value thousands of trades per
+    // tick; re-reading it for each one turned RPC rate limits into missing USD.
+    const recent = roundId === "latest" ? this.latest.get(feed.proxy) : undefined;
+    if (recent && this.now() - recent.readAt < 30) return recent.round;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r =
+        roundId === "latest"
+          ? await this.chainClient.readContract<RoundTuple>({ address: feed.proxy, abi: AGGREGATOR_V3_ABI, functionName: "latestRoundData", args: [] })
+          : await this.chainClient.readContract<RoundTuple>({ address: feed.proxy, abi: AGGREGATOR_V3_ABI, functionName: "getRoundData", args: [roundId] });
+      if (r.status === "AVAILABLE") {
+        const round = { roundId: BigInt(r.data[0]), answer: BigInt(r.data[1]), updatedAt: Number(r.data[3]) };
+        if (roundId === "latest") this.latest.set(feed.proxy, { round, readAt: this.now() });
+        else cache.set(round.roundId, round); // settled historical rounds never change
+        return round;
+      }
+      if (/revert/i.test(r.reason)) break; // a missing round reverts everywhere; retrying will not help
+      await new Promise((resolve) => setTimeout(resolve, this.retryDelayMs * (attempt + 1)));
+    }
+    return `${feed.name} round ${roundId.toString()} unavailable`;
   }
 
   /** The last round whose updatedAt <= at, walking back from the latest within the current phase. */
