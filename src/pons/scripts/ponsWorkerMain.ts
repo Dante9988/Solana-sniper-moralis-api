@@ -21,6 +21,7 @@ import { TradeListener } from "../tradeListener";
 import { GraduationPoller } from "../graduationPoller";
 import { DiscoveryV2Listener } from "../discoveryV2Listener";
 import { TradeV2Listener } from "../tradeV2Listener";
+import { CurveTradeListener } from "../curveTradeListener";
 import { ponsLogger, ponsComponentLogger } from "../logger";
 
 async function main(): Promise<void> {
@@ -43,13 +44,24 @@ async function main(): Promise<void> {
   // is a real event, read in the same tick as discovery.
   let discoveryV2Listener: DiscoveryV2Listener | null = null;
   let tradeV2Listener: TradeV2Listener | null = null;
+  let curveTradeListener: CurveTradeListener | null = null;
   try {
     const v2Config = loadPonsV2Config();
     discoveryV2Listener = new DiscoveryV2Listener({ chainClient, db, config, v2Config, logger: ponsComponentLogger("pons:discovery-v2") });
     tradeV2Listener = new TradeV2Listener({ chainClient, db, config, v2Config, logger: ponsComponentLogger("pons:trades-v2") });
+    // Phase 7D.4 §3 — pre-graduation bonding-curve trades.
+    const curveStart = process.env.PONS_CURVE_TRADES_START_HEIGHT?.trim();
+    curveTradeListener = new CurveTradeListener({
+      chainClient,
+      db,
+      config,
+      startHeight: curveStart ? BigInt(curveStart) : undefined,
+      logger: ponsComponentLogger("pons:curve-trades"),
+    });
     discoveryV2Listener.start();
     tradeV2Listener.start();
-    ponsLogger.info("started discovery, trade, graduation, and pons_v2 discovery/trade loops");
+    curveTradeListener.start();
+    ponsLogger.info("started discovery, trade, graduation, and pons_v2 discovery/trade/curve-trade loops");
   } catch (err) {
     if (err instanceof PonsConfigError) {
       ponsLogger.warn({ reason: err.message }, "PONS_V2_FACTORY not configured — skipping Pons V2 (Uniswap V4) ingestion");
@@ -69,12 +81,14 @@ async function main(): Promise<void> {
     graduationPoller.stop();
     discoveryV2Listener?.stop();
     tradeV2Listener?.stop();
+    curveTradeListener?.stop();
     await Promise.all([
       discoveryListener.waitForIdle(),
       tradeListener.waitForIdle(),
       graduationPoller.waitForIdle(),
       discoveryV2Listener?.waitForIdle() ?? Promise.resolve(),
       tradeV2Listener?.waitForIdle() ?? Promise.resolve(),
+      curveTradeListener?.waitForIdle() ?? Promise.resolve(),
     ]);
     await db.$disconnect();
     process.exit(0);

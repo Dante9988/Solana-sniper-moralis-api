@@ -114,6 +114,16 @@ export interface ChainReader {
 }
 
 /** Phase 7D.3.2 — a raw `eth_call`, always at an explicit block. */
+/**
+ * Phase 7D.4 §3 — logs for several events in one query, optionally without an address filter.
+ * Used where the emitters are too many to list (one bonding curve per launch); callers must then
+ * check each log's emitter themselves. Separate from ChainReader.getLogs so existing readers and
+ * test doubles are unaffected.
+ */
+export interface EventLogReader {
+  getLogsByEvents(params: { events: readonly import("viem").AbiEvent[]; fromBlock: bigint; toBlock: bigint; address?: string | string[] }): Promise<ChainClientResult<RawEvmLog[]>>;
+}
+
 export interface EthCallParams {
   to: string;
   data: Hex;
@@ -150,7 +160,7 @@ function revertDataOf(err: unknown): Hex {
   return "0x";
 }
 
-export class PonsChainClient implements ChainCaller {
+export class PonsChainClient implements ChainCaller, EventLogReader {
   private readonly client: PublicClient;
   private readonly requestTimeoutMs: number;
   private readonly maxRetries: number;
@@ -241,6 +251,26 @@ export class PonsChainClient implements ChainCaller {
         toBlock: params.toBlock,
       });
       return logs.map((log) => ({
+        address: log.address,
+        topics: log.topics,
+        data: log.data,
+        blockNumber: log.blockNumber as bigint,
+        blockHash: log.blockHash as string,
+        transactionHash: log.transactionHash as string,
+        logIndex: log.logIndex as number,
+      }));
+    });
+  }
+
+  async getLogsByEvents(params: { events: readonly import("viem").AbiEvent[]; fromBlock: bigint; toBlock: bigint; address?: string | string[] }): Promise<ChainClientResult<RawEvmLog[]>> {
+    return this.withRetry(async () => {
+      const logs = await this.client.getLogs({
+        ...(params.address ? { address: params.address as `0x${string}` | `0x${string}`[] } : {}),
+        events: params.events,
+        fromBlock: params.fromBlock,
+        toBlock: params.toBlock,
+      } as never);
+      return (logs as Array<{ address: string; topics: `0x${string}`[]; data: `0x${string}`; blockNumber: bigint | null; blockHash: string | null; transactionHash: string | null; logIndex: number | null }>).map((log) => ({
         address: log.address,
         topics: log.topics,
         data: log.data,

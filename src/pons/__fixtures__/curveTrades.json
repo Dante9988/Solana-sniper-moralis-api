@@ -1,0 +1,156 @@
+{
+  "source": {
+    "description": "Real PonsV2BondingCurve CurveBuy/CurveSell logs from Robinhood Chain mainnet, raw as returned by eth_getLogs.",
+    "capturedAt": "2026-09-15T01:48:20.624Z",
+    "chainId": 4663,
+    "abiSource": "https://sourcify.dev/server/v2/contract/4663/0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e (PonsV2LaunchFactory bundle, contracts/src/v2/PonsV2BondingCurve.sol; creation+runtime exact_match; solc 0.8.35+commit.47b9dedd; verifiedAt 2026-08-04T17:40:43Z; accessed 2026-09-15)",
+    "emitterCheck": "For every row, factory.getLaunchedToken(curve.token()).curve == log.address (emitterIsFactoryCurve).",
+    "note": "All captured buys were routed (tx.to != curve), so tx.value includes router fees and cannot cross-check quoteIn; quoteIn is `spent` per the verified source (buy() line 518)."
+  },
+  "rows": [
+    {
+      "event": "CurveBuy",
+      "emitter": "0x9eb61066551232f6e4efdc26922ddc0a29009405",
+      "token": "0xf40BCD868C1C3D91023cED508d16d0611E2Ef371",
+      "factoryCurve": "0x9eb61066551232F6e4eFdc26922dDC0a29009405",
+      "pairToken": "0x0000000000000000000000000000000000000000",
+      "emitterIsFactoryCurve": true,
+      "blockTimestamp": 1789436691,
+      "log": {
+        "address": "0x9eb61066551232f6e4efdc26922ddc0a29009405",
+        "topics": [
+          "0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455",
+          "0x0000000000000000000000009689992f5b5c09447f15906d8d11214944488341",
+          "0x0000000000000000000000009689992f5b5c09447f15906d8d11214944488341"
+        ],
+        "data": "0x000000000000000000000000000000000000000000000000015fb7f9b8c3800000000000000000000000000000000000000000000004c9f884d42a284c319726000000000000000000000000000000000000000000000000000384665653e000000000000000000000000000000000000000000000000000000384665653e000",
+        "blockNumber": "63277839",
+        "blockHash": "0x4ecd92325acc378fdd877c2832068cfede9eb771e6be30103aeebc4a0be9b86d",
+        "transactionHash": "0x266371fc34c7a2f9c5997c0a92f81be1a233dfd8b66144349a04912e7641795b",
+        "logIndex": 1
+      },
+      "txValue": "100100000000000000",
+      "txTo": "0x9689992f5b5c09447f15906d8d11214944488341",
+      "directCurveCall": false,
+      "refund": "0"
+    },
+    {
+      "event": "CurveBuy",
+      "emitter": "0x993476df94cde46c6bae5caf73a5db7c018adc14",
+      "token": "0xC5273AA850f5b319C8dC194512576589FdbAD895",
+      "factoryCurve": "0x993476dF94cde46c6bAe5cAf73a5dB7c018Adc14",
+      "pairToken": "0x0000000000000000000000000000000000000000",
+      "emitterIsFactoryCurve": true,
+      "blockTimestamp": 1789436692,
+      "log": {
+        "address": "0x993476df94cde46c6bae5caf73a5db7c018adc14",
+        "topics": [
+          "0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455",
+          "0x000000000000000000000000424602e4baf4e27d8c22bb6bec0dc4a58e174a6c",
+          "0x000000000000000000000000424602e4baf4e27d8c22bb6bec0dc4a58e174a6c"
+        ],
+        "data": "0x0000000000000000000000000000000000000000000000000035717a67a0303a000000000000000000000000000000000000000000015b964c2d4344d49922a4000000000000000000000000000000000000000000000000000088d0958429710000000000000000000000000000000000000000000000000000000000000000",
+        "blockNumber": "63277842",
+        "blockHash": "0x2bb7f8cad1a916bb9a934b81742b4d9cdaa833164be0ccbc5d1e4427c365e6dc",
+        "transactionHash": "0x64546c33f4d4ec4fa20892421a594248d8b90609478a7adf3803cf73266300fb",
+        "logIndex": 147
+      },
+      "txValue": "0",
+      "txTo": "0x424602e4baf4e27d8c22bb6bec0dc4a58e174a6c",
+      "directCurveCall": false,
+      "refund": "0"
+    },
+    {
+      "event": "CurveBuy",
+      "emitter": "0x21c5cdcd7ad968c10b462239dbb7146e28d71ae8",
+      "token": "0xabB0617d2B865390AD53eA70D8a4E9E27F6D144c",
+      "factoryCurve": "0x21c5cDcd7aD968C10B462239dBB7146E28d71AE8",
+      "pairToken": "0x0000000000000000000000000000000000000000",
+      "emitterIsFactoryCurve": true,
+      "blockTimestamp": 1789436692,
+      "log": {
+        "address": "0x21c5cdcd7ad968c10b462239dbb7146e28d71ae8",
+        "topics": [
+          "0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455",
+          "0x0000000000000000000000009689992f5b5c09447f15906d8d11214944488341",
+          "0x0000000000000000000000009689992f5b5c09447f15906d8d11214944488341"
+        ],
+        "data": "0x000000000000000000000000000000000000000000000000015fb7f9b8c3800000000000000000000000000000000000000000000009b65d1a0531ca751d2618000000000000000000000000000000000000000000000000000384665653e0000000000000000000000000000000000000000000000000000000000000000000",
+        "blockNumber": "63277843",
+        "blockHash": "0xf082732a3c6c12c640ada1a224636a2dde45103bb5dd3aa991a51e6c91159845",
+        "transactionHash": "0x07b4dffed0a575a3c3c8a9645cdf0f4f22aff24e0b55687ccaf98e4d645c1bf1",
+        "logIndex": 38
+      },
+      "txValue": "101000000000000000",
+      "txTo": "0x9689992f5b5c09447f15906d8d11214944488341",
+      "directCurveCall": false,
+      "refund": "0"
+    },
+    {
+      "event": "CurveSell",
+      "emitter": "0x43172aec856ebd015da020b52c7e113b6dc6f020",
+      "token": "0xd63dD57a29Cc4CDD48F8C5187A196281b50D9628",
+      "factoryCurve": "0x43172aEC856EBD015da020B52c7e113B6dC6F020",
+      "pairToken": "0x0000000000000000000000000000000000000000",
+      "emitterIsFactoryCurve": true,
+      "blockTimestamp": 1789436692,
+      "log": {
+        "address": "0x43172aec856ebd015da020b52c7e113b6dc6f020",
+        "topics": [
+          "0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df",
+          "0x00000000000000000000000066c5f2884976a895eb13c48b7e89e6479d5a5ce7",
+          "0x00000000000000000000000066c5f2884976a895eb13c48b7e89e6479d5a5ce7"
+        ],
+        "data": "0x000000000000000000000000000000000000000000065cd281ad17001ef75d630000000000000000000000000000000000000000000000000039f9b2603ab10f00000000000000000000000000000000000000000000000000009772258da8fd00000000000000000000000000000000000000000000000000009772258da8fd",
+        "blockNumber": "63277842",
+        "blockHash": "0x2bb7f8cad1a916bb9a934b81742b4d9cdaa833164be0ccbc5d1e4427c365e6dc",
+        "transactionHash": "0x5948ae5b587590c49a2a2bcf5ec39e1d7628f052ce14663699632f81682c8c8d",
+        "logIndex": 150
+      }
+    },
+    {
+      "event": "CurveSell",
+      "emitter": "0x21c5cdcd7ad968c10b462239dbb7146e28d71ae8",
+      "token": "0xabB0617d2B865390AD53eA70D8a4E9E27F6D144c",
+      "factoryCurve": "0x21c5cDcd7aD968C10B462239dBB7146E28d71AE8",
+      "pairToken": "0x0000000000000000000000000000000000000000",
+      "emitterIsFactoryCurve": true,
+      "blockTimestamp": 1789436692,
+      "log": {
+        "address": "0x21c5cdcd7ad968c10b462239dbb7146e28d71ae8",
+        "topics": [
+          "0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df",
+          "0x0000000000000000000000006aa80dbbed9ae5ab45fbf61f9644fada3b29326e",
+          "0x0000000000000000000000006aa80dbbed9ae5ab45fbf61f9644fada3b29326e"
+        ],
+        "data": "0x0000000000000000000000000000000000000000000548230d60e79ff1696c6300000000000000000000000000000000000000000000000000b939a11f35a9cf0000000000000000000000000000000000000000000000000001def748b823540000000000000000000000000000000000000000000000000000000000000000",
+        "blockNumber": "63277843",
+        "blockHash": "0xf082732a3c6c12c640ada1a224636a2dde45103bb5dd3aa991a51e6c91159845",
+        "transactionHash": "0xae4f5c315f224ccf3ebf2897b2bb824e8299b0892ea2fddccea4440abf0ac5a4",
+        "logIndex": 7
+      }
+    },
+    {
+      "event": "CurveSell",
+      "emitter": "0x993476df94cde46c6bae5caf73a5db7c018adc14",
+      "token": "0xC5273AA850f5b319C8dC194512576589FdbAD895",
+      "factoryCurve": "0x993476dF94cde46c6bAe5cAf73a5dB7c018Adc14",
+      "pairToken": "0x0000000000000000000000000000000000000000",
+      "emitterIsFactoryCurve": true,
+      "blockTimestamp": 1789436692,
+      "log": {
+        "address": "0x993476df94cde46c6bae5caf73a5db7c018adc14",
+        "topics": [
+          "0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df",
+          "0x000000000000000000000000899a12bfacbb0d62aa4efde575ecc0a9c4d49ff2",
+          "0x000000000000000000000000899a12bfacbb0d62aa4efde575ecc0a9c4d49ff2"
+        ],
+        "data": "0x0000000000000000000000000000000000000000000324a07e73c20729fc70c10000000000000000000000000000000000000000000000000078a647bffa1747000000000000000000000000000000000000000000000000000137fb8d9355910000000000000000000000000000000000000000000000000000000000000000",
+        "blockNumber": "63277843",
+        "blockHash": "0xf082732a3c6c12c640ada1a224636a2dde45103bb5dd3aa991a51e6c91159845",
+        "transactionHash": "0x7fa88c5159e2b6491f307f0fb6ba66098fb9dc1847c7f1065e825470eb644c25",
+        "logIndex": 20
+      }
+    }
+  ]
+}

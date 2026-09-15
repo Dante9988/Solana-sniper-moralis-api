@@ -22,6 +22,7 @@
 import type { Abi, AbiEvent } from "viem";
 
 import {
+  type EventLogReader,
   PonsChainClient,
   type ChainCaller,
   type ChainClientResult,
@@ -107,7 +108,7 @@ function extractHttpDetails(error: unknown): { status?: number; retryAfter?: str
   return { status, retryAfter, message, code };
 }
 
-export class FailoverChainClient implements ChainCaller {
+export class FailoverChainClient implements ChainCaller, EventLogReader {
   private readonly entries: EndpointEntry[];
   private readonly config: RobinhoodChainConfig;
   private readonly perEndpointRetries: number;
@@ -412,6 +413,14 @@ export class FailoverChainClient implements ChainCaller {
     args?: Record<string, unknown>;
   }): Promise<ChainClientResult<RawEvmLog[]>> {
     return this.run((client) => client.getLogs(params));
+  }
+
+  getLogsByEvents(params: { events: readonly AbiEvent[]; fromBlock: bigint; toBlock: bigint; address?: string | string[] }): Promise<ChainClientResult<RawEvmLog[]>> {
+    return this.run((client) =>
+      typeof (client as Partial<EventLogReader>).getLogsByEvents === "function"
+        ? (client as unknown as EventLogReader).getLogsByEvents(params)
+        : Promise.resolve({ status: "UNAVAILABLE" as const, source: "robinhood-chain-rpc", fetchedAt: new Date(), code: "RPC_ERROR" as const, reason: "client does not implement getLogsByEvents", attempts: 1 })
+    );
   }
 
   readContract<T>(params: {
