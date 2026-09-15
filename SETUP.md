@@ -1,3 +1,9 @@
+> **Legacy document (March 2025).** A server setup guide for the original sniper bot.
+> The database name, users and process manager below are historical, and the first step
+> (`git reset --hard`) discards local work. For the current local stack (PostgreSQL 16,
+> `prisma migrate deploy`, `scripts/dev-stack.sh`, the frontend), use
+> [RUNBOOK.md](./RUNBOOK.md) and [README.md](./README.md).
+
 # Server Setup Guide
 
 ## 1. Repository Setup

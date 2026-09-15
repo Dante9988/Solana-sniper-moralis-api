@@ -1,3 +1,10 @@
+> **Legacy document (May 2025).** This describes the old standalone status/WebSocket server
+> (`npm run api:server`, `src/api-server.ts`) and the bot's optional `src/api/index.ts`. It is
+> **not** the OnlyPump `/api/v1` gateway the web app uses (`npm run api`, port 8787). For
+> that, see [ARCHITECTURE.md](./ARCHITECTURE.md) §16 and §25 and [RUNBOOK.md](./RUNBOOK.md).
+> Note that `src/api/index.ts` is now off by default and bearer-authenticated
+> (ARCHITECTURE.md §8.3). The `yarn` commands below work as `npm run`.
+
 # Solana Sniper Bot API
 
 This document explains how to use the API server included with the Solana Sniper Bot.
