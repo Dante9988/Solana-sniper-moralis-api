@@ -164,6 +164,10 @@ DATABASE_URL=postgresql://…/ci_local_test npx prisma migrate deploy
 DATABASE_URL=postgresql://…/ci_local_test PAPER_RUN_DB_TESTS=true npx vitest run --no-file-parallelism
 ```
 
+**Inspect the database through `DATABASE_URL`, not `docker exec`.** On this machine the listed
+`solana-sniper-postgres` container is *not* the app's database; the app reaches a different
+Postgres at the same IP (ARCHITECTURE.md §26.4). Use `psql "$DATABASE_URL"` or Prisma.
+
 Fork verification (`evm-verification/scripts/fork-verify.sh`) needs Foundry 1.8.1 and an
 archive RPC; see `evm-verification/README.md`.
 

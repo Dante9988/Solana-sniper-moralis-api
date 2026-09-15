@@ -15,7 +15,7 @@
 
 > **Phase 7F.2 update (§22):** three startup defects were fixed here — a Telegram bot token printed to stdout on every boot (**rotate any token that booted the old code**), every periodic check registered twice so **each PnL card posted to Discord twice**, and a second `client.login()` in `main()` that hung forever and silently skipped everything after it. Running this repo locally with the *production* `TELEGRAM_BOT_TOKEN` will also fight the production instance for Telegram's polling lock (`409 Conflict`); use a separate test bot or leave Telegram unset.
 
-> **Phase 7D.3.3 update (§26):** the `*.dbIntegration` suites delete checkpoints and run reorg recovery against a fake chain. On 2026-09-14 they were run against the local development database (`solana_bot`) and marked 11,977 real Pons V2 launches `ORPHANED`, wiping their graduation data. A vitest global setup now refuses any `*_RUN_DB_TESTS` flag unless the database name looks disposable. The damaged local rows are not yet repaired (§26.4). To run the product locally (API, workers, frontend), follow [RUNBOOK.md](./RUNBOOK.md), not `npm run dev`.
+> **Phase 7D.3.3 update (§26):** the `*.dbIntegration` suites delete checkpoints and run reorg recovery against a fake chain. On 2026-09-14 they were run against the local development database (`solana_bot`) and marked 11,977 real Pons V2 launches `ORPHANED`, wiping their graduation data. A vitest global setup now refuses any `*_RUN_DB_TESTS` flag unless the database name looks disposable. The damaged rows were repaired on 2026-09-15 (§26.4). To run the product locally (API, workers, frontend), follow [RUNBOOK.md](./RUNBOOK.md), not `npm run dev`.
 
 This section exists because the single most important fact about the current state of this repository does not fit anywhere else without getting lost: `npm run dev` starts a live Telegram trading bot alongside everything it already did. **As of this snapshot, that bot is non-custodial** (trades are approved in the user's own wallet app — see §8.2) **and its trading commands are allowlisted** (§8.6); its HTTP server (`src/api/index.ts`) is **off by default** and, when enabled, requires a bearer token on every `/api/*` route (§8.3). Full detail is in §8 — read it before changing any of that, and definitely before running with `API_ENABLED=true` on a network-reachable host.
 
@@ -784,7 +784,7 @@ Never commit real values. Never log API keys. **`PRIV_KEY_WALLET` is still a liv
 
 **New since Phase 7D.3.2 (see §25.8, §26.4 for detail):**
 
-12. The local development database still carries 11,977 Pons V2 rows wrongly marked `ORPHANED` by a DB test run (§26.4). Repair is planned but not approved.
+12. ~~The local development database carried 11,977 Pons V2 rows wrongly marked `ORPHANED` by a DB test run.~~ Repaired 2026-09-15 (§26.4). Still open: V2 discovery lags ~1.6M blocks with 10-block polls, so V2 trades and candles are not ingested (§26.4).
 13. Progressive token enrichment via `alchemy_getTokenMetadata` is **pending**: the method works on the third Alchemy key but is not wired in; enrichment uses standard ERC-20 reads through failover (§26.2).
 14. A signed-out Supabase access token keeps verifying until it expires (Supabase design); the API does not check `auth.sessions`.
 15. `GET /api/v1/media/token-logos/robinhood/:token` is not in the OpenAPI document; public IPFS gateways rate-limit (429) and delay logos.
@@ -1877,19 +1877,23 @@ Evidence is in `only-pump-me/docs/phase-7d3-2/auth/` (screenshots, `auth-journey
 - **`.env` handling:** it reads `.env` without loading it into `process.env`.
 - **CI:** the database `ci_migrate_test` passes the rule, and CI now also runs `PAPER_RUN_DB_TESTS`.
 
-### 26.4 Why SMA and ~12k other launches show `ORPHANED` locally
+### 26.4 The `ORPHANED` incident, and its repair
 
-**This is not a chain event.** On 2026-09-14 at 00:41:06Z the DB integration suites were run against the development database `solana_bot`.
-- **Damage:** they deleted checkpoints and ran reorg recovery against a fake chain. That marked **11,977** Pons V2 `DiscoveredToken` rows `ORPHANED` and cleared graduation data; locally, graduated pools dropped from 164 to 31.
-- **Evidence the rows are canonical:** 40 of 40 sampled rows still match canonical block hashes.
-- **Why it won't self-heal:** the worker only re-examines heights above its checkpoint, which is about 61.47M.
+**This was not a chain event.** On 2026-09-14 at 00:41:06Z the DB integration suites were run against the development database `solana_bot`. They deleted checkpoints and ran reorg recovery against a fake chain. That marked **11,977** Pons V2 `DiscoveredToken` rows `ORPHANED` and cleared their graduation data (SMA among them). The worker could not heal them, because it only re-examines heights above its checkpoint.
 
-**Proposed repair (awaiting approval):**
-1. Take a `pg_dump`.
-2. Stop the Pons worker.
-3. Re-verify each row's source hash against the chain and restore `CANONICAL`.
-4. Re-derive graduation fields from `PoolGraduated` events.
-5. Dry-run first.
+**Repaired 2026-09-15** with `src/pons/scripts/repairTestOrphanedTokens.ts` (dry run by default, `--apply` writes in one transaction, unit-tested matching rule):
+
+1. **Backup:** `pg_dump` taken first (`/root/db-backups/solana_bot-LIVE-…-pre-orphan-repair-*.dump`, 54 MB, outside the repo). All workers stopped.
+2. **Canonicality:** the factory's `TokenLaunched` and `PoolGraduated` logs were re-scanned over blocks 60,947,510–61,639,952 in 10,000-block chunks via `DEAFULT_RPC_HTTPS`, the only endpoint that accepts wide ranges. 40 of 40 sampled block hashes agreed with a second provider.
+3. **Restore rule:** a row returned to `CANONICAL` only if its exact launch log matched: block number, block hash, tx hash, log index and token. Result: **11,977 of 11,977** matched; 0 remain orphaned.
+4. **Graduations:** re-derived the way `DiscoveryV2Listener` derives them (`PoolGraduated` plus the `Initialize` log in the same block). **206 filled**, 48 already correct, 0 disagreements. 13 graduations belong to tokens launched before this database's history.
+5. **Test junk:** two `CandleInvalidation` rows for the fixture token `0x4444…444d` were deleted.
+
+**After:** 15,275 of 15,275 V2 tokens are `CANONICAL`, 254 are graduated, and all 254 have a PoolId.
+
+**Operational finding:** the app's `DATABASE_URL` (`localhost:5432`) reaches a Debian PostgreSQL 16.15 server running in a container that `docker ps` does not list; `ctr -n moby containers ls` shows it. It shares IP `172.17.0.2` with the unrelated, listed `solana-sniper-postgres` (Alpine) container. `docker exec solana-sniper-postgres psql …` therefore inspects a **different, stale database**. Always inspect through `DATABASE_URL`.
+
+**Found while restarting (Phase 7D.4 scope):** V2 trade ingestion is barriered behind V2 discovery, which is ~1.6M blocks behind the tip because `PONS_MAX_BLOCK_RANGE_PER_POLL=10`. The Alchemy endpoints reject wider `eth_getLogs` ranges. Until discovery log scans use an endpoint that accepts wide ranges, no V2 trades or candles are ingested.
 
 ### 26.5 Test counts, reconciled
 

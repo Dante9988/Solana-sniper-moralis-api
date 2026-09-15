@@ -273,7 +273,7 @@ As of 2026-09-14:
 
 ## 🚧 Known limitations and next work
 
-- **Damaged local data:** the local dev database has ~12k Pons V2 rows wrongly marked `ORPHANED` by a DB test run. Repair awaits approval (`ARCHITECTURE.md` §26.4).
+- **V2 trade ingestion stalls:** Pons V2 discovery polls 10 blocks at a time and is far behind the tip, so V2 trades and candles are not ingested (`ARCHITECTURE.md` §26.4). The earlier `ORPHANED` data damage was repaired on 2026-09-15.
 - **Unsupported quote paths:** Swept, Rescued and Pons V1 tokens, and trades inside the 3-second snipe window.
 - **No USD pricing on Robinhood Chain.**
 - **Enrichment via `alchemy_getTokenMetadata` is pending.**
