@@ -4182,6 +4182,210 @@
         "required": [
           "step"
         ]
+      },
+      "VanityAvailability": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "integer",
+            "description": "Addresses that can be reserved now."
+          },
+          "suffix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "chain",
+          "supported",
+          "available",
+          "suffix",
+          "reason"
+        ]
+      },
+      "ActiveVanityReservationResponse": {
+        "type": "object",
+        "properties": {
+          "reservation": {
+            "$ref": "#/components/schemas/VanityHandoffV1"
+          }
+        },
+        "required": [
+          "reservation"
+        ]
+      },
+      "VanityHandoffV1": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "version": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "reservationId": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "string",
+            "enum": [
+              "solana"
+            ]
+          },
+          "address": {
+            "type": "string"
+          },
+          "generationType": {
+            "type": "string",
+            "enum": [
+              "ed25519-keypair-suffix"
+            ]
+          },
+          "suffix": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESERVED",
+              "CONSUMED",
+              "EXPIRED",
+              "RELEASED"
+            ]
+          },
+          "reservedAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "consumedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deployed": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "Always false: a reservation is not a token. Deployment is confirmed on chain, elsewhere."
+          },
+          "deployment": {
+            "type": "object",
+            "properties": {
+              "program": {
+                "type": "string",
+                "enum": [
+                  "pump.fun"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "mint"
+                ]
+              },
+              "requiresServerSigner": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "program",
+              "role",
+              "requiresServerSigner",
+              "note"
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "reservationId",
+          "chain",
+          "address",
+          "generationType",
+          "suffix",
+          "status",
+          "reservedAt",
+          "expiresAt",
+          "consumedAt",
+          "deployed",
+          "deployment"
+        ]
+      },
+      "VanityReservationResponse": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "reservation": {
+            "$ref": "#/components/schemas/VanityHandoffV1"
+          }
+        },
+        "required": [
+          "created",
+          "reservation"
+        ]
+      },
+      "ReserveVanityRequest": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "solana",
+              "robinhood"
+            ]
+          }
+        },
+        "required": [
+          "chain"
+        ]
+      },
+      "ConsumeVanityResponse": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "reservation": {
+            "$ref": "#/components/schemas/VanityHandoffV1"
+          },
+          "secretRef": {
+            "type": "string",
+            "description": "Opaque server-side keystore reference for the launch signer. Internal callers only."
+          }
+        },
+        "required": [
+          "created",
+          "reservation",
+          "secretRef"
+        ]
       }
     },
     "parameters": {}
@@ -6435,6 +6639,356 @@
             }
           },
           "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vanity/availability": {
+      "get": {
+        "summary": "How many vanity mint addresses can be reserved on a chain, or why the chain has none.",
+        "tags": [
+          "vanity"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "solana",
+                "robinhood"
+              ],
+              "default": "solana"
+            },
+            "required": false,
+            "name": "chain",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VanityAvailability"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/vanity/reservation": {
+      "get": {
+        "summary": "The caller's live (or consumed) reservation on a chain, if any.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "solana",
+                "robinhood"
+              ],
+              "default": "solana"
+            },
+            "required": false,
+            "name": "chain",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reservation or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveVanityReservationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/vanity/reservations": {
+      "post": {
+        "summary": "Reserve a vanity mint address for 15 minutes. Idempotent on the Idempotency-Key header; one live reservation per user.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReserveVanityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VanityReservationResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Reserved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VanityReservationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/vanity/reservations/{reservationId}": {
+      "delete": {
+        "summary": "Release a reservation back to stock. A consumed address cannot be released.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "reservationId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Released"
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/internal/vanity/reservations/{reservationId}/consume": {
+      "post": {
+        "summary": "Internal launch service only: mark a reserved address as taken. Idempotent. Signs and broadcasts nothing.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "reservationId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumeVanityResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Consumed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumeVanityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

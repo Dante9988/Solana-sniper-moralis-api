@@ -45,6 +45,7 @@ import {
   PracticeTradeResponseSchema,
   ReviewPracticePlanRequestSchema,
 } from "./practice";
+import { ActiveVanityReservationResponseSchema, ConsumeVanityResponseSchema, ReserveVanityRequestSchema, VanityAvailabilityResponseSchema, VanityChainQuerySchema, VanityReservationResponseSchema } from "./vanity";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -533,6 +534,53 @@ registry.registerPath({
   security: [{ [bearerAuth.name]: [] }],
   request: { body: { content: { "application/json": { schema: LessonStepRequestSchema } } } },
   responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 400: errorResponse, 401: errorResponse },
+});
+
+// Phase 7D.4 §7 — vanity address handoff. Reservation is not deployment; nothing here broadcasts.
+const vanityErrors = { 400: errorResponse, 401: errorResponse, 404: errorResponse, 409: errorResponse };
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/vanity/availability",
+  summary: "How many vanity mint addresses can be reserved on a chain, or why the chain has none.",
+  tags: ["vanity"],
+  request: { query: VanityChainQuerySchema },
+  responses: { 200: { description: "Availability", content: { "application/json": { schema: VanityAvailabilityResponseSchema } } }, 400: errorResponse },
+});
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/vanity/reservation",
+  summary: "The caller's live (or consumed) reservation on a chain, if any.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { query: VanityChainQuerySchema },
+  responses: { 200: { description: "Reservation or null", content: { "application/json": { schema: ActiveVanityReservationResponseSchema } } }, 401: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/vanity/reservations",
+  summary: "Reserve a vanity mint address for 15 minutes. Idempotent on the Idempotency-Key header; one live reservation per user.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { headers: z.object({ "idempotency-key": z.string() }), body: { content: { "application/json": { schema: ReserveVanityRequestSchema } } } },
+  responses: { 200: { description: "Existing reservation", content: { "application/json": { schema: VanityReservationResponseSchema } } }, 201: { description: "Reserved", content: { "application/json": { schema: VanityReservationResponseSchema } } }, ...vanityErrors },
+});
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/me/vanity/reservations/{reservationId}",
+  summary: "Release a reservation back to stock. A consumed address cannot be released.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ reservationId: z.string() }) },
+  responses: { 204: { description: "Released" }, ...vanityErrors },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/internal/vanity/reservations/{reservationId}/consume",
+  summary: "Internal launch service only: mark a reserved address as taken. Idempotent. Signs and broadcasts nothing.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { headers: z.object({ "idempotency-key": z.string() }), params: z.object({ reservationId: z.string() }) },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: ConsumeVanityResponseSchema } } }, 201: { description: "Consumed", content: { "application/json": { schema: ConsumeVanityResponseSchema } } }, ...vanityErrors },
 });
 
 export function generateOpenApiDocument() {

@@ -1330,3 +1330,31 @@ model PracticeAchievement {
 
   @@id([userId, code])
 }
+
+/// Phase 7D.4 §7 — pre-generated vanity addresses and their reservation. Only the public address
+/// and an opaque reference to server-side, encrypted signing material live here; the secret itself
+/// never enters the database, an API response, a frontend bundle or a log.
+model VanityAddress {
+  id                 String    @id @default(uuid())
+  chain              String    // "solana"
+  address            String    @unique
+  /// How the address was produced: "ed25519-keypair-suffix" (OnlyPump-Vanity-Generator grinds keypairs).
+  generationType     String
+  suffix             String
+  /// Opaque server-side reference, e.g. "keystore:v1:<address>". Never returned by public routes.
+  secretRef          String
+  status             String    @default("AVAILABLE") // AVAILABLE | RESERVED | CONSUMED | RETIRED
+  retiredReason      String?
+  reservationId      String?   @unique
+  reservedBy         String?
+  reservedAt         DateTime?
+  reservationExpiresAt DateTime?
+  reserveIdempotencyKey String?
+  consumedAt         DateTime?
+  consumeIdempotencyKey String?
+  importedAt         DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@unique([reservedBy, reserveIdempotencyKey])
+  @@index([chain, status, reservationExpiresAt])
+}

@@ -35,6 +35,11 @@ export const ErrorCode = {
   PLAN_MISMATCH: "PLAN_MISMATCH",
   PLAN_NOT_CLOSEABLE: "PLAN_NOT_CLOSEABLE",
   ALREADY_REVIEWED: "ALREADY_REVIEWED",
+  // Phase 7D.4 §7 — vanity handoff.
+  UNSUPPORTED_CHAIN: "UNSUPPORTED_CHAIN",
+  VANITY_NONE_AVAILABLE: "VANITY_NONE_AVAILABLE",
+  RESERVATION_EXPIRED: "RESERVATION_EXPIRED",
+  ALREADY_CONSUMED: "ALREADY_CONSUMED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -77,6 +82,10 @@ const STATUS_FOR_CODE: Record<ErrorCode, number> = {
   PLAN_MISMATCH: 409,
   PLAN_NOT_CLOSEABLE: 409,
   ALREADY_REVIEWED: 409,
+  UNSUPPORTED_CHAIN: 400,
+  VANITY_NONE_AVAILABLE: 409,
+  RESERVATION_EXPIRED: 409,
+  ALREADY_CONSUMED: 409,
 };
 
 export function sendError(res: Response, code: ErrorCode, message: string, requestId: string, status: number = STATUS_FOR_CODE[code]): void {
