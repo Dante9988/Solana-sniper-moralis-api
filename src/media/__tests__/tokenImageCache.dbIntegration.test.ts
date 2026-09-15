@@ -127,6 +127,24 @@ describe.skipIf(!RUN)("token image cache — real Postgres + real HTTP", () => {
     expect(later).toMatchObject({ claimed: 1, ready: 1 });
   });
 
+  it("fetches a just-discovered logo before an old backlog and before rows that keep failing (Phase 7D.4 §2)", async () => {
+    const t0 = new Date("2026-09-15T12:00:00Z");
+    const row = (sourceUrl: string, createdAt: Date, attempts = 0) =>
+      db.tokenImageCache.create({ data: { id: `order-${sourceUrl.slice(-6)}`, chain: "robinhood", tokenAddress: TOKEN, sourceUrl, status: attempts ? "FAILED" : "PENDING", attempts, createdAt, nextAttemptAt: attempts ? t0 : null } });
+    await row("https://images.example/backlog.png", new Date(t0.getTime() - 86_400_000));
+    await row("https://images.example/retrying.png", new Date(t0.getTime() - 1_000), 3);
+    await row("https://images.example/fresh1.png", t0);
+    expect(await db.tokenImageCache.count({ where: { status: { in: ["PENDING", "FAILED"] } } })).toBe(3);
+
+    const order: string[] = [];
+    const fetcher = async (url: string) => {
+      order.push(url.split("/").pop()!);
+      return PNG;
+    };
+    for (let i = 0; i < 3; i += 1) await processDueImages(db, { limit: 1, now: () => new Date(t0.getTime() + 1), fetcher });
+    expect(order).toEqual(["fresh1.png", "backlog.png", "retrying.png"]);
+  });
+
   it("never lets two workers claim the same row", async () => {
     await enqueueTokenLogos(db, [{ tokenAddress: TOKEN, logoUrl: "https://images.example/once.png" }]);
     let calls = 0;

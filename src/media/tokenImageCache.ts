@@ -130,17 +130,20 @@ export async function processDueImages(
   const gateways = options.gateways ?? ipfsGateways();
   const due = await db.tokenImageCache.findMany({
     where: { status: { in: ["PENDING", "FAILED"] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now() } }] },
-    orderBy: { createdAt: "asc" },
+    // Phase 7D.4 §2 — never-tried rows first, newest first: a token discovered a minute ago must
+    // not wait behind a backlog of old logos or behind rows that keep failing upstream.
+    orderBy: [{ attempts: "asc" }, { createdAt: "desc" }],
     take: options.limit ?? 5,
   });
 
   const stats = { claimed: 0, ready: 0, failed: 0, rejected: 0 };
-  for (const row of due) {
+  // Rows are independent, so they are fetched concurrently; one slow host no longer stalls the batch.
+  await Promise.all(due.map(async (row) => {
     const claim = await db.tokenImageCache.updateMany({
       where: { id: row.id, attempts: row.attempts, status: row.status },
       data: { attempts: { increment: 1 }, nextAttemptAt: new Date(now().getTime() + CLAIM_LEASE_MS) },
     });
-    if (claim.count !== 1) continue;
+    if (claim.count !== 1) return;
     stats.claimed += 1;
     const attempts = row.attempts + 1;
 
@@ -174,7 +177,7 @@ export async function processDueImages(
       if (rejected) stats.rejected += 1;
       else stats.failed += 1;
     }
-  }
+  }));
   return stats;
 }
 
