@@ -415,6 +415,10 @@ export class DiscoveryV2Listener {
             ...richFields,
           };
 
+          // Phase 7D.4 §2 — a later observation that could not recover launch metadata (e.g. the
+          // explorer fallback is unreachable) must not downgrade or clear what an earlier one found.
+          const { richMetadataStatus: _unavailable, ...provenanceWithoutRichStatus } = provenanceAndCore as typeof provenanceAndCore & { richMetadataStatus?: string };
+          const updateCore = richOutcome?.status === "FOUND" ? provenanceAndCore : provenanceWithoutRichStatus;
           await tx.discoveredToken.upsert({
             where: { chain_tokenAddress: { chain: token.chain, tokenAddress } },
             create: {
@@ -432,7 +436,7 @@ export class DiscoveryV2Listener {
               lastEnrichmentError: enrichmentError,
             },
             update: {
-              ...provenanceAndCore,
+              ...updateCore,
               canonicalStatus: "CANONICAL",
               orphanedAt: null,
               ...(isComplete

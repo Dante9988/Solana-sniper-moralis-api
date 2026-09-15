@@ -837,6 +837,10 @@ model DiscoveredToken {
   /// abiV2.ts). Null until graduation. isToken0 above is reused for V2 too
   /// once poolId is set: true when this token is Initialize's currency0.
   poolId                    String?
+  /// Phase 7D.4 §2 — per-field provenance for metadata filled after discovery, e.g.
+  /// { "name": { "source": "alchemy_getTokenMetadata", "observedAt": "…" }, "alchemyAttemptedAt": "…",
+  ///   "decimalsConflict": { "chain": 18, "alchemy": 9 } }. Null when everything came from launch/ERC-20 reads.
+  metadataProvenance        Json?
 
   @@unique([chain, tokenAddress])
   @@index([chain, observedAt])

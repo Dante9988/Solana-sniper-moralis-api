@@ -16,7 +16,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { loadApiConfig } from "../../researchApi/config";
 import { createMediaRouter } from "../../researchApi/routes/media";
 import { ImageFetchError } from "../safeImageFetch";
-import { enqueueTokenLogos, logoStatuses, processDueImages, retryDelayMs } from "../tokenImageCache";
+import { enqueueRecentlyDiscoveredLogos, enqueueTokenLogos, logoStatuses, processDueImages, retryDelayMs } from "../tokenImageCache";
 
 const RUN = process.env.PAPER_RUN_DB_TESTS === "true";
 
@@ -138,6 +138,16 @@ describe.skipIf(!RUN)("token image cache — real Postgres + real HTTP", () => {
     const [a, b] = await Promise.all([processDueImages(db, { fetcher }), processDueImages(db, { fetcher })]);
     expect(a.claimed + b.claimed).toBe(1);
     expect(calls).toBe(1);
+  });
+
+  it("queues artwork for a newly discovered token without anyone viewing it, once", async () => {
+    await seedToken(`ipfs://${CID}`);
+    expect(await db.tokenImageCache.count({ where: { tokenAddress: TOKEN } })).toBe(0);
+    await enqueueRecentlyDiscoveredLogos(db, 10_000);
+    await enqueueRecentlyDiscoveredLogos(db, 10_000);
+    const rows = await db.tokenImageCache.findMany({ where: { tokenAddress: TOKEN } });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("PENDING");
   });
 
   it("answers immediately for a token with no logo", async () => {

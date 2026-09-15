@@ -51,6 +51,26 @@ export async function enqueueTokenLogos(db: PrismaClient, tokens: { tokenAddress
   await db.tokenImageCache.createMany({ data, skipDuplicates: true });
 }
 
+/**
+ * Phase 7D.4 §2 — progressive artwork: queue logos for newly discovered tokens without waiting for
+ * anyone to view them, so artwork is usually ready by the time a token is opened. Bounded per call,
+ * newest first, and idempotent (rows are keyed by token and source URL).
+ */
+export async function enqueueRecentlyDiscoveredLogos(db: PrismaClient, limit = 200): Promise<number> {
+  const rows = await db.$queryRaw<Array<{ tokenAddress: string; logoUrl: string }>>`
+    SELECT d."tokenAddress", d."logoUrl"
+    FROM "DiscoveredToken" d
+    WHERE d.chain = 'robinhood' AND d."canonicalStatus" = 'CANONICAL' AND d."logoUrl" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "TokenImageCache" c
+        WHERE c.chain = 'robinhood' AND c."tokenAddress" = lower(d."tokenAddress") AND c."sourceUrl" = d."logoUrl"
+      )
+    ORDER BY d."observedAt" DESC
+    LIMIT ${limit}`;
+  await enqueueTokenLogos(db, rows);
+  return rows.length;
+}
+
 export async function logoStatuses(db: PrismaClient, tokens: { tokenAddress: string; logoUrl: string | null }[]): Promise<Map<string, ImageStatus>> {
   const withLogo = tokens.filter((t) => t.logoUrl);
   const rows = withLogo.length
@@ -161,10 +181,14 @@ export async function processDueImages(
 /** Background loop for the API process. Returns a stop function; never throws into the event loop. */
 export function startTokenImageWorker(db: PrismaClient, log: (msg: string, meta?: object) => void, intervalMs = 5_000): () => void {
   let running = false;
+  let ticks = 0;
   const timer = setInterval(() => {
     if (running) return;
     running = true;
-    processDueImages(db)
+    // Every sixth tick (~30 s at the default interval), queue logos for newly discovered tokens.
+    const discover = ticks++ % 6 === 0 ? enqueueRecentlyDiscoveredLogos(db).then((n) => n > 0 && log("[token-images] queued newly discovered logos", { queued: n })) : Promise.resolve();
+    discover
+      .then(() => processDueImages(db))
       .then((s) => s.claimed > 0 && log("[token-images] processed", s))
       .catch((e) => log("[token-images] tick failed", { error: (e as Error).message }))
       .finally(() => {

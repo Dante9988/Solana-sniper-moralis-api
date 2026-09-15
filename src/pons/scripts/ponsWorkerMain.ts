@@ -22,6 +22,7 @@ import { GraduationPoller } from "../graduationPoller";
 import { DiscoveryV2Listener } from "../discoveryV2Listener";
 import { TradeV2Listener } from "../tradeV2Listener";
 import { CurveTradeListener } from "../curveTradeListener";
+import { fillMissingTokenMetadata } from "../metadata/alchemyMetadataFallback";
 import { ponsLogger, ponsComponentLogger } from "../logger";
 
 async function main(): Promise<void> {
@@ -71,11 +72,27 @@ async function main(): Promise<void> {
     }
   }
 
+  // Phase 7D.4 §2 — optional, Alchemy-only metadata gap filler (outside generic RPC failover).
+  const metadataLogger = ponsComponentLogger("pons:metadata-fallback");
+  let metadataFillRunning = false;
+  const metadataTimer = setInterval(() => {
+    if (metadataFillRunning) return;
+    metadataFillRunning = true;
+    fillMissingTokenMetadata(db, { log: (msg) => metadataLogger.info(msg) })
+      .then((r) => r.attempted > 0 && metadataLogger.info(`metadata fallback: ${r.filled}/${r.attempted} filled (${r.endpoint})`))
+      .catch((err) => metadataLogger.warn(`metadata fallback failed: ${err instanceof Error ? err.message : String(err)}`))
+      .finally(() => {
+        metadataFillRunning = false;
+      });
+  }, 10 * 60_000);
+  metadataTimer.unref();
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     ponsLogger.info({ signal }, "received signal, stopping");
+    clearInterval(metadataTimer);
     discoveryListener.stop();
     tradeListener.stop();
     graduationPoller.stop();
