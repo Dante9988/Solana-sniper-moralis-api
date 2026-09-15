@@ -23,6 +23,7 @@ import { DiscoveryV2Listener } from "../discoveryV2Listener";
 import { TradeV2Listener } from "../tradeV2Listener";
 import { CurveTradeListener } from "../curveTradeListener";
 import { startMarketSnapshotWorker } from "../market/marketSnapshotWorker";
+import { computeTrending } from "../market/trendingVolume";
 import { fillMissingTokenMetadata } from "../metadata/alchemyMetadataFallback";
 import { ChainlinkQuoteUsdRateProvider } from "../usd/chainlinkQuoteUsdRateProvider";
 import { ponsLogger, ponsComponentLogger } from "../logger";
@@ -59,6 +60,7 @@ async function main(): Promise<void> {
       db,
       config,
       startHeight: curveStart ? BigInt(curveStart) : undefined,
+      maxRange: process.env.PONS_CURVE_TRADES_MAX_RANGE?.trim() ? Number(process.env.PONS_CURVE_TRADES_MAX_RANGE) : undefined,
       logger: ponsComponentLogger("pons:curve-trades"),
     });
     discoveryV2Listener.start();
@@ -92,7 +94,21 @@ async function main(): Promise<void> {
   // Phase 7D.4 — live price, market cap, liquidity and bonding progress from contract state, so
   // they do not wait for log ingestion to reach the chain tip.
   const snapshotLogger = ponsComponentLogger("pons:market-snapshots");
-  const snapshots = startMarketSnapshotWorker({ db, caller: chainClient, usd: new ChainlinkQuoteUsdRateProvider({ chainClient }), log: (msg) => snapshotLogger.info(msg) });
+  const usdRates = new ChainlinkQuoteUsdRateProvider({ chainClient });
+  const snapshots = startMarketSnapshotWorker({ db, caller: chainClient, usd: usdRates, log: (msg) => snapshotLogger.info(msg) });
+  // Phase 7D.4 — Trending by trade-volume surge, recomputed every minute from indexed trades.
+  let trendingRunning = false;
+  const trendingTimer = setInterval(() => {
+    if (trendingRunning) return;
+    trendingRunning = true;
+    computeTrending(db, usdRates)
+      .then((r) => snapshotLogger.info(r.status.available ? `trending: ${r.trending} of ${r.scored} traded token(s) trending` : `trending unavailable: ${r.status.reason}`))
+      .catch((err) => snapshotLogger.warn(`trending failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`))
+      .finally(() => {
+        trendingRunning = false;
+      });
+  }, 60_000);
+  trendingTimer.unref();
 
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
@@ -101,6 +117,7 @@ async function main(): Promise<void> {
     ponsLogger.info({ signal }, "received signal, stopping");
     clearInterval(metadataTimer);
     snapshots.stop();
+    clearInterval(trendingTimer);
     discoveryListener.stop();
     tradeListener.stop();
     graduationPoller.stop();

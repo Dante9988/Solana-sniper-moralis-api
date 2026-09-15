@@ -29,6 +29,12 @@ export interface RawEvmLog {
   readonly blockHash: string;
   readonly transactionHash: string;
   readonly logIndex: number;
+  /**
+   * Unix seconds of the log's block, when the RPC includes it (the `blockTimestamp` log field of
+   * the Ethereum execution APIs; returned by the Robinhood Chain Alchemy endpoint on 2026-09-15).
+   * Absent on providers that do not send it; callers then read the block.
+   */
+  readonly blockTimestamp?: bigint | null;
 }
 
 /**

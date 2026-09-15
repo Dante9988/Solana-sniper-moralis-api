@@ -29,8 +29,19 @@ const LAST = BigInt(Math.max(...rows.map((r) => Number(r.log.blockNumber))));
 
 /** Serves every stored log in range regardless of address, like a topic-only eth_getLogs. */
 class FakeCurveChain extends FakeChainReader implements EventLogReader {
+  /** Ranges wider than this are refused, like a provider result cap. */
+  maxLogRange: bigint | null = null;
+  logRanges: bigint[] = [];
+  blockRefCalls = 0;
   async getLogsByEvents(params: { events: readonly AbiEvent[]; fromBlock: bigint; toBlock: bigint }): Promise<ChainClientResult<RawEvmLog[]>> {
+    const width = params.toBlock - params.fromBlock + 1n;
+    this.logRanges.push(width);
+    if (this.maxLogRange !== null && width > this.maxLogRange) return { status: "UNAVAILABLE", code: "RPC_ERROR", reason: "query returned more than 10000 results", source: "fake", fetchedAt: new Date(), attempts: 1 };
     return { status: "AVAILABLE", data: this.logsByRange.filter((l) => l.blockNumber >= params.fromBlock && l.blockNumber <= params.toBlock), source: "fake", fetchedAt: new Date(), attempts: 1 };
+  }
+  override async getBlockRef(blockNumber: bigint) {
+    this.blockRefCalls += 1;
+    return super.getBlockRef(blockNumber);
   }
 }
 
@@ -136,5 +147,44 @@ describe.skipIf(!RUN_DB_TESTS)("CurveTradeListener — real Postgres, real curve
     const earlier = new Date("2026-01-01T00:00:00Z");
     await prisma.chainIngestionCheckpoint.create({ data: { source: TRADE_V2_CHECKPOINT_SOURCE, lastHeight: 1n, lastHash: "0xhash-1", lastHeightTimestamp: earlier } });
     expect((await loadFinality(prisma, CHAIN)).tradeLastHeightTimestamp?.toISOString()).toBe(earlier.toISOString());
+  });
+
+  it("uses block timestamps carried by the logs instead of reading every block (Phase 7D.4)", async () => {
+    await seed(LAST + 5n);
+    const chain = buildChain();
+    chain.logsByRange = chain.logsByRange.map((l) => ({ ...l, blockTimestamp: 1_789_000_000n + l.blockNumber }));
+    const result = await new CurveTradeListener({ chainClient: chain, db: prisma, config: TEST_CONFIG }).runOnce();
+    expect(result.status).toBe("PROCESSED");
+    // Only the checkpoint read and the range end are fetched; no per-trade block reads.
+    expect(chain.blockRefCalls).toBeLessThanOrEqual(2);
+    const trade = await prisma.chainTrade.findFirstOrThrow({ where: { chain: CHAIN, sourceTxHash: rows[0].log.transactionHash, sourceIndex: rows[0].log.logIndex } });
+    expect(trade.sourceTimestamp?.getTime()).toBe(Number(1_789_000_000n + BigInt(rows[0].log.blockNumber)) * 1000);
+  });
+
+  it("fails closed when logs of one block disagree about its timestamp", async () => {
+    await seed(LAST + 5n);
+    const chain = buildChain();
+    const first = rawLog(rows[0]);
+    chain.logsByRange = [{ ...first, blockTimestamp: 1n }, { ...first, logIndex: 777, blockTimestamp: 2n }];
+    const result = await new CurveTradeListener({ chainClient: chain, db: prisma, config: TEST_CONFIG }).runOnce();
+    expect(result.status).toBe("UNAVAILABLE");
+    expect(await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: { in: tokenAddresses } } })).toBe(0);
+  });
+
+  it("halves the log window when a provider refuses a range and still reaches every trade", async () => {
+    await seed(LAST + 5n);
+    const chain = buildChain();
+    const span = Number(LAST - (FIRST - 100n)) + 1;
+    chain.maxLogRange = BigInt(Math.max(10, Math.floor(span / 3)));
+    const listener = new CurveTradeListener({ chainClient: chain, db: prisma, config: TEST_CONFIG, maxRange: span * 2 });
+    const statuses: string[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const r = await listener.runOnce();
+      statuses.push(r.status);
+      if (r.status === "UP_TO_DATE" || r.status === "WAITING_ON_DISCOVERY") break;
+    }
+    expect(statuses).toContain("UNAVAILABLE");
+    expect(await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: { in: tokenAddresses } } })).toBe(rows.length);
+    expect(chain.logRanges.some((w) => w <= chain.maxLogRange!)).toBe(true);
   });
 });

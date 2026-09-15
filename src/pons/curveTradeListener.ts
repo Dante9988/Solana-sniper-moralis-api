@@ -55,6 +55,8 @@ export interface CurveTradeListenerDeps {
   config: RobinhoodChainConfig;
   /** First block to scan when no checkpoint exists. Defaults to the earliest known V2 launch. */
   startHeight?: bigint;
+  /** Widest log window per tick (PONS_CURVE_TRADES_MAX_RANGE); defaults to PONS_MAX_BLOCK_RANGE_PER_POLL. */
+  maxRange?: number;
   logger?: CurveTradeListenerLogger;
 }
 
@@ -88,6 +90,11 @@ export class CurveTradeListener {
   private stopping = false;
   private timer: NodeJS.Timeout | null = null;
   private currentTick: Promise<void> = Promise.resolve();
+  /** Phase 7D.4 — adaptive log range: halves when a provider refuses a range, grows back on success. */
+  private readonly maxRange: bigint;
+  private range: bigint;
+  /** Block refs survive failed ticks, so a retry resumes instead of re-reading every block. */
+  private readonly blockRefs = new Map<string, { hash: string; timestamp: bigint }>();
 
   constructor(deps: CurveTradeListenerDeps) {
     this.chainClient = deps.chainClient;
@@ -95,6 +102,13 @@ export class CurveTradeListener {
     this.config = deps.config;
     this.startHeight = deps.startHeight;
     this.logger = deps.logger ?? noopLogger;
+    this.maxRange = BigInt(deps.maxRange ?? this.config.maxBlockRangePerPoll);
+    this.range = this.maxRange;
+  }
+
+  private rememberBlock(height: string, ref: { hash: string; timestamp: bigint }) {
+    if (this.blockRefs.size >= 20_000) this.blockRefs.delete(this.blockRefs.keys().next().value as string);
+    this.blockRefs.set(height, ref);
   }
 
   async runOnce(): Promise<CurveTradeTickResult> {
@@ -155,13 +169,16 @@ export class CurveTradeListener {
         : { status: "UP_TO_DATE", safeTip: effectiveTip };
     }
     const toBlock = (() => {
-      const candidate = fromBlock + BigInt(this.config.maxBlockRangePerPoll) - 1n;
+      const candidate = fromBlock + this.range - 1n;
       return candidate < effectiveTip ? candidate : effectiveTip;
     })();
 
     const logsResult = await this.chainClient.getLogsByEvents({ events: PONS_V2_CURVE_ABI, fromBlock, toBlock });
     if (logsResult.status === "UNAVAILABLE") {
-      await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getLogs(CurveBuy|CurveSell): ${logsResult.reason}`);
+      // Too many results, a range cap or a rate limit on a wide range: try a smaller window next.
+      const next = this.range / 2n;
+      this.range = next < 10n ? 10n : next;
+      await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getLogs(CurveBuy|CurveSell) over ${toBlock - fromBlock + 1n} blocks: ${logsResult.reason}`);
       return { status: "UNAVAILABLE", reason: `getLogs: ${logsResult.reason}` };
     }
 
@@ -177,21 +194,41 @@ export class CurveTradeListener {
       return { status: "UNAVAILABLE", reason: `getBlockRef(toBlock): ${toBlockRef.reason}` };
     }
     const timestamps = new Map<string, Date>([[toBlock.toString(), new Date(Number(toBlockRef.data.timestamp) * 1000)]]);
-    const heights = [...new Set(trades.map((t) => t.provenance.sourceHeight))].filter((h) => !timestamps.has(h));
+    // Phase 7D.4 — a log that carries its block's timestamp needs no block read. All logs of one
+    // block must agree on hash and timestamp; any disagreement fails the tick closed.
+    const fromLogs = new Map<string, { hash: string; timestamp: bigint }>();
+    for (const log of logsResult.data) {
+      if (log.blockTimestamp === null || log.blockTimestamp === undefined) continue;
+      const h = log.blockNumber.toString();
+      const seen = fromLogs.get(h);
+      if (seen && (seen.hash.toLowerCase() !== log.blockHash.toLowerCase() || seen.timestamp !== log.blockTimestamp)) {
+        await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `logs disagree about block ${h}`);
+        return { status: "UNAVAILABLE", reason: `logs disagree about block ${h}` };
+      }
+      fromLogs.set(h, { hash: log.blockHash, timestamp: log.blockTimestamp });
+    }
+    for (const [h, ref] of fromLogs) if (!timestamps.has(h)) timestamps.set(h, new Date(Number(ref.timestamp) * 1000));
+    const heights = [...new Set(trades.map((t) => t.provenance.sourceHeight))].filter((h) => !timestamps.has(h) && !this.blockRefs.has(h));
     const refs = await mapWithConcurrency(heights, this.config.tradeQueryConcurrency, (h) => this.chainClient.getBlockRef(BigInt(h)));
     for (let i = 0; i < heights.length; i++) {
       const outcome = refs[i];
-      if (outcome.status === "rejected" || outcome.value.status === "UNAVAILABLE") {
-        const reason = outcome.status === "rejected" ? String(outcome.reason) : (outcome.value as { reason: string }).reason;
-        await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getBlockRef(timestamp @ ${heights[i]}): ${reason}`);
-        return { status: "UNAVAILABLE", reason: `getBlockRef(timestamp @ ${heights[i]}): ${reason}` };
+      if (outcome.status === "fulfilled" && outcome.value.status === "AVAILABLE") this.rememberBlock(heights[i], { hash: outcome.value.data.hash, timestamp: outcome.value.data.timestamp });
+    }
+    for (const trade of trades) {
+      const h = trade.provenance.sourceHeight;
+      if (timestamps.has(h)) continue;
+      const ref = this.blockRefs.get(h);
+      if (!ref) {
+        await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getBlockRef(timestamp @ ${h}) unavailable`);
+        return { status: "UNAVAILABLE", reason: `getBlockRef(timestamp @ ${h}) unavailable` };
       }
       // Trade rows must carry the block's own hash; a mismatch means the logs and the block came from different forks.
-      if (outcome.value.data.hash.toLowerCase() !== trades.find((t) => t.provenance.sourceHeight === heights[i])!.provenance.sourceHash.toLowerCase()) {
-        await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `block hash mismatch at ${heights[i]} between log and block reads`);
-        return { status: "UNAVAILABLE", reason: `block hash mismatch at ${heights[i]}` };
+      if (ref.hash.toLowerCase() !== trade.provenance.sourceHash.toLowerCase()) {
+        this.blockRefs.delete(h);
+        await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `block hash mismatch at ${h} between log and block reads`);
+        return { status: "UNAVAILABLE", reason: `block hash mismatch at ${h}` };
       }
-      timestamps.set(heights[i], new Date(Number(outcome.value.data.timestamp) * 1000));
+      timestamps.set(h, new Date(Number(ref.timestamp) * 1000));
     }
 
     await this.db.$transaction(
@@ -228,6 +265,8 @@ export class CurveTradeListener {
       { timeout: 60_000 }
     );
 
+    for (const h of timestamps.keys()) this.blockRefs.delete(h);
+    if (this.range < this.maxRange) this.range = this.range * 2n > this.maxRange ? this.maxRange : this.range * 2n;
     this.logger.info(`pons_v2 curve trade tick: processed blocks ${fromBlock}-${toBlock}, ${trades.length} trade(s) recorded, ${foreign} foreign log(s) dropped.`);
     return { status: "PROCESSED", fromBlock, toBlock, tradesRecorded: trades.length, foreignLogsDropped: foreign };
   }

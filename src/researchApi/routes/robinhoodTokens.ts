@@ -31,6 +31,7 @@ import { enqueueTokenLogos, logoStatuses, logoUrlFor, type ImageStatus } from ".
 import { logger } from "../lib/logger";
 import { lookupQuoteAsset } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
 import { formatScaled } from "../../pons/market/marketSnapshot";
+import { trendingCoverage } from "../../pons/market/trendingVolume";
 
 /**
  * Prisma.Decimal#toString() renders large integers in scientific notation
@@ -83,6 +84,15 @@ export function serializeMarket(s: TokenMarketSnapshot | null | undefined) {
     readyToGraduate: ok && s.readyToGraduate,
     marketCapChange1hUsd: ok ? decimalToString(s.marketCapChange1hUsd) : null,
     marketCapChange1hPct: ok ? decimalToString(s.marketCapChange1hPct) : null,
+    volume5mUsd: decimalToString(s.volume5mUsd),
+    volume1hUsd: decimalToString(s.volume1hUsd),
+    volumeBaselineHourlyUsd: decimalToString(s.volumeBaselineHourlyUsd),
+    volumeSurge: decimalToString(s.volumeSurge),
+    trades1h: s.trades1h,
+    buys1h: s.buys1h,
+    sells1h: s.sells1h,
+    traders1h: s.traders1h,
+    trendingScore: decimalToString(s.trendingScore),
     usdSource: ok ? s.usdRateSource : null,
   };
 }
@@ -254,14 +264,14 @@ export function createRobinhoodTokensRouter(
         return;
       }
       const { limit, cursor, lifecycle, q } = parsed.data;
-      const sort = parsed.data.sort ?? (lifecycle === "almost-bonded" ? "progress" : lifecycle === "trending" ? "change1h" : "new");
+      const sort = parsed.data.sort ?? (lifecycle === "almost-bonded" ? "progress" : lifecycle === "trending" ? "trending" : "new");
 
       // Phase 7D.4 — filters and orderings over the token and its live snapshot, in one query.
       const conds: Prisma.Sql[] = [Prisma.sql`d.chain = 'robinhood'`, Prisma.sql`d."canonicalStatus" = 'CANONICAL'`];
       if (lifecycle === "graduated") conds.push(Prisma.sql`d.graduated = true`);
       if (lifecycle === "bonding") conds.push(Prisma.sql`d.graduated = false`);
       if (lifecycle === "almost-bonded") conds.push(Prisma.sql`d.graduated = false AND s.status = 'OK' AND s.graduated = false AND s."bondingProgressBps" > 0`);
-      if (lifecycle === "trending") conds.push(Prisma.sql`s.status = 'OK' AND s."marketCapChange1hUsd" > 0`);
+      if (lifecycle === "trending") conds.push(Prisma.sql`s."trendingScore" > 0`);
       if (q) {
         if (/^0x[0-9a-fA-F]{2,40}$/.test(q)) conds.push(Prisma.sql`d."tokenAddress" LIKE ${q.toLowerCase() + "%"}`);
         else conds.push(Prisma.sql`(d.name ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"} OR d.symbol ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"})`);
@@ -273,6 +283,8 @@ export function createRobinhoodTokensRouter(
         liquidity: Prisma.sql`s."liquidityUsd" DESC NULLS LAST, d."observedAt" DESC`,
         progress: Prisma.sql`s."bondingProgressBps" DESC NULLS LAST, s."quoteRaised" DESC NULLS LAST, d."observedAt" DESC`,
         change1h: Prisma.sql`s."marketCapChange1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
+        volume1h: Prisma.sql`s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
+        trending: Prisma.sql`s."trendingScore" DESC NULLS LAST, s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
       }[sort];
       // "new" pages by time so rows discovered meanwhile don't shift pages; other orders page by offset.
       let offset = 0;
@@ -299,9 +311,14 @@ export function createRobinhoodTokensRouter(
 
       const last = ids[ids.length - 1];
       const nextCursor = ids.length < limit || !last ? null : sort === "new" ? `t:${last.observedAt.toISOString()}` : `o:${offset + ids.length}`;
-      const [statuses, snapshots] = await Promise.all([logoStatusesSafely(db, rows), snapshotsFor(db, rows.map((r) => r.tokenAddress))]);
+      const [statuses, snapshots, trending] = await Promise.all([
+        logoStatusesSafely(db, rows),
+        snapshotsFor(db, rows.map((r) => r.tokenAddress)),
+        lifecycle === "trending" ? trendingCoverage(db, new Date()) : Promise.resolve(undefined),
+      ]);
 
       res.json({
+        ...(trending ? { trending } : {}),
         tokens: rows.map((row) => serializeToken(row, statuses.get(row.tokenAddress.toLowerCase()), snapshots.get(row.tokenAddress.toLowerCase()) ?? null)),
         nextCursor,
         total,

@@ -258,6 +258,7 @@ export class PonsChainClient implements ChainCaller, EventLogReader {
         blockHash: log.blockHash as string,
         transactionHash: log.transactionHash as string,
         logIndex: log.logIndex as number,
+        blockTimestamp: typeof (log as { blockTimestamp?: unknown }).blockTimestamp === "bigint" ? ((log as { blockTimestamp?: bigint }).blockTimestamp as bigint) : null,
       }));
     });
   }
@@ -278,6 +279,7 @@ export class PonsChainClient implements ChainCaller, EventLogReader {
         blockHash: log.blockHash as string,
         transactionHash: log.transactionHash as string,
         logIndex: log.logIndex as number,
+        blockTimestamp: typeof (log as { blockTimestamp?: unknown }).blockTimestamp === "bigint" ? ((log as { blockTimestamp?: bigint }).blockTimestamp as bigint) : null,
       }));
     });
   }

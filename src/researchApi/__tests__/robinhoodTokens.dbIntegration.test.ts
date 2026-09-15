@@ -371,8 +371,8 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bon
     await token(C, 3, true);
     await token(D, 4);
     await snap(A, { bondingProgressBps: 8000, marketCapUsd: "1000", liquidityUsd: "300", priceUsd: "0.000001", marketCapChange1hUsd: "-5", marketCapChange1hPct: "-0.5" });
-    await snap(B, { bondingProgressBps: 2000, marketCapUsd: "90000", liquidityUsd: "50", priceUsd: "0.00009", marketCapChange1hUsd: "40000", marketCapChange1hPct: "80" });
-    await snap(C, { venue: "UNISWAP_V4_POOL", graduated: true, bondingProgressBps: 10000, marketCapUsd: "5000", liquidityUsd: "9000", priceUsd: "0.000005", marketCapChange1hUsd: "10", marketCapChange1hPct: "0.2" });
+    await snap(B, { bondingProgressBps: 2000, marketCapUsd: "90000", liquidityUsd: "50", priceUsd: "0.00009", marketCapChange1hUsd: "40000", marketCapChange1hPct: "80", volume1hUsd: "6000", volumeSurge: "30", trades1h: 12, traders1h: 12, trendingScore: "180000" });
+    await snap(C, { venue: "UNISWAP_V4_POOL", graduated: true, bondingProgressBps: 10000, marketCapUsd: "5000", liquidityUsd: "9000", priceUsd: "0.000005", marketCapChange1hUsd: "10", marketCapChange1hPct: "0.2", volume1hUsd: "900", volumeSurge: "2", trades1h: 30, traders1h: 9, trendingScore: "1800" });
   });
   afterAll(async () => {
     await cleanup();
@@ -393,12 +393,17 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bon
     expect(JSON.stringify(res.body)).not.toMatch(/\de[+-]\d/);
   });
 
-  it("Almost bonded lists bonding tokens by progress; Trending lists rising market caps", async () => {
+  it("Almost bonded lists bonding tokens by progress; Trending lists volume surges with the coverage behind them", async () => {
     const almost = await list("lifecycle=almost-bonded");
     expect(addrs(almost)).toEqual([A, B]);
     expect(almost.body.total).toBe(2);
+    expect(almost.body.trending).toBeUndefined();
     const trending = await list("lifecycle=trending");
     expect(addrs(trending)).toEqual([B, C]);
+    expect(trending.body.trending).toMatchObject({ basis: "TRADE_VOLUME" });
+    const b = trending.body.tokens[0].market;
+    expect(b).toMatchObject({ volume1hUsd: "6000", volumeSurge: "30", trades1h: 12, traders1h: 12, trendingScore: "180000" });
+    expect(addrs(await list("sort=volume1h"))).toEqual([B, C, D, A]); // no volume: newest first
   });
 
   it("sorts by market cap and liquidity with unread tokens last, and pages by offset", async () => {

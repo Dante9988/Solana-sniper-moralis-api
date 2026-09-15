@@ -136,6 +136,49 @@
           "total": {
             "type": "integer"
           },
+          "trending": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "TRADE_VOLUME"
+                ]
+              },
+              "indexedUntil": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lagSeconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "computedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "available",
+              "basis",
+              "indexedUntil",
+              "lagSeconds",
+              "reason",
+              "computedAt"
+            ]
+          },
           "observedAt": {
             "type": "string"
           }
@@ -588,6 +631,62 @@
               "null"
             ]
           },
+          "volume5mUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volume1hUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volumeBaselineHourlyUsd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Average hourly USD volume over the six hours before the last hour."
+          },
+          "volumeSurge": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last-hour volume ÷ that baseline (baseline floored at $50)."
+          },
+          "trades1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "buys1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sells1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "traders1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "trendingScore": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "usdSource": {
             "type": [
               "string",
@@ -614,6 +713,15 @@
           "readyToGraduate",
           "marketCapChange1hUsd",
           "marketCapChange1hPct",
+          "volume5mUsd",
+          "volume1hUsd",
+          "volumeBaselineHourlyUsd",
+          "volumeSurge",
+          "trades1h",
+          "buys1h",
+          "sells1h",
+          "traders1h",
+          "trendingScore",
           "usdSource"
         ]
       },
@@ -5074,7 +5182,9 @@
                 "marketCap",
                 "liquidity",
                 "progress",
-                "change1h"
+                "change1h",
+                "volume1h",
+                "trending"
               ]
             },
             "required": false,
