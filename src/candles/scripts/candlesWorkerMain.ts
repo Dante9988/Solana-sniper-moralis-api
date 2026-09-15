@@ -36,7 +36,7 @@ import { loadApiConfig } from "../../researchApi/config";
 import { createEventBus } from "../../researchApi/realtime/eventBus";
 import { publishCandleEvent } from "../../researchApi/realtime/eventPublisher";
 import { loadCandleWorkerConfig } from "../config";
-import { NullQuoteUsdRateProvider } from "../usdPricing";
+import { ChainlinkQuoteUsdRateProvider } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
 import { runCandleAggregationTick } from "../candleAggregationService";
 import { recordCandleWorkerFailure, recordCandleWorkerRunState } from "../health";
 
@@ -48,7 +48,8 @@ async function main(): Promise<void> {
   const workerConfig = loadCandleWorkerConfig();
   const chainClient = new FailoverChainClient({ config: chainConfig });
   const db = new PrismaClient();
-  const usdRateProvider = new NullQuoteUsdRateProvider();
+  // Phase 7D.4 — Chainlink feeds on Robinhood Chain, valued at each trade's own time; UNAVAILABLE when unverifiable.
+  const usdRateProvider = new ChainlinkQuoteUsdRateProvider({ chainClient });
 
   const realtimeConfig = loadApiConfig().realtime;
   const eventBus = createEventBus(realtimeConfig);
