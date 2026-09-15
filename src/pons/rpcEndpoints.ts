@@ -59,6 +59,7 @@ export type RpcFailureClass =
   | "SERVER_ERROR" // retryable 5xx
   | "WRONG_CHAIN" // wrong chainId — never use, regardless of health
   | "STALE" // too far behind for the requested operation
+  | "RANGE_LIMIT" // this endpoint's plan caps eth_getLogs ranges — try the next one, no cooldown
   | "REQUEST_FAULT"; // revert / invalid params / unsupported method — do NOT fail over
 
 /** Cooldowns, in ms, applied to an endpoint after a failure of each class. */
@@ -72,6 +73,8 @@ export const COOLDOWN_MS: Record<RpcFailureClass, number> = {
   SERVER_ERROR: 10_000,
   WRONG_CHAIN: 24 * 60 * 60_000,
   STALE: 30_000,
+  // The endpoint is healthy; it just cannot serve this particular request shape.
+  RANGE_LIMIT: 0,
   REQUEST_FAULT: 0,
 };
 
@@ -151,6 +154,20 @@ const QUOTA_PATTERNS = [
 const RATE_LIMIT_PATTERNS = [/rate limit/i, /too many requests/i, /throttl/i];
 
 /**
+ * Provider plans that cap eth_getLogs block ranges. Observed 2026-09-15 on Robinhood Chain's
+ * Alchemy free tier (JSON-RPC -32600): "Under the Free tier plan, you can make eth_getLogs
+ * requests with up to a 10 block range." Other providers word it as a maximum range or a
+ * result-count cap. Kept narrow: a generic "invalid parameters" is not proof of a range cap.
+ */
+const RANGE_LIMIT_PATTERNS = [
+  /eth_getLogs requests with up to a \d+ block range/i,
+  /block range (is )?(too (large|wide)|exceeds|limit)/i,
+  /(max(imum)?|exceed(s|ed)?) (the )?(allowed )?block range/i,
+  /query returned more than \d+ results/i,
+  /log response size exceeded/i,
+];
+
+/**
  * Faults that belong to the request, not the endpoint. These must never trigger failover:
  * a revert reverts everywhere, and treating it as an outage would burn through every
  * provider and hide the real error.
@@ -185,6 +202,7 @@ export interface ClassifyInput {
 export function classifyRpcFailure(input: ClassifyInput): RpcFailureClass {
   const message = input.message ?? "";
 
+  if (RANGE_LIMIT_PATTERNS.some((p) => p.test(message))) return "RANGE_LIMIT";
   if (REQUEST_FAULT_PATTERNS.some((p) => p.test(message))) return "REQUEST_FAULT";
   if (QUOTA_PATTERNS.some((p) => p.test(message))) return "QUOTA_EXHAUSTED";
 

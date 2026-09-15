@@ -311,6 +311,18 @@ export class FailoverChainClient implements ChainCaller {
         } catch (error) {
           const details = extractHttpDetails(error);
           const failure = classifyRpcFailure(details);
+          if (failure === "RANGE_LIMIT") {
+            // A plan limit on this request shape, not a sick endpoint: move on, no cooldown.
+            last = {
+              status: "UNAVAILABLE",
+              source: "robinhood-chain-rpc",
+              fetchedAt: new Date(),
+              code: "RPC_ERROR",
+              reason: redactRpcUrls(details.message),
+              attempts: attempt + 1,
+            };
+            break;
+          }
           if (!shouldFailover(failure)) {
             // A request fault: report it, never burn other endpoints on it.
             return {
@@ -351,6 +363,7 @@ export class FailoverChainClient implements ChainCaller {
         const failure = classifyRpcFailure({ message: result.reason, code: result.code });
         last = result;
 
+        if (failure === "RANGE_LIMIT") break; // next endpoint, no cooldown, no retry
         if (!shouldFailover(failure)) return result;
 
         this.recordFailure(entry, failure, null);
