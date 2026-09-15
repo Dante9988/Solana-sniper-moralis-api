@@ -20,6 +20,9 @@ import type { ChainReader } from "../pons/chainClient";
 import { CheckpointStore } from "../pons/checkpointStore";
 import { DISCOVERY_CHECKPOINT_SOURCE } from "../pons/discoveryListener";
 import { TRADE_CHECKPOINT_SOURCE } from "../pons/tradeListener";
+import { TRADE_V2_CHECKPOINT_SOURCE } from "../pons/tradeV2Listener";
+import { CURVE_TRADE_CHECKPOINT_SOURCE } from "../pons/curveTradeListener";
+import { DISCOVERY_V2_CHECKPOINT_SOURCE } from "../pons/discoveryV2Listener";
 import { recomputeCandlesFromTimestamp } from "./recompute";
 import type { QuoteUsdRateProvider } from "./usdPricing";
 import type { FinalityInputs } from "./finality";
@@ -49,12 +52,44 @@ export interface CandleAggregationTickSummary {
   readonly errors: string[];
 }
 
-async function loadFinality(db: PrismaClient): Promise<FinalityInputs> {
+/**
+ * Trade streams that must all have confirmed progress before a bucket can be final, per venue.
+ * Pons V1 has one stream; Pons V2 has two (bonding-curve trades and Uniswap V4 swaps after
+ * graduation). A venue with no tokens contributes nothing.
+ */
+export const TRADE_SOURCES_BY_VENUE: Record<string, readonly string[]> = {
+  pons: [TRADE_CHECKPOINT_SOURCE],
+  pons_v2: [TRADE_V2_CHECKPOINT_SOURCE, CURVE_TRADE_CHECKPOINT_SOURCE],
+};
+const DISCOVERY_SOURCES = [DISCOVERY_CHECKPOINT_SOURCE, DISCOVERY_V2_CHECKPOINT_SOURCE];
+
+/**
+ * Fails closed: finality is the *least* advanced confirmed time across every required stream, and
+ * null (everything provisional) if any required stream has never committed. Previously only the
+ * V1 trade checkpoint was consulted, so V2 buckets could be finalized by an unrelated stream.
+ */
+export async function loadFinality(db: PrismaClient, chain = "robinhood"): Promise<FinalityInputs> {
   const store = new CheckpointStore(db);
-  const [trade, discovery] = await Promise.all([store.getFinalityState(TRADE_CHECKPOINT_SOURCE), store.getFinalityState(DISCOVERY_CHECKPOINT_SOURCE)]);
+  const venuesPresent = (
+    await db.discoveredToken.groupBy({ by: ["venue"], where: { chain, canonicalStatus: "CANONICAL" } })
+  ).map((r) => r.venue);
+  const required = [...new Set(venuesPresent.flatMap((v) => TRADE_SOURCES_BY_VENUE[v] ?? []))];
+  const [trades, discoveries] = await Promise.all([
+    Promise.all(required.map((source) => store.getFinalityState(source))),
+    Promise.all(DISCOVERY_SOURCES.map((source) => store.getFinalityState(source))),
+  ]);
+
+  let confirmed: Date | null = required.length > 0 ? new Date(8.64e15) : null;
+  for (const state of trades) {
+    if (!state?.lastHeightTimestamp) {
+      confirmed = null;
+      break;
+    }
+    if (confirmed && state.lastHeightTimestamp < confirmed) confirmed = state.lastHeightTimestamp;
+  }
   return {
-    tradeLastHeightTimestamp: trade?.lastHeightTimestamp ?? null,
-    unresolvedReorg: Boolean(trade?.reorgUnresolvedAt) || Boolean(discovery?.reorgUnresolvedAt),
+    tradeLastHeightTimestamp: confirmed,
+    unresolvedReorg: [...trades, ...discoveries].some((state) => Boolean(state?.reorgUnresolvedAt)),
   };
 }
 
@@ -82,7 +117,7 @@ async function processInvalidations(deps: CandleAggregationServiceDeps, finality
   let candlesWritten = 0;
 
   for (const [tokenAddress, { minTimestamp, ids }] of byToken) {
-    const token = await deps.db.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: deps.chain, tokenAddress } }, select: { quoteAddress: true } });
+    const token = await deps.db.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: deps.chain, tokenAddress } }, select: { quoteAddress: true, venue: true } });
     if (!token) {
       deps.logger.warn("candle invalidation references an unknown token — leaving unprocessed", { tokenAddress });
       continue;
@@ -92,7 +127,7 @@ async function processInvalidations(deps: CandleAggregationServiceDeps, finality
       db: deps.db,
       chainClient: deps.chainClient,
       chain: deps.chain,
-      venue: deps.venue,
+      venue: token.venue,
       tokenAddress,
       quoteAddress: token.quoteAddress,
       fromTimestamp: minTimestamp,
@@ -136,11 +171,24 @@ async function processInvalidations(deps: CandleAggregationServiceDeps, finality
 }
 
 async function processForward(deps: CandleAggregationServiceDeps, finality: FinalityInputs, errors: string[]): Promise<{ tokensProcessed: number; bucketsRecomputed: number; candlesWritten: number }> {
-  const tokens = await deps.db.discoveredToken.findMany({
-    where: { chain: deps.chain, canonicalStatus: "CANONICAL" },
-    select: { tokenAddress: true, quoteAddress: true },
-    take: deps.maxForwardTokensPerTick,
-  });
+  // Only tokens with canonical trades past their candle checkpoint (or never aggregated). Taking the
+  // first N discovered tokens instead, as before, re-checked the same handful forever once there were
+  // more tokens than the per-tick budget, so most tokens never got candles.
+  const tokens = await deps.db.$queryRaw<Array<{ tokenAddress: string; quoteAddress: string; venue: string }>>`
+    SELECT d."tokenAddress", d."quoteAddress", d.venue
+    FROM (
+      SELECT DISTINCT ON ("tokenAddress") "tokenAddress", "sourceHeight", "sourceIndex"
+      FROM "ChainTrade"
+      WHERE chain = ${deps.chain} AND "canonicalStatus" = 'CANONICAL' AND "sourceTimestamp" IS NOT NULL
+      ORDER BY "tokenAddress", "sourceHeight" DESC, "sourceIndex" DESC
+    ) latest
+    JOIN "DiscoveredToken" d ON d.chain = ${deps.chain} AND lower(d."tokenAddress") = latest."tokenAddress" AND d."canonicalStatus" = 'CANONICAL'
+    LEFT JOIN "CandleAggregationCheckpoint" c ON c.chain = ${deps.chain} AND c."tokenAddress" = d."tokenAddress"
+    WHERE c."tokenAddress" IS NULL
+       OR latest."sourceHeight" > c."lastSourceHeight"
+       OR (latest."sourceHeight" = c."lastSourceHeight" AND latest."sourceIndex" > c."lastSourceIndex")
+    ORDER BY latest."sourceHeight" DESC
+    LIMIT ${deps.maxForwardTokensPerTick}`;
 
   let tokensProcessed = 0;
   let bucketsRecomputed = 0;
@@ -173,7 +221,7 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
       db: deps.db,
       chainClient: deps.chainClient,
       chain: deps.chain,
-      venue: deps.venue,
+      venue: token.venue,
       tokenAddress: token.tokenAddress,
       quoteAddress: token.quoteAddress,
       fromTimestamp,
@@ -258,7 +306,7 @@ export async function runCandleAggregationTick(deps: CandleAggregationServiceDep
   const start = Date.now();
   const errors: string[] = [];
 
-  const finality = await loadFinality(deps.db);
+  const finality = await loadFinality(deps.db, deps.chain);
 
   const invalidationResult = await processInvalidations(deps, finality, errors);
   const forwardResult = await processForward(deps, finality, errors);

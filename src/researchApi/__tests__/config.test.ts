@@ -94,6 +94,9 @@ describe("CORS config", () => {
   it("defaults dev origins to the usual local Vite/Expo ports when unset", () => {
     const config = loadApiConfig({} as NodeJS.ProcessEnv);
     expect(config.cors.devOrigins.has("http://localhost:5173")).toBe(true);
+    // The web app's Vite port, under both host spellings a browser may use.
+    expect(config.cors.devOrigins.has("http://localhost:8080")).toBe(true);
+    expect(config.cors.devOrigins.has("http://127.0.0.1:8080")).toBe(true);
   });
 });
 

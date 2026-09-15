@@ -23,6 +23,45 @@ export const TokenSocialsSchema = z
   })
   .openapi("TokenSocials");
 
+/**
+ * Phase 7D.4 — live market state read from contract state at one pinned block (see
+ * src/pons/market/marketSnapshot.ts). Quote amounts are whole-unit decimal strings; USD values are
+ * null unless a verified Chainlink rate existed at that block.
+ */
+export const TokenMarketSchema = z
+  .object({
+    status: z.enum(["PENDING", "OK", "FAILED", "UNSUPPORTED"]),
+    reason: z.string().nullable(),
+    venue: z.enum(["PONS_V2_BONDING_CURVE", "UNISWAP_V4_POOL"]).nullable(),
+    blockNumber: z.string().nullable(),
+    asOf: z.string().nullable().openapi({ description: "Timestamp of the block the values were read at." }),
+    priceQuote: z.string().nullable().openapi({ description: "Whole quote units per whole token (spot)." }),
+    priceUsd: z.string().nullable(),
+    marketCapQuote: z.string().nullable().openapi({ description: "Total supply × spot price, in whole quote units." }),
+    marketCapUsd: z.string().nullable(),
+    liquidityQuote: z.string().nullable(),
+    liquidityUsd: z.string().nullable(),
+    liquidityBasis: z.enum(["CURVE_REAL_QUOTE", "POOL_FULL_RANGE_EQUIVALENT"]).nullable(),
+    bondingProgressPct: z.number().nullable().openapi({ description: "Share of the curve's sellable allocation bought out (graduation triggers at 100)." }),
+    quoteRaised: z.string().nullable(),
+    graduationThreshold: z.string().nullable(),
+    readyToGraduate: z.boolean(),
+    marketCapChange1hUsd: z.string().nullable(),
+    marketCapChange1hPct: z.string().nullable(),
+    /** Trade-volume windows from indexed trades; null until computed while indexing covers the present. */
+    volume5mUsd: z.string().nullable(),
+    volume1hUsd: z.string().nullable(),
+    volumeBaselineHourlyUsd: z.string().nullable().openapi({ description: "Average hourly USD volume over the six hours before the last hour." }),
+    volumeSurge: z.string().nullable().openapi({ description: "Last-hour volume ÷ that baseline (baseline floored at $50)." }),
+    trades1h: z.number().int().nullable(),
+    buys1h: z.number().int().nullable(),
+    sells1h: z.number().int().nullable(),
+    traders1h: z.number().int().nullable(),
+    trendingScore: z.string().nullable(),
+    usdSource: z.string().nullable(),
+  })
+  .openapi("TokenMarket");
+
 export const DiscoveredTokenSchema = z
   .object({
     chain: z.literal("robinhood"),
@@ -33,6 +72,17 @@ export const DiscoveredTokenSchema = z
     /** Phase 7D §3 — Pons V2's bonding-curve contract address (pre-graduation). Null for V1/other venues. */
     curveAddress: z.string().nullable(),
     quoteAddress: z.string(),
+    /** Phase 7D.4 — the pair asset, identified only from official address registries (never from its own symbol()). */
+    quoteAsset: z
+      .object({
+        identified: z.boolean(),
+        symbol: z.string().nullable(),
+        name: z.string().nullable(),
+        decimals: z.number().int().nullable(),
+        kind: z.enum(["native", "wrapped-native", "stablecoin", "stock-token"]).nullable(),
+        usdFeed: z.string().nullable(),
+      })
+      .openapi("QuoteAssetRef"),
     /** Standard ERC-20 name()/symbol() — same enrichment tick as supply. Null while enrichment is PENDING. */
     name: z.string().nullable(),
     symbol: z.string().nullable(),
@@ -70,6 +120,8 @@ export const DiscoveredTokenSchema = z
     graduationPairTokenAmount: z.string().nullable(),
     /** The Uniswap V4 PoolId, captured from the Initialize log accompanying graduation. Null until then. */
     poolId: z.string().nullable(),
+    /** Phase 7D.4 — null until the first snapshot is queued. */
+    market: TokenMarketSchema.nullable(),
   })
   .openapi("DiscoveredToken");
 
@@ -97,13 +149,36 @@ export const ChainTradeSchema = z
 
 export const RobinhoodTokenListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
-  cursor: z.string().datetime().optional(),
+  /** Opaque: pass back `nextCursor` unchanged. */
+  cursor: z.string().max(64).optional(),
+  /**
+   * Phase 7D.4 — server-side filters, so counts and pages describe the filtered set.
+   * `almost-bonded`: still bonding, some of the allocation sold, ordered by progress.
+   * `trending`: a trade-volume surge over the last hour (see `trending` in the response), strongest first.
+   */
+  lifecycle: z.enum(["all", "bonding", "graduated", "almost-bonded", "trending"]).optional().default("all"),
+  /** Defaults: `new` (all/bonding/graduated), `progress` (almost-bonded), `trending` (trending). */
+  sort: z.enum(["new", "marketCap", "liquidity", "progress", "change1h", "volume1h", "trending"]).optional(),
+  q: z.string().trim().max(64).optional(),
 });
 
 export const RobinhoodTokenListResponseSchema = z
   .object({
     tokens: z.array(DiscoveredTokenSchema),
     nextCursor: z.string().nullable(),
+    /** Phase 7D.4 — rows matching the filters (canonical only), for honest result counts. */
+    total: z.number().int(),
+    /** Phase 7D.4 — present for lifecycle=trending: whether indexed trades cover the present, and why not. */
+    trending: z
+      .object({
+        available: z.boolean(),
+        basis: z.literal("TRADE_VOLUME"),
+        indexedUntil: z.string().nullable(),
+        lagSeconds: z.number().int().nullable(),
+        reason: z.string().nullable(),
+        computedAt: z.string(),
+      })
+      .optional(),
     observedAt: z.string(),
   })
   .openapi("RobinhoodTokenListResponse");
@@ -147,3 +222,17 @@ export const RobinhoodStatusResponseSchema = z
     observedAt: z.string(),
   })
   .openapi("RobinhoodStatusResponse");
+
+/** Phase 7D.4 — which chains have discovery in this deployment, so clients never imply a missing one. */
+export const DiscoveryChainsResponseSchema = z
+  .object({
+    chains: z.array(
+      z.object({
+        chain: z.enum(["robinhood", "solana"]),
+        discovery: z.enum(["AVAILABLE", "UNAVAILABLE"]),
+        providers: z.array(z.object({ id: z.string(), label: z.string(), status: z.enum(["AVAILABLE", "UNAVAILABLE"]), reason: z.string().nullable() })),
+        reason: z.string().nullable(),
+      })
+    ),
+  })
+  .openapi("DiscoveryChainsResponse");

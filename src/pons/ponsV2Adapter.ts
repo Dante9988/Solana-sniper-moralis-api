@@ -14,7 +14,7 @@
 import { decodeEventLog, decodeFunctionData, getAbiItem, toEventSelector, toFunctionSelector } from "viem";
 import type { NormalizedTokenDiscovered, NormalizedTokenGraduated, NormalizedTradeExecuted } from "../discovery/types";
 import { decimalDivide } from "../discovery/decimal";
-import { PONS_V2_FACTORY_ABI, UNISWAP_V4_POOL_MANAGER_ABI } from "./abiV2";
+import { PONS_V2_CURVE_ABI, PONS_V2_FACTORY_ABI, UNISWAP_V4_POOL_MANAGER_ABI } from "./abiV2";
 import type { RawEvmLog } from "./ponsAdapter";
 
 const CHAIN = "robinhood" as const;
@@ -34,6 +34,11 @@ const TOKEN_LAUNCHED_TOPIC0 = toEventSelector(getAbiItem({ abi: PONS_V2_FACTORY_
 const POOL_GRADUATED_TOPIC0 = toEventSelector(getAbiItem({ abi: PONS_V2_FACTORY_ABI, name: "PoolGraduated" }));
 const INITIALIZE_TOPIC0 = toEventSelector(getAbiItem({ abi: UNISWAP_V4_POOL_MANAGER_ABI, name: "Initialize" }));
 const SWAP_V4_TOPIC0 = toEventSelector(getAbiItem({ abi: UNISWAP_V4_POOL_MANAGER_ABI, name: "Swap" }));
+export const CURVE_BUY_TOPIC0 = toEventSelector(getAbiItem({ abi: PONS_V2_CURVE_ABI, name: "CurveBuy" }));
+export const CURVE_SELL_TOPIC0 = toEventSelector(getAbiItem({ abi: PONS_V2_CURVE_ABI, name: "CurveSell" }));
+
+/** A curve trade plus the fee legs the curve reported, which ChainTrade does not store. */
+export type NormalizedCurveTrade = NormalizedTradeExecuted & { readonly curveAddress: string; readonly feeQuote: string; readonly taxQuote: string };
 
 /**
  * Phase 7D §1 (metadata) — the 3 real launch entrypoints, each verified
@@ -264,6 +269,63 @@ export const ponsV2Adapter = {
    * UNISWAP_V3_POOL_ABI comment): negative = flowed OUT of the pool
    * (received by the trader, i.e. a buy), positive = flowed IN (a sell).
    */
+  /**
+   * Phase 7D.4 §3 — a PonsV2BondingCurve CurveBuy/CurveSell log. The caller must already have
+   * checked that `raw.log.address` is the factory-registered curve for `raw.tokenAddress`;
+   * this decoder refuses a mismatch anyway rather than trusting the caller.
+   *
+   * Amounts are trader-side, matching decodeTrade's V4 rows: a buy's quoteAmount is what was
+   * spent (fees included), a sell's is what the recipient received (fees excluded). The trader
+   * is `recipient`, because `buyer`/`seller` is usually a router.
+   */
+  decodeCurveTrade(raw: { log: RawEvmLog; tokenAddress: string; curveAddress: string; quoteAddress: string }): NormalizedCurveTrade | null {
+    const topic0 = raw.log.topics[0]?.toLowerCase();
+    if (topic0 !== CURVE_BUY_TOPIC0.toLowerCase() && topic0 !== CURVE_SELL_TOPIC0.toLowerCase()) return null;
+    if (raw.log.address.toLowerCase() !== raw.curveAddress.toLowerCase()) return null;
+    let decoded;
+    try {
+      decoded = decodeEventLog({
+        abi: PONS_V2_CURVE_ABI,
+        eventName: topic0 === CURVE_BUY_TOPIC0.toLowerCase() ? "CurveBuy" : "CurveSell",
+        topics: raw.log.topics as [`0x${string}`, ...`0x${string}`[]],
+        data: raw.log.data,
+      });
+    } catch {
+      return null;
+    }
+
+    const isBuy = decoded.eventName === "CurveBuy";
+    const a = decoded.args as Record<string, bigint | string>;
+    const tokenAmount = (isBuy ? a.tokensOut : a.tokensIn) as bigint;
+    const quoteAmount = (isBuy ? a.quoteIn : a.quoteOut) as bigint;
+    if (tokenAmount === 0n) return null; // no fill, no price — fail closed rather than divide by zero
+
+    return {
+      kind: "tradeExecuted",
+      chain: CHAIN,
+      venue: VENUE,
+      tokenAddress: raw.tokenAddress,
+      poolAddress: null,
+      side: isBuy ? "buy" : "sell",
+      tokenAmount: toDecimalString(tokenAmount),
+      quoteAmount: toDecimalString(quoteAmount),
+      quoteAddress: raw.quoteAddress,
+      priceQuote: decimalDivide(quoteAmount.toString(), tokenAmount.toString()),
+      priceUsd: null,
+      trader: a.recipient as string,
+      provenance: {
+        sourceHeight: raw.log.blockNumber.toString(),
+        sourceHash: raw.log.blockHash,
+        sourceTxHash: raw.log.transactionHash,
+        sourceIndex: raw.log.logIndex,
+      },
+      observedAt: new Date().toISOString(),
+      curveAddress: raw.log.address.toLowerCase(),
+      feeQuote: toDecimalString(a.fee as bigint),
+      taxQuote: toDecimalString(a.tax as bigint),
+    };
+  },
+
   decodeTrade(raw: RawPonsV2Swap): NormalizedTradeExecuted | null {
     if (raw.log.topics[0]?.toLowerCase() !== SWAP_V4_TOPIC0.toLowerCase()) return null;
     let decoded;

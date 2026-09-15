@@ -17,7 +17,7 @@
 
 const BPS = 10_000n;
 
-export const CURVE_QUOTE_CALCULATION_VERSION = "pons-v2-curve-1";
+export const CURVE_QUOTE_CALCULATION_VERSION = "pons-v2-curve-2"; // 2: refuse sells the curve cannot pay (trackedQuote)
 
 export interface CurveState {
   quoteReserve: bigint;
@@ -30,6 +30,13 @@ export interface CurveState {
   snipeTaxStartBps: bigint;
   snipeTaxSeconds: bigint;
   launchedAt: bigint;
+  /**
+   * Phase 7D.4 — quote the curve really holds (`trackedQuote`). Pricing uses a virtual reserve on
+   * top of it, so a sell can price above what the curve can pay; `sell()` then reverts on
+   * `trackedQuote -= quoteOut` (Panic 0x11, observed on mainnet 2026-09-15). Optional so that
+   * pricing-only callers and the fork fixtures keep working.
+   */
+  trackedQuote?: bigint;
 }
 
 export type CurveRefusal =
@@ -37,7 +44,8 @@ export type CurveRefusal =
   | "SNIPE_WINDOW_OPEN" // anti-snipe tax may apply; not modelled
   | "ZERO_AMOUNT"
   | "OUTPUT_ROUNDS_TO_ZERO" // PonsV2BondingCurveMath.InsufficientOutputAmount
-  | "INSUFFICIENT_LIQUIDITY"; // a reserve is zero
+  | "INSUFFICIENT_LIQUIDITY" // a reserve is zero
+  | "CURVE_CANNOT_PAY"; // the sell would pay out more quote than the curve really holds
 
 export interface CurveBuyQuote {
   ok: true;
@@ -128,7 +136,10 @@ export function quoteCurveSell(state: CurveState, tokensIn: bigint): CurveQuoteR
   if (grossQuoteOut === 0n) return { ok: false, refusal: "OUTPUT_ROUNDS_TO_ZERO" };
   const protocolFee = (grossQuoteOut * state.feeBps) / BPS;
   const creatorTax = (grossQuoteOut * state.creatorTaxBps) / BPS;
-  return { ok: true, side: "sell", amountIn: tokensIn, grossQuoteOut, quoteOut: grossQuoteOut - protocolFee - creatorTax, protocolFee, creatorTax };
+  const quoteOut = grossQuoteOut - protocolFee - creatorTax;
+  // PonsV2BondingCurve.sell(): `trackedQuote -= quoteOut` underflows when the curve holds less.
+  if (state.trackedQuote !== undefined && quoteOut > state.trackedQuote) return { ok: false, refusal: "CURVE_CANNOT_PAY" };
+  return { ok: true, side: "sell", amountIn: tokensIn, grossQuoteOut, quoteOut, protocolFee, creatorTax };
 }
 
 /**

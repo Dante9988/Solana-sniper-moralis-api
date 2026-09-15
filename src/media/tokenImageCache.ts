@@ -51,6 +51,26 @@ export async function enqueueTokenLogos(db: PrismaClient, tokens: { tokenAddress
   await db.tokenImageCache.createMany({ data, skipDuplicates: true });
 }
 
+/**
+ * Phase 7D.4 §2 — progressive artwork: queue logos for newly discovered tokens without waiting for
+ * anyone to view them, so artwork is usually ready by the time a token is opened. Bounded per call,
+ * newest first, and idempotent (rows are keyed by token and source URL).
+ */
+export async function enqueueRecentlyDiscoveredLogos(db: PrismaClient, limit = 200): Promise<number> {
+  const rows = await db.$queryRaw<Array<{ tokenAddress: string; logoUrl: string }>>`
+    SELECT d."tokenAddress", d."logoUrl"
+    FROM "DiscoveredToken" d
+    WHERE d.chain = 'robinhood' AND d."canonicalStatus" = 'CANONICAL' AND d."logoUrl" IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM "TokenImageCache" c
+        WHERE c.chain = 'robinhood' AND c."tokenAddress" = lower(d."tokenAddress") AND c."sourceUrl" = d."logoUrl"
+      )
+    ORDER BY d."observedAt" DESC
+    LIMIT ${limit}`;
+  await enqueueTokenLogos(db, rows);
+  return rows.length;
+}
+
 export async function logoStatuses(db: PrismaClient, tokens: { tokenAddress: string; logoUrl: string | null }[]): Promise<Map<string, ImageStatus>> {
   const withLogo = tokens.filter((t) => t.logoUrl);
   const rows = withLogo.length
@@ -110,17 +130,20 @@ export async function processDueImages(
   const gateways = options.gateways ?? ipfsGateways();
   const due = await db.tokenImageCache.findMany({
     where: { status: { in: ["PENDING", "FAILED"] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now() } }] },
-    orderBy: { createdAt: "asc" },
+    // Phase 7D.4 §2 — never-tried rows first, newest first: a token discovered a minute ago must
+    // not wait behind a backlog of old logos or behind rows that keep failing upstream.
+    orderBy: [{ attempts: "asc" }, { createdAt: "desc" }],
     take: options.limit ?? 5,
   });
 
   const stats = { claimed: 0, ready: 0, failed: 0, rejected: 0 };
-  for (const row of due) {
+  // Rows are independent, so they are fetched concurrently; one slow host no longer stalls the batch.
+  await Promise.all(due.map(async (row) => {
     const claim = await db.tokenImageCache.updateMany({
       where: { id: row.id, attempts: row.attempts, status: row.status },
       data: { attempts: { increment: 1 }, nextAttemptAt: new Date(now().getTime() + CLAIM_LEASE_MS) },
     });
-    if (claim.count !== 1) continue;
+    if (claim.count !== 1) return;
     stats.claimed += 1;
     const attempts = row.attempts + 1;
 
@@ -154,17 +177,21 @@ export async function processDueImages(
       if (rejected) stats.rejected += 1;
       else stats.failed += 1;
     }
-  }
+  }));
   return stats;
 }
 
 /** Background loop for the API process. Returns a stop function; never throws into the event loop. */
 export function startTokenImageWorker(db: PrismaClient, log: (msg: string, meta?: object) => void, intervalMs = 5_000): () => void {
   let running = false;
+  let ticks = 0;
   const timer = setInterval(() => {
     if (running) return;
     running = true;
-    processDueImages(db)
+    // Every sixth tick (~30 s at the default interval), queue logos for newly discovered tokens.
+    const discover = ticks++ % 6 === 0 ? enqueueRecentlyDiscoveredLogos(db).then((n) => n > 0 && log("[token-images] queued newly discovered logos", { queued: n })) : Promise.resolve();
+    discover
+      .then(() => processDueImages(db))
       .then((s) => s.claimed > 0 && log("[token-images] processed", s))
       .catch((e) => log("[token-images] tick failed", { error: (e as Error).message }))
       .finally(() => {

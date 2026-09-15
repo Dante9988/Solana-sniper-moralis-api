@@ -117,6 +117,16 @@ describe("refusals fail closed instead of inventing a number", () => {
     expect(quoteCurveSell({ ...base, graduated: true }, 10n ** 18n)).toEqual({ ok: false, refusal: "CURVE_GRADUATED" });
   });
 
+  it("refuses a sell that would pay out more than the curve really holds (mainnet revert, 2026-09-15)", () => {
+    // Observed: curve 0x0b15…8c11 held trackedQuote 481078238407210 wei; a sell quoted at
+    // 939814737743320 wei reverted with Panic(0x11) in the route simulation.
+    const priced = quoteCurveSell(base, 10n ** 24n);
+    expect(priced.ok).toBe(true);
+    const out = priced.ok ? priced.quoteOut : 0n;
+    expect(quoteCurveSell({ ...base, trackedQuote: out - 1n }, 10n ** 24n)).toEqual({ ok: false, refusal: "CURVE_CANNOT_PAY" });
+    expect(quoteCurveSell({ ...base, trackedQuote: out }, 10n ** 24n).ok).toBe(true);
+  });
+
   it("refuses zero and dust that rounds to nothing", () => {
     expect(quoteCurveBuy(base, 0n, BLOCK_TIMESTAMP)).toEqual({ ok: false, refusal: "ZERO_AMOUNT" });
     expect(quoteCurveSell(base, 1n)).toEqual({ ok: false, refusal: "OUTPUT_ROUNDS_TO_ZERO" });

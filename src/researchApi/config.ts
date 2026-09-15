@@ -107,7 +107,16 @@ export interface ApiConfig {
   readonly realtime: RealtimeConfig;
 }
 
-const DEFAULT_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:19006", "http://localhost:8081"];
+// 8080 is the only-pump-me Vite port (vite.config.ts); browsers treat localhost and 127.0.0.1 as
+// different origins, so both spellings are listed.
+const DEFAULT_DEV_ORIGINS = [
+  "http://localhost:8080",
+  "http://127.0.0.1:8080",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:19006",
+  "http://localhost:8081",
+];
 
 function loadSupabaseConfig(env: NodeJS.ProcessEnv): SupabaseAuthConfig | null {
   const projectUrlRaw = env.SUPABASE_URL?.trim();

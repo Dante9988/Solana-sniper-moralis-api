@@ -287,3 +287,46 @@ export const UNISWAP_V4_POOL_MANAGER_ABI = [
     ],
   },
 ] as const satisfies Abi;
+
+/**
+ * Phase 7D.4 §3 — PonsV2BondingCurve trade events (pre-graduation trading).
+ *
+ * Source: the PonsV2LaunchFactory verified bundle on Sourcify,
+ * https://sourcify.dev/server/v2/contract/4663/0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e
+ * (contracts/src/v2/PonsV2BondingCurve.sol; creation and runtime exact_match; solc
+ * 0.8.35+commit.47b9dedd; verified 2026-08-04; accessed 2026-09-15). Each launch has its own
+ * curve contract, so any contract can emit a look-alike event: consumers must accept a log
+ * only from an address the factory registered as that token's curve.
+ *
+ * Semantics, from the emit sites:
+ *   CurveBuy  — quoteIn is the quote actually `spent` (after any clamp/refund), fees included;
+ *               fee = protocol fee + snipe tax, tax = creator tax; tokensOut to `recipient`.
+ *   CurveSell — quoteOut is net to `recipient`; gross = quoteOut + fee + tax.
+ *   `buyer`/`seller` is msg.sender, typically a router; `recipient` is the end account.
+ */
+export const PONS_V2_CURVE_ABI = [
+  {
+    type: "event",
+    name: "CurveBuy",
+    inputs: [
+      { indexed: true, name: "buyer", type: "address" },
+      { indexed: true, name: "recipient", type: "address" },
+      { indexed: false, name: "quoteIn", type: "uint256" },
+      { indexed: false, name: "tokensOut", type: "uint256" },
+      { indexed: false, name: "fee", type: "uint256" },
+      { indexed: false, name: "tax", type: "uint256" },
+    ],
+  },
+  {
+    type: "event",
+    name: "CurveSell",
+    inputs: [
+      { indexed: true, name: "seller", type: "address" },
+      { indexed: true, name: "recipient", type: "address" },
+      { indexed: false, name: "tokensIn", type: "uint256" },
+      { indexed: false, name: "quoteOut", type: "uint256" },
+      { indexed: false, name: "fee", type: "uint256" },
+      { indexed: false, name: "tax", type: "uint256" },
+    ],
+  },
+] as const satisfies Abi;

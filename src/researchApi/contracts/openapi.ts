@@ -10,7 +10,7 @@ import { OpenApiGeneratorV31, OpenAPIRegistry } from "@asteasolutions/zod-to-ope
 import { ErrorEnvelopeSchema } from "./errors";
 import { HealthResponseSchema, JobKeyParamSchema, MeResponseSchema, MintParamSchema, ReadyResponseSchema, ScanAcceptedResponseSchema } from "./common";
 import { CreateChallengeRequestSchema, CreateChallengeResponseSchema, VerifiedWalletListSchema, VerifiedWalletSchema, VerifyChallengeRequestSchema } from "./wallets";
-import {
+import { RobinhoodTokenListQuerySchema, DiscoveryChainsResponseSchema,
   RobinhoodTokenAddressParamSchema,
   RobinhoodTokenDetailResponseSchema,
   RobinhoodTokenListResponseSchema,
@@ -31,6 +31,22 @@ import {
   SimulationRequestSchema,
   SimulationResponseSchema,
 } from "./paperTrading";
+import { TokenMarketDataResponseSchema } from "./marketData";
+import {
+  CompareSizesRequestSchema,
+  CreatePracticePlanRequestSchema,
+  CreatePracticePortfolioRequestSchema,
+  CreatePracticeTradeRequestSchema,
+  LessonStepRequestSchema,
+  PracticeLessonResponseSchema,
+  PracticeOverviewResponseSchema,
+  PracticePlanResponseSchema,
+  PracticePortfolioResponseSchema,
+  PracticeTradeResponseSchema,
+  ReviewPracticePlanRequestSchema,
+} from "./practice";
+import { ActiveVanityReservationResponseSchema, ConsumeVanityResponseSchema, ReserveVanityRequestSchema, VanityAvailabilityResponseSchema, VanityChainQuerySchema, VanityReservationResponseSchema } from "./vanity";
+import { MarketListQuerySchema, MarketListResponseSchema, MarketSegmentParamSchema } from "./markets";
 import { z } from "./zodOpenApi";
 
 const registry = new OpenAPIRegistry();
@@ -111,9 +127,10 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/api/v1/tokens/robinhood",
-  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4).",
+  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle (all, bonding, graduated, almost-bonded, trending) and search filters with a filtered total, sorting by newest, market cap, liquidity, bonding progress or 1h market-cap change, a verified quote asset and the live on-chain market snapshot per row.",
   tags: ["robinhood-chain"],
   security: [{ [bearerAuth.name]: [] }],
+  request: { query: RobinhoodTokenListQuerySchema },
   responses: {
     200: { description: "Discovered token list", content: { "application/json": { schema: RobinhoodTokenListResponseSchema } } },
     400: errorResponse,
@@ -345,6 +362,30 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/v1/discovery/chains",
+  summary: "Which chains and launch providers have discovery in this deployment (Phase 7D.4).",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Discovery capabilities", content: { "application/json": { schema: DiscoveryChainsResponseSchema } } }, 401: errorResponse },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/market",
+  summary:
+    "Market data from OnlyPump's indexed trades: last traded price (native, and USD from a verified Chainlink feed), total supply and FDV, rolling 5m–24h windows with explicit coverage, and recent trades. Circulating market cap is not provided.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Market data, or an explicit unavailable reason", content: { "application/json": { schema: TokenMarketDataResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/v1/tokens/robinhood/{tokenAddress}/market-evidence",
   summary:
     "Pinned-block market evidence for a Pons V2 token on either venue: phase, pair asset, spot price, fee terms, curve progress, depth at reference sizes (curve formula or official quoter) and advanced protocol parameters. No USD.",
@@ -404,6 +445,153 @@ registry.registerPath({
     200: { description: "Paper positions", content: { "application/json": { schema: PaperPositionListResponseSchema } } },
     401: errorResponse,
   },
+});
+
+// Phase 7D.4 §5/§6 — Practice (paper money, live market data). Signed-in users only.
+const practiceIdem = z.object({ "Idempotency-Key": z.string().regex(/^[A-Za-z0-9_-]{8,128}$/) });
+const practiceErrors = {
+  400: errorResponse,
+  401: errorResponse,
+  404: errorResponse,
+  409: { description: "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+  422: { description: "IDEMPOTENCY_KEY_REUSED", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+};
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/practice",
+  summary: "The signed-in user's practice portfolios (paper balances, holdings, trades, plans) and intro-lesson progress with achievements. Never a wallet balance.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Practice overview", content: { "application/json": { schema: PracticeOverviewResponseSchema } } }, 401: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/portfolios",
+  summary: "Start a practice portfolio with explicit paper balances in verified quote assets. Idempotent per Idempotency-Key.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { headers: practiceIdem, body: { content: { "application/json": { schema: CreatePracticePortfolioRequestSchema } } } },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: PracticePortfolioResponseSchema } } }, 201: { description: "Created", content: { "application/json": { schema: PracticePortfolioResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/practice/portfolios/{portfolioId}",
+  summary: "One of the signed-in user's practice portfolios.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ portfolioId: z.string() }) },
+  responses: { 200: { description: "Portfolio", content: { "application/json": { schema: PracticePortfolioResponseSchema } } }, 401: errorResponse, 404: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/portfolios/{portfolioId}/plans",
+  summary: "Record a trade plan: why, how much, and exit notes. Exit notes are never executed automatically.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ portfolioId: z.string() }), headers: practiceIdem, body: { content: { "application/json": { schema: CreatePracticePlanRequestSchema } } } },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: PracticePlanResponseSchema } } }, 201: { description: "Created", content: { "application/json": { schema: PracticePlanResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/portfolios/{portfolioId}/trades",
+  summary:
+    "Place a paper entry or exit from an unexpired quote and, optionally, its successful simulation. Buys need paper cash in the pair's currency; sells need the tokens. The real pool is not changed.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ portfolioId: z.string() }), headers: practiceIdem, body: { content: { "application/json": { schema: CreatePracticeTradeRequestSchema } } } },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: PracticeTradeResponseSchema } } }, 201: { description: "Filled on paper", content: { "application/json": { schema: PracticeTradeResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/plans/{planId}/review",
+  summary: "Review a plan after its practice entry and exit.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ planId: z.string() }), body: { content: { "application/json": { schema: ReviewPracticePlanRequestSchema } } } },
+  responses: { 201: { description: "Reviewed", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, ...practiceErrors },
+});
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/practice/lesson",
+  summary: "Intro lesson progress, derived from what the user has actually done, and learning achievements.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 401: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/lesson/compare-sizes",
+  summary: "Record a comparison of two quotes for the same token and side at different sizes.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: CompareSizesRequestSchema } } } },
+  responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 400: errorResponse, 401: errorResponse, 404: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/practice/lesson/steps",
+  summary: "Mark a reading step (preview-costs, track) as done. Other steps complete by doing them.",
+  tags: ["practice"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: LessonStepRequestSchema } } } },
+  responses: { 200: { description: "Lesson", content: { "application/json": { schema: PracticeLessonResponseSchema } } }, 400: errorResponse, 401: errorResponse },
+});
+
+// Phase 7D.4 §7 — vanity address handoff. Reservation is not deployment; nothing here broadcasts.
+const vanityErrors = { 400: errorResponse, 401: errorResponse, 404: errorResponse, 409: errorResponse };
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/vanity/availability",
+  summary: "How many vanity mint addresses can be reserved on a chain, or why the chain has none.",
+  tags: ["vanity"],
+  request: { query: VanityChainQuerySchema },
+  responses: { 200: { description: "Availability", content: { "application/json": { schema: VanityAvailabilityResponseSchema } } }, 400: errorResponse },
+});
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/vanity/reservation",
+  summary: "The caller's live (or consumed) reservation on a chain, if any.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { query: VanityChainQuerySchema },
+  responses: { 200: { description: "Reservation or null", content: { "application/json": { schema: ActiveVanityReservationResponseSchema } } }, 401: errorResponse },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/vanity/reservations",
+  summary: "Reserve a vanity mint address for 15 minutes. Idempotent on the Idempotency-Key header; one live reservation per user.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { headers: z.object({ "idempotency-key": z.string() }), body: { content: { "application/json": { schema: ReserveVanityRequestSchema } } } },
+  responses: { 200: { description: "Existing reservation", content: { "application/json": { schema: VanityReservationResponseSchema } } }, 201: { description: "Reserved", content: { "application/json": { schema: VanityReservationResponseSchema } } }, ...vanityErrors },
+});
+registry.registerPath({
+  method: "delete",
+  path: "/api/v1/me/vanity/reservations/{reservationId}",
+  summary: "Release a reservation back to stock. A consumed address cannot be released.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ reservationId: z.string() }) },
+  responses: { 204: { description: "Released" }, ...vanityErrors },
+});
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/internal/vanity/reservations/{reservationId}/consume",
+  summary: "Internal launch service only: mark a reserved address as taken. Idempotent. Signs and broadcasts nothing.",
+  tags: ["vanity"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { headers: z.object({ "idempotency-key": z.string() }), params: z.object({ reservationId: z.string() }) },
+  responses: { 200: { description: "Replayed", content: { "application/json": { schema: ConsumeVanityResponseSchema } } }, 201: { description: "Consumed", content: { "application/json": { schema: ConsumeVanityResponseSchema } } }, ...vanityErrors },
+});
+
+// Phase 7D.4 — ranked market lists from CoinGecko.
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/markets/{segment}",
+  summary: "Crypto ranked by market cap, or Robinhood Chain stock tokens, from CoinGecko (cached one minute; stale lists are flagged).",
+  tags: ["markets"],
+  request: { params: MarketSegmentParamSchema, query: MarketListQuerySchema },
+  responses: { 200: { description: "Market list", content: { "application/json": { schema: MarketListResponseSchema } } }, 400: errorResponse },
 });
 
 export function generateOpenApiDocument() {

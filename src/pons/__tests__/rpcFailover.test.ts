@@ -216,6 +216,51 @@ describe("backoffWithJitter", () => {
   });
 });
 
+const ALCHEMY_RANGE_MESSAGE =
+  "Under the Free tier plan, you can make eth_getLogs requests with up to a 10 block range. Based on your parameters, this block range should work: [0x3a75d20, 0x3a75d29]. Upgrade to PAYG for expanded block range.";
+
+describe("block-range limits", () => {
+  it("classifies Alchemy's free-tier eth_getLogs cap as a range limit, not quota or connection", () => {
+    expect(classifyRpcFailure({ status: 400, message: ALCHEMY_RANGE_MESSAGE })).toBe("RANGE_LIMIT");
+    expect(classifyRpcFailure({ message: "query returned more than 10000 results" })).toBe("RANGE_LIMIT");
+    expect(COOLDOWN_MS.RANGE_LIMIT).toBe(0);
+  });
+
+  it("does not treat a generic invalid-parameters error as a range limit", () => {
+    expect(classifyRpcFailure({ message: "Invalid parameters were provided to the RPC method" })).not.toBe("RANGE_LIMIT");
+  });
+
+  it("moves a wide log query past range-capped endpoints without cooling them down", async () => {
+    const env = { ...ENV, ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C" } as NodeJS.ProcessEnv;
+    const calls: string[] = [];
+    const client = new FailoverChainClient({
+      config: { chainId: 4663, rpcHttpUrl: "unused" } as never,
+      env,
+      validateChainId: false,
+      perEndpointRetries: 2,
+      now: () => 1_000_000,
+      random: () => 0,
+      clientFactory: (endpoint) => ({
+        ...stubReader(async () => ok(99n)),
+        getLogs: async () => {
+          calls.push(endpoint.label);
+          return endpoint.label === "DEAFULT_RPC_HTTPS" ? ok([]) : unavailable(ALCHEMY_RANGE_MESSAGE);
+        },
+      }),
+    });
+
+    const logs = await client.getLogs({ address: "0x0", event: {} as never, fromBlock: 1n, toBlock: 2000n });
+    expect(logs.status).toBe("AVAILABLE");
+    // One attempt per capped endpoint (no retries on a plan limit), then the wide-range endpoint.
+    expect(calls).toEqual(["ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "ROBINHOOD_RPC_HTTPS3", "DEAFULT_RPC_HTTPS"]);
+
+    // No failure recorded, so no cooldown: the capped endpoints still serve ordinary calls first.
+    expect(client.healthSnapshot().map((h) => h.lastFailure ?? null)).toEqual([null, null, null, null]);
+    calls.length = 0;
+    expect((await client.getBlockNumber()).status).toBe("AVAILABLE");
+  });
+});
+
 describe("FailoverChainClient", () => {
   it("primary failure -> secondary success", async () => {
     const { client, calls } = buildClient({
