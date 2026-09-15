@@ -133,6 +133,9 @@
               "null"
             ]
           },
+          "total": {
+            "type": "integer"
+          },
           "observedAt": {
             "type": "string"
           }
@@ -140,6 +143,7 @@
         "required": [
           "tokens",
           "nextCursor",
+          "total",
           "observedAt"
         ]
       },
@@ -175,6 +179,9 @@
           },
           "quoteAddress": {
             "type": "string"
+          },
+          "quoteAsset": {
+            "$ref": "#/components/schemas/QuoteAssetRef"
           },
           "name": {
             "type": [
@@ -302,6 +309,7 @@
           "poolAddress",
           "curveAddress",
           "quoteAddress",
+          "quoteAsset",
           "name",
           "symbol",
           "logoUrl",
@@ -325,6 +333,59 @@
           "graduationTokenAmount",
           "graduationPairTokenAmount",
           "poolId"
+        ]
+      },
+      "QuoteAssetRef": {
+        "type": "object",
+        "properties": {
+          "identified": {
+            "type": "boolean"
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decimals": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "native",
+              "wrapped-native",
+              "stablecoin",
+              "stock-token",
+              null
+            ]
+          },
+          "usdFeed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "identified",
+          "symbol",
+          "name",
+          "decimals",
+          "kind",
+          "usdFeed"
         ]
       },
       "TokenLogo": {
@@ -2164,6 +2225,81 @@
           "quoteId"
         ]
       },
+      "DiscoveryChainsResponse": {
+        "type": "object",
+        "properties": {
+          "chains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "chain": {
+                  "type": "string",
+                  "enum": [
+                    "robinhood",
+                    "solana"
+                  ]
+                },
+                "discovery": {
+                  "type": "string",
+                  "enum": [
+                    "AVAILABLE",
+                    "UNAVAILABLE"
+                  ]
+                },
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "AVAILABLE",
+                          "UNAVAILABLE"
+                        ]
+                      },
+                      "reason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label",
+                      "status",
+                      "reason"
+                    ]
+                  }
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "chain",
+                "discovery",
+                "providers",
+                "reason"
+              ]
+            }
+          }
+        },
+        "required": [
+          "chains"
+        ]
+      },
       "TokenMarketDataResponse": {
         "oneOf": [
           {
@@ -3689,13 +3825,58 @@
     },
     "/api/v1/tokens/robinhood": {
       "get": {
-        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4).",
+        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle and search filters with a filtered total, and a verified quote asset per row.",
         "tags": [
           "robinhood-chain"
         ],
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "bonding",
+                "graduated"
+              ],
+              "default": "all"
+            },
+            "required": false,
+            "name": "lifecycle",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
           }
         ],
         "responses": {
@@ -4618,6 +4799,41 @@
             }
           },
           "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/discovery/chains": {
+      "get": {
+        "summary": "Which chains and launch providers have discovery in this deployment (Phase 7D.4).",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Discovery capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryChainsResponse"
+                }
+              }
+            }
+          },
+          "401": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

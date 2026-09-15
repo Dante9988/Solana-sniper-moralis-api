@@ -275,3 +275,60 @@ describe.skipIf(!RUN_DB_TESTS)("orphaned rows never surface as canonical facts t
     await prisma.chainTrade.deleteMany({ where: { chain: CHAIN, sourceTxHash: orphanedTradeTx } });
   });
 });
+
+describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — list filters, filtered totals and verified quote assets", () => {
+  const prisma = new PrismaClient();
+  const BONDING = "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d401";
+  const GRADUATED = "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d402";
+  const UNKNOWN_PAIR = "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d403";
+  const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
+  const ids = [BONDING, GRADUATED, UNKNOWN_PAIR];
+
+  const seed = (tokenAddress: string, over: Record<string, unknown>) =>
+    prisma.discoveredToken.create({
+      data: {
+        chain: CHAIN,
+        venue: "pons_v2",
+        tokenAddress,
+        deployer: "0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
+        quoteAddress: "0x0000000000000000000000000000000000000000",
+        initialBuyAmount: "0",
+        sourceHeight: 1n,
+        sourceHash: "0xhash-1",
+        sourceTxHash: `0x${tokenAddress.slice(2).padEnd(64, "0")}`,
+        sourceIndex: 0,
+        ...over,
+      } as never,
+    });
+
+  beforeAll(async () => {
+    await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: { in: ids } } });
+    await seed(BONDING, { name: "Zebra Filter Test", symbol: "ZFT", graduated: false });
+    await seed(GRADUATED, { name: "Zebra Filter Grad", symbol: "ZFG", graduated: true, quoteAddress: USDG });
+    await seed(UNKNOWN_PAIR, { name: "Zebra Filter Odd", symbol: "USDG", quoteAddress: "0x1234567890123456789012345678901234567890" });
+  });
+  afterAll(async () => {
+    await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: { in: ids } } });
+    await prisma.$disconnect();
+  });
+
+  it("filters by search and lifecycle on the server and reports the filtered total", async () => {
+    const app = buildApp(prisma);
+    const all = await request(app).get("/api/v1/tokens/robinhood?q=Zebra%20Filter");
+    expect(all.status).toBe(200);
+    expect(all.body.total).toBe(3);
+    const grad = await request(app).get("/api/v1/tokens/robinhood?q=Zebra%20Filter&lifecycle=graduated");
+    expect(grad.body.total).toBe(1);
+    expect(grad.body.tokens.map((t: { tokenAddress: string }) => t.tokenAddress)).toEqual([GRADUATED]);
+    const byAddress = await request(app).get(`/api/v1/tokens/robinhood?q=${BONDING.slice(0, 12)}`);
+    expect(byAddress.body.tokens.some((t: { tokenAddress: string }) => t.tokenAddress === BONDING)).toBe(true);
+  });
+
+  it("labels pair assets only from official registries, never from a token's own symbol", async () => {
+    const res = await request(buildApp(prisma)).get("/api/v1/tokens/robinhood?q=Zebra%20Filter");
+    const by = Object.fromEntries(res.body.tokens.map((t: { tokenAddress: string; quoteAsset: unknown }) => [t.tokenAddress, t.quoteAsset]));
+    expect(by[BONDING]).toMatchObject({ identified: true, symbol: "ETH", kind: "native", usdFeed: "ETH / USD" });
+    expect(by[GRADUATED]).toMatchObject({ identified: true, symbol: "USDG", decimals: 6, kind: "stablecoin" });
+    expect(by[UNKNOWN_PAIR]).toMatchObject({ identified: false, symbol: null });
+  });
+});

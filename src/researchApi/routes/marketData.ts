@@ -65,5 +65,30 @@ export function createMarketDataRouter(db: PrismaClient, config: ApiConfig, deps
       next(err);
     }
   });
+  // Phase 7D.4 §1 — what discovery exists, so the UI labels unsupported chains and providers
+  // instead of rendering an empty result that looks like "no tokens".
+  router.get("/discovery/chains", readAuth, limiter, (_req, res) => {
+    res.json({
+      chains: [
+        {
+          chain: "robinhood",
+          discovery: "AVAILABLE",
+          providers: [{ id: "pons", label: "PONS", status: "AVAILABLE", reason: null }],
+          reason: null,
+        },
+        {
+          chain: "solana",
+          discovery: "UNAVAILABLE",
+          providers: [
+            { id: "pumpfun", label: "Pump.fun", status: "UNAVAILABLE", reason: "Solana launch discovery is not connected in this deployment." },
+            { id: "launchlab", label: "LaunchLab", status: "UNAVAILABLE", reason: "Not integrated." },
+            { id: "bonkfun", label: "Bonk.fun", status: "UNAVAILABLE", reason: "Not integrated." },
+          ],
+          reason: "Solana launch discovery is not connected in this deployment.",
+        },
+      ],
+    });
+  });
+
   return router;
 }

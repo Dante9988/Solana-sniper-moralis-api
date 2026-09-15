@@ -10,7 +10,7 @@ import { OpenApiGeneratorV31, OpenAPIRegistry } from "@asteasolutions/zod-to-ope
 import { ErrorEnvelopeSchema } from "./errors";
 import { HealthResponseSchema, JobKeyParamSchema, MeResponseSchema, MintParamSchema, ReadyResponseSchema, ScanAcceptedResponseSchema } from "./common";
 import { CreateChallengeRequestSchema, CreateChallengeResponseSchema, VerifiedWalletListSchema, VerifiedWalletSchema, VerifyChallengeRequestSchema } from "./wallets";
-import {
+import { RobinhoodTokenListQuerySchema, DiscoveryChainsResponseSchema,
   RobinhoodTokenAddressParamSchema,
   RobinhoodTokenDetailResponseSchema,
   RobinhoodTokenListResponseSchema,
@@ -112,9 +112,10 @@ registry.registerPath({
 registry.registerPath({
   method: "get",
   path: "/api/v1/tokens/robinhood",
-  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4).",
+  summary: "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle and search filters with a filtered total, and a verified quote asset per row.",
   tags: ["robinhood-chain"],
   security: [{ [bearerAuth.name]: [] }],
+  request: { query: RobinhoodTokenListQuerySchema },
   responses: {
     200: { description: "Discovered token list", content: { "application/json": { schema: RobinhoodTokenListResponseSchema } } },
     400: errorResponse,
@@ -342,6 +343,15 @@ registry.registerPath({
     409: { description: "QUOTE_EXPIRED or QUOTE_NOT_FILLABLE", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
     429: errorResponse,
   },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/discovery/chains",
+  summary: "Which chains and launch providers have discovery in this deployment (Phase 7D.4).",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Discovery capabilities", content: { "application/json": { schema: DiscoveryChainsResponseSchema } } }, 401: errorResponse },
 });
 
 registry.registerPath({

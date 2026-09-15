@@ -29,6 +29,7 @@ import { createPoolEvidenceProvider, type PoolEvidenceProvider } from "../poolEv
 import { toPoolEvidenceJson, toPoolEvidenceUnavailableJson } from "../../presentation/toPoolEvidenceJson";
 import { enqueueTokenLogos, logoStatuses, logoUrlFor, type ImageStatus } from "../../media/tokenImageCache";
 import { logger } from "../lib/logger";
+import { lookupQuoteAsset } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
 
 /**
  * Prisma.Decimal#toString() renders large integers in scientific notation
@@ -42,6 +43,13 @@ function decimalToString(value: Prisma.Decimal | null): string | null {
   return value === null ? null : value.toFixed();
 }
 
+function quoteAssetRef(address: string) {
+  const asset = lookupQuoteAsset(address);
+  return asset
+    ? { identified: true, symbol: asset.symbol, name: asset.name, decimals: asset.decimals, kind: asset.kind as "native" | "wrapped-native" | "stablecoin" | "stock-token", usdFeed: asset.feed?.name ?? null }
+    : { identified: false, symbol: null, name: null, decimals: null, kind: null, usdFeed: null };
+}
+
 function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logoUrl ? "PENDING" : "NONE") {
   return {
     chain: row.chain,
@@ -51,6 +59,7 @@ function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logo
     poolAddress: row.poolAddress,
     curveAddress: row.curveAddress,
     quoteAddress: row.quoteAddress,
+    quoteAsset: quoteAssetRef(row.quoteAddress),
     // Phase 7D §1 — name()/symbol() are guaranteed by the ERC-20 standard
     // and enrich alongside supply; logo/description/socials are decoded
     // from the launch transaction itself (never contract storage — see
@@ -195,20 +204,29 @@ export function createRobinhoodTokensRouter(
         sendError(res, "BAD_REQUEST", "invalid query parameters", req.requestId);
         return;
       }
-      const { limit, cursor } = parsed.data;
+      const { limit, cursor, lifecycle, q } = parsed.data;
 
-      const rows = await db.discoveredToken.findMany({
-        where: {
-          chain: "robinhood",
-          // Phase 7B.5A §2/§9 — a row reorg recovery marked ORPHANED is no
-          // longer a canonical fact; API consumers must never mistake it
-          // for one (phase7b5a.txt §2, requirement 118).
-          canonicalStatus: "CANONICAL",
-          ...(cursor ? { observedAt: { lt: new Date(cursor) } } : {}),
-        },
-        orderBy: { observedAt: "desc" },
-        take: limit,
-      });
+      const filter = {
+        chain: "robinhood",
+        // Phase 7B.5A §2/§9 — a row reorg recovery marked ORPHANED is no
+        // longer a canonical fact; API consumers must never mistake it
+        // for one (phase7b5a.txt §2, requirement 118).
+        canonicalStatus: "CANONICAL" as const,
+        ...(lifecycle === "graduated" ? { graduated: true } : lifecycle === "bonding" ? { graduated: false } : {}),
+        ...(q
+          ? /^0x[0-9a-fA-F]{2,40}$/.test(q)
+            ? { tokenAddress: { startsWith: q.toLowerCase() } }
+            : { OR: [{ name: { contains: q, mode: "insensitive" as const } }, { symbol: { contains: q, mode: "insensitive" as const } }] }
+          : {}),
+      };
+      const [rows, total] = await Promise.all([
+        db.discoveredToken.findMany({
+          where: { ...filter, ...(cursor ? { observedAt: { lt: new Date(cursor) } } : {}) },
+          orderBy: { observedAt: "desc" },
+          take: limit,
+        }),
+        db.discoveredToken.count({ where: filter }),
+      ]);
 
       const nextCursor = rows.length === limit ? rows[rows.length - 1].observedAt.toISOString() : null;
       const statuses = await logoStatusesSafely(db, rows);
@@ -216,6 +234,7 @@ export function createRobinhoodTokensRouter(
       res.json({
         tokens: rows.map((row) => serializeToken(row, statuses.get(row.tokenAddress.toLowerCase()))),
         nextCursor,
+        total,
         observedAt: new Date().toISOString(),
       });
     } catch (err) {

@@ -33,6 +33,17 @@ export const DiscoveredTokenSchema = z
     /** Phase 7D §3 — Pons V2's bonding-curve contract address (pre-graduation). Null for V1/other venues. */
     curveAddress: z.string().nullable(),
     quoteAddress: z.string(),
+    /** Phase 7D.4 — the pair asset, identified only from official address registries (never from its own symbol()). */
+    quoteAsset: z
+      .object({
+        identified: z.boolean(),
+        symbol: z.string().nullable(),
+        name: z.string().nullable(),
+        decimals: z.number().int().nullable(),
+        kind: z.enum(["native", "wrapped-native", "stablecoin", "stock-token"]).nullable(),
+        usdFeed: z.string().nullable(),
+      })
+      .openapi("QuoteAssetRef"),
     /** Standard ERC-20 name()/symbol() — same enrichment tick as supply. Null while enrichment is PENDING. */
     name: z.string().nullable(),
     symbol: z.string().nullable(),
@@ -98,12 +109,17 @@ export const ChainTradeSchema = z
 export const RobinhoodTokenListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
   cursor: z.string().datetime().optional(),
+  /** Phase 7D.4 — server-side filters, so counts and pages describe the filtered set. */
+  lifecycle: z.enum(["all", "bonding", "graduated"]).optional().default("all"),
+  q: z.string().trim().max(64).optional(),
 });
 
 export const RobinhoodTokenListResponseSchema = z
   .object({
     tokens: z.array(DiscoveredTokenSchema),
     nextCursor: z.string().nullable(),
+    /** Phase 7D.4 — rows matching the filters (canonical only), for honest result counts. */
+    total: z.number().int(),
     observedAt: z.string(),
   })
   .openapi("RobinhoodTokenListResponse");
@@ -147,3 +163,17 @@ export const RobinhoodStatusResponseSchema = z
     observedAt: z.string(),
   })
   .openapi("RobinhoodStatusResponse");
+
+/** Phase 7D.4 — which chains have discovery in this deployment, so clients never imply a missing one. */
+export const DiscoveryChainsResponseSchema = z
+  .object({
+    chains: z.array(
+      z.object({
+        chain: z.enum(["robinhood", "solana"]),
+        discovery: z.enum(["AVAILABLE", "UNAVAILABLE"]),
+        providers: z.array(z.object({ id: z.string(), label: z.string(), status: z.enum(["AVAILABLE", "UNAVAILABLE"]), reason: z.string().nullable() })),
+        reason: z.string().nullable(),
+      })
+    ),
+  })
+  .openapi("DiscoveryChainsResponse");
