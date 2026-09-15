@@ -183,6 +183,10 @@ archive RPC; see `evm-verification/README.md`.
   - Delete the plaintext generator file after import.
   - Losing the key makes stored keypairs unusable; losing the key and the directory together exposes them.
 - `API_KEYS` — required for the internal consume route. User tokens are refused there.
+- `PONS_CURVE_TRADES_MAX_RANGE` — widest curve-trade log window. The local `.env` uses 10000, together with `PONS_MAX_BLOCK_RANGE_PER_POLL=10000` and `PONS_FRESH_START_LOOKBACK_BLOCKS=300000`. The last one gives V4 swaps six hours of baseline when that stream starts.
+- `COINGECKO_DEMO_API_KEY` — optional. The Crypto and Stocks lists work without a key at lower limits.
+- **Trending is empty.** Check `GET /api/v1/tokens/robinhood?lifecycle=trending`, which returns `trending.reason` with the indexing lag. It turns on by itself once both Pons trade streams are within 10 minutes of the tip.
+- **Stopping the pons worker.** `scripts/dev-stack.sh stop` may leave the `node` child running for a few seconds. Stop it by PID. Never use `pkill -f`/`pgrep -f` with a pattern your own shell's command line also contains.
 
 ## Logs
 

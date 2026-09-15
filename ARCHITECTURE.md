@@ -1938,6 +1938,38 @@ Curve exits: `PonsV2BondingCurve.sell()` executes `trackedQuote -= quoteOut` and
   - Nothing signs, deploys or broadcasts.
 - **Public JSON.** `VanityHandoffV1` always carries `deployed: false`.
 
+### 27.5 Live market state, Almost bonded, Trending, Stocks and Crypto
+
+**Why it exists.** Cards showed every token as bonding, with price, market cap and liquidity unavailable. The stage was correct: 548 of about 35.5k tokens had graduated. The values were missing because they came only from indexed trades, and curve-trade ingestion was stuck.
+
+- **`TokenMarketSnapshot`** (`src/pons/market/marketSnapshot.ts`, `marketSnapshotWorker.ts`, in the pons worker).
+  - Each batch is one Multicall3 read at a pinned block.
+  - Bonding curves: spot price from `getReserves()`; liquidity from `realQuoteReserve()`.
+  - Bonding progress is measured on the token side, because `readyToGraduate()` is `sellableTokens() == 0`. That makes progress = the bought-out share of `launchSupply − reservedTokens`.
+  - Graduated tokens use StateView `getSlot0` and `getLiquidity`. Liquidity is reported as a full-range equivalent, because graduation seeds one full-range position.
+  - A token that graduated after discovery's height gets its pool derived the same way the quoter does it. The pool is accepted only if the hook's registration names that token.
+  - USD comes from the verified Chainlink provider.
+  - Scheduling: active tokens are re-read every 1–2 minutes. Unchanged tokens back off to 6 hours. New tokens are queued on every tick.
+- **Trending** (`trendingVolume.ts`, every minute).
+  - Ranks by trade-volume surge: last-hour USD volume against the token's average hourly volume over the previous six hours, boosted when the last five minutes run hotter.
+  - Guards: at least $500, 10 trades and 3 distinct traders. New launches need $1,000.
+  - It is computed only while every Pons trade stream is indexed to within 10 minutes of now. Otherwise `lifecycle=trending` reports `trending.available=false` with the lag.
+- **List API.**
+  - `lifecycle` accepts `almost-bonded` and `trending`.
+  - `sort` accepts `new`, `marketCap`, `liquidity`, `progress`, `volume1h`, `trending` and `change1h`.
+  - Every row carries a `market` object.
+- **`GET /markets/crypto|stocks`** (`src/markets/coingecko.ts`).
+  - Crypto uses CoinGecko `/coins/markets`, ordered by market cap.
+  - Stocks use the category `robinhood-chain-stocks-ecosystem`.
+  - Robinhood Chain addresses come from `/coins/list?include_platform=true` (platform `robinhood`) and are checked against Robinhood's official list.
+  - Responses are cached for 1 minute. A stale list is served and flagged when CoinGecko fails.
+- **Curve-trade ingestion fixes.**
+  - The listener was livelocked: it read one block per trade height, a single rate-limited read restarted the whole tick, and it kept retrying the same range.
+  - It now uses the logs' `blockTimestamp` when present; all logs of a block must agree, or the tick fails closed.
+  - Block reads are cached across ticks.
+  - The log window adapts: it halves only on size failures and stops growing just below a failing width.
+  - Throughput is still bounded by the one public RPC that serves wide `eth_getLogs` ranges.
+
 ### 27.4 Verification (2026-09-15)
 
 - **Default suite:** 1,145 passed, 111 skipped.
