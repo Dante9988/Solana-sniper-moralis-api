@@ -188,6 +188,31 @@ archive RPC; see `evm-verification/README.md`.
 - **Trending is empty.** Check `GET /api/v1/tokens/robinhood?lifecycle=trending`, which returns `trending.reason` with the indexing lag. It turns on by itself once both Pons trade streams are within 10 minutes of the tip.
 - **Stopping the pons worker.** `scripts/dev-stack.sh stop` may leave the `node` child running for a few seconds. Stop it by PID. Never use `pkill -f`/`pgrep -f` with a pattern your own shell's command line also contains.
 
+## Phase 7D.5 notes
+
+- **The app database is the `onlypump-pg` container.** `docker start onlypump-pg`. Its data
+  lives on the named volume `onlypump-pgdata`, so starting and stopping it is safe. The
+  `solana-sniper-postgres` container referenced by older notes no longer exists on this host.
+  Still inspect through `DATABASE_URL`, never `docker exec`.
+- **Every RPC request carries a `User-Agent`** (`chainClient.ts`). Do not remove it: the
+  wide-range endpoint is behind Cloudflare, which answers a request without one with
+  `403 / error code: 1010`, and failover then drops to Alchemy keys capped at a 10-block
+  `eth_getLogs` range. That single header is the difference between ~10 and ~17,000 blocks/s
+  (ARCHITECTURE §28.1).
+- **Reading the log window warnings.** `pons:curve-trades` now says when and why it narrows:
+  `curve-trade log window 10000 → 5000 blocks after a provider range cap: …`. A narrowing
+  after a *provider range cap* is normal — it is finding the real ceiling, which for
+  topic-only curve queries is set by viem's 10 MB response cap at roughly 7,500 blocks.
+  A window pinned at 10 for many ticks is the pathology fixed in §28.2; check endpoint
+  cooldowns before blaming the window.
+- **Stopping workers.** `dev-stack.sh stop <svc>` reaps untracked PIDs, but a `ts-node` child
+  can survive; check with
+  `ps -eo pid,args | grep "[p]onsWorkerMain"` and `kill` by PID.
+  Never `pkill -f ponsWorkerMain` — the pattern matches your own shell and kills it.
+- **Deployed-secret check (frontend).** `npm run check:deployed-secrets` probes a deployed
+  origin for the three burned keypair files. It distinguishes a real file from a SPA
+  fallback and prints no response bodies. Run it after every onlypump.me deploy.
+
 ## Logs
 
 `.run/logs/<service>.log`, git-ignored. `scripts/dev-stack.sh logs <service>` tails one.

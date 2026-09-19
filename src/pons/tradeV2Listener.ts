@@ -157,17 +157,22 @@ export class TradeV2Listener {
     }
     const barrierHeight = discoveryCheckpoint.lastHeight;
 
+    const freshStart = checkpoint === null;
     const fromBlock = checkpoint
       ? checkpoint.lastHeight + 1n
       : (() => {
           const lookback = BigInt(this.config.freshStartLookbackBlocks);
           const start = safeTip - lookback + 1n;
-          this.logger.warn(`No pons_v2 trade checkpoint found — starting fresh at height ${start > 0n ? start : 0n}.`);
           return start > 0n ? start : 0n;
         })();
 
     const effectiveTip = safeTip < barrierHeight ? safeTip : barrierHeight;
     if (fromBlock > effectiveTip) {
+      // Phase 7D.5: this branch persists no `lastHeight` — deliberately, because nothing
+      // was scanned — so on a fresh start it recomputes `fromBlock` from the tip on every
+      // tick. Announcing a "starting fresh at height N" that never happens, once per tick,
+      // buried the real signal: 37 such warnings in 4 minutes while V2 discovery, the
+      // barrier this is waiting on, was the thing that was actually stuck.
       await checkpointStore.recordUpToDate(TRADE_V2_CHECKPOINT_SOURCE, observedChainHeight);
       if (barrierHeight < safeTip) {
         return { status: "WAITING_ON_DISCOVERY", reason: `barrier height ${barrierHeight} (pons_v2 discovery checkpoint) is behind the next block to scan` };
@@ -182,6 +187,9 @@ export class TradeV2Listener {
     })();
 
     const swapEvent = getAbiItem({ abi: UNISWAP_V4_POOL_MANAGER_ABI, name: SWAP_EVENT_NAME });
+    if (freshStart) {
+      this.logger.warn(`No pons_v2 trade checkpoint found — starting fresh at height ${fromBlock}.`);
+    }
     const poolIdChunks = chunk(poolIds, this.config.tradePoolChunkSize);
     const chunkOutcomes = await mapWithConcurrency(poolIdChunks, this.config.tradeQueryConcurrency, (ids) =>
       this.chainClient.getLogs({ address: poolManager, event: swapEvent, args: { id: ids }, fromBlock, toBlock })

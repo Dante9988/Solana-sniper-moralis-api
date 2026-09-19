@@ -1,11 +1,11 @@
 # Architecture & Handoff Guide
 
-> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, **7D–7D.3.3**, **7F.2**, plus the trading/Telegram surface merged from the `main2` branch).
+> Source of truth for how this repository works **today** (Phases **1–6**, **X**, **7A–7B.5B**, **7D–7D.5**, **7F.2**, plus the trading/Telegram surface merged from the `main2` branch).
 > Companion docs: [README.md](./README.md) (operator overview), [RUNBOOK.md](./RUNBOOK.md) (running the stack locally), [PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md](./PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md) (Pons V2 ingestion), [docs/phase-7d3-2-quote-verification.md](./docs/phase-7d3-2-quote-verification.md) (quote verification record), [evm-verification/README.md](./evm-verification/README.md) (Foundry harness), [src/intelligence/README.md](./src/intelligence/README.md) (intelligence danger zone), [src/forensics/README.md](./src/forensics/README.md) (forensics danger zone).
 
 **Snapshot date:** 2026-09-14 (UTC)
 **Canonical branch:** `main` (fast-forwarded to `master`'s tip in Phase 7B.1 — see §16.1; `master` still exists, unused going forward)
-**Latest commits:** `a097263` / `3d366a5` / `8b7963c` (Phase 7D.3.3: CORS for the web app's Vite port and `Idempotency-Key`, and the disposable-database guard for DB test suites; §26, open as PR #21), `b1de963` (PR #20 merged: Phase 7D.3.2 block-pinned quotes, route simulation, evidence snapshots, paper positions, logo cache, Foundry fork verification; §25), `cab5784` (PR #19: Phase 7D.3.1 RPC failover, WebSocket recovery, block pinning; §24), `c29780a` (PR #18: Phase 7D.3 operational ingestion and V4 pool evidence; §24), `eab698c` (PR #17: Phase 7F.2; §22), `1ef81be` (PR #16: Phase 7D Pons V2 and Uniswap V4; §23), `3d049e4` (Phase 7B.5B: the first candle/OHLCV service backed by canonical `ChainTrade` — §21; on top of `953cc2e`'s carried-forward schema draft, branch `feature/phase-7b5b-canonical-ohlcv`), `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
+**Latest commits:** `88d6ec4` (PR #23 merged 2026-09-19: Phase 7D.4 market data, live market snapshots, Trending, guided Practice ledger, vanity address handoff; §27), `b0779c4` (PR #22 merged 2026-09-19: Phase 7D.3.3 follow-up — CORS for :8080, docs, verified repair of the test-orphaned V2 launches; §26.4), `a097263` / `3d366a5` / `8b7963c` (Phase 7D.3.3: CORS for the web app's Vite port and `Idempotency-Key`, and the disposable-database guard for DB test suites; §26, merged as PR #21), `b1de963` (PR #20 merged: Phase 7D.3.2 block-pinned quotes, route simulation, evidence snapshots, paper positions, logo cache, Foundry fork verification; §25), `cab5784` (PR #19: Phase 7D.3.1 RPC failover, WebSocket recovery, block pinning; §24), `c29780a` (PR #18: Phase 7D.3 operational ingestion and V4 pool evidence; §24), `eab698c` (PR #17: Phase 7F.2; §22), `1ef81be` (PR #16: Phase 7D Pons V2 and Uniswap V4; §23), `3d049e4` (Phase 7B.5B: the first candle/OHLCV service backed by canonical `ChainTrade` — §21; on top of `953cc2e`'s carried-forward schema draft, branch `feature/phase-7b5b-canonical-ohlcv`), `9b2a892` (Phase 7B.5A: Pons ingestion hardening — coordination barrier, reorg recovery, pool-set scaling, batch enrichment, source-health — §20), `874166f` (Phase 7B.4: Robinhood Chain / Pons discovery, trades, graduation, checkpoints and API — §19), `a1c4507` (Phase 7B.3A1: Pump.fun/PumpSwap lifecycle decoders and normalized trades — §18), `414f068` / `b505e9f` (Phase 7B.2: wallet ownership and realtime jobs — §17), `e88b3e6` (Phase 7B.1: canonical `/api/v1` gateway — §16), `7ba40f4` (Phase 7A.1: restored init migration and real Postgres CI — §11), `4ee49ca` (Phase 7A: non-custodial trading and access controls — §8).
 
 **Stack:** TypeScript / Node (CI runs Node 20), Solana Web3.js, **viem** (Robinhood Chain HTTP/WSS RPC with multi-key failover), **Foundry 1.8.1** (Solidity fork verification in `evm-verification/`, CI only), Discord.js v14, **Telegraf** (Telegram bot), Prisma + PostgreSQL, SQLite holdings tracker, Express (three separate HTTP surfaces — see §8.3), Supabase JWT auth, Zod/OpenAPI, `ws`, Redis via `ioredis` (optional distributed rate limiting/realtime), Helius RPC/WSS, Geyser WSS, Moralis (supported REST only), DexScreener/Birdeye fallbacks, RugCheck/SolSniffer, Jupiter (three independent integrations — see §8.2), Jito (tip-only, not full bundle submission), Anthropic Claude (AI synthesis), canonical cross-chain research assets, X API (read-only checkpoint), Vitest.
 
@@ -178,7 +178,10 @@ supervises all three with one-owner protection (RUNBOOK.md).
 | **7D.3** | Supervised local processes (`dev-stack.sh`), committed OpenAPI + drift check, fabricated-PnL removal, read-only V4 pool evidence | Done — §24 |
 | **7D.3.1** | Credential-leak remediation, safe public error messages, multi-key RPC failover, WebSocket recovery, cross-provider block pinning, deadlines and metrics | Done — §24 |
 | **7D.3.2** | Official V4Quoter verified on a pinned fork; block-pinned quotes, route simulation, market evidence, immutable evidence snapshots, paper positions, token-logo cache | Done, merged as PR #20 — §25 |
-| **7D.3.3** | Browser acceptance with two confirmed Supabase test users; CORS fixes; disposable-DB guard | Done; follow-up PR #21 open (not merged) — §26 |
+| **7D.3.3** | Browser acceptance with two confirmed Supabase test users; CORS fixes; disposable-DB guard | Done, merged as PR #21 and follow-up PR #22 — §26 |
+| **7D.4** | Market terminal, live market snapshots, Almost bonded/Trending, guided Practice with paper money, light gamification, vanity address handoff | Done, merged as PR #23 (2026-09-19) — §27; infrastructure blockers remain in §27.6 |
+| **7D.5** | Robinhood live-data readiness: RPC identity, failure classification, adaptive log windows, graduation-poller scope, deployed-secret proof | Done, draft PR — §28; V2 discovery enrichment cost remains (§28.4) |
+| **7G.1** | Robinhood Chain deterministic investigation snapshots, checks and AI thesis | Not started — brief is `phase7g1.txt` in the frontend repository |
 
 Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt`, `phase4.txt`, `phase5*.txt`, `phase6`, `phase7b1.txt`, `phase7b2.txt`, `phase7b4.txt`, `phase7b5a.txt` and `phase7b5b.txt` (repository root, historical prompts). The Phase 7C/7D/7G briefs (`phase7d3.txt` … `phase7d3.3.txt`) live in the frontend repository root (`only-pump-me`). The implemented Phase 7B.4 behavior and deviations are recorded in §19; the brief is not an exact runtime description. The `main2` merge had no corresponding phase brief — it is independent legacy work with its own history (commits from May 2025), reconciled into `master` (see git log around `10668e0`).
 
@@ -1903,7 +1906,7 @@ Evidence is in `only-pump-me/docs/phase-7d3-2/auth/` (screenshots, `auth-journey
 
 ## 27. Phase 7D.4 — market terminal, guided Practice, vanity handoff
 
-**Status:** branch `feature/phase-7d4-market-terminal-practice`, not merged. It builds on the 7D.3.3 follow-up commits (PR #22). The row-by-row delivery record, with sources and blockers, is `docs/phase-7d4/implementation-matrix.md`.
+**Status:** merged into `main` as PR #23 on 2026-09-19 (`88d6ec4`), on top of the 7D.3.3 follow-up PR #22 (`b0779c4`). The frontend half is `only-pump-me` PR #12 (`fb27831`). The row-by-row delivery record, with sources and blockers, is `docs/phase-7d4/implementation-matrix.md`.
 
 ### 27.1 Data paths added
 
@@ -1938,7 +1941,7 @@ Curve exits: `PonsV2BondingCurve.sell()` executes `trackedQuote -= quoteOut` and
   - Nothing signs, deploys or broadcasts.
 - **Public JSON.** `VanityHandoffV1` always carries `deployed: false`.
 
-### 27.5 Live market state, Almost bonded, Trending, Stocks and Crypto
+### 27.4 Live market state, Almost bonded, Trending, Stocks and Crypto
 
 **Why it exists.** Cards showed every token as bonding, with price, market cap and liquidity unavailable. The stage was correct: 548 of about 35.5k tokens had graduated. The values were missing because they came only from indexed trades, and curve-trade ingestion was stuck.
 
@@ -1970,7 +1973,7 @@ Curve exits: `PonsV2BondingCurve.sell()` executes `trackedQuote -= quoteOut` and
   - The log window adapts: it halves only on size failures and stops growing just below a failing width.
   - Throughput is still bounded by the one public RPC that serves wide `eth_getLogs` ranges.
 
-### 27.4 Verification (2026-09-15)
+### 27.5 Verification
 
 - **Default suite:** 1,145 passed, 111 skipped.
 - **All DB suites on the disposable `ci_7d4_test`:** 1,255 passed, 1 skipped (the Anvil reorg test).
@@ -1984,3 +1987,85 @@ Curve exits: `PonsV2BondingCurve.sell()` executes `trackedQuote -= quoteOut` and
 | Practice journey | 20/20 |
 | Vanity | 13/13 |
 | Artwork arrival | 3/3 |
+
+**Re-verified after §27.4 (2026-09-19, the state merged as PR #23):**
+
+- **Default suite:** 1,161 passed.
+- **All DB suites** on the disposable `ci_7d4_test`.
+- `openapi:check` passes with 41 paths.
+- Frontend: 275 tests plus build; `docs/phase-7d4/discovery-check.cjs` 18/18 (live prices on new launches, Almost bonded ordering, Trending's honest state, the Stocks/Crypto tables, mobile).
+
+### 27.6 Remaining blockers (not code)
+
+1. ~~**RPC throughput.** Only the public default RPC serves wide `eth_getLogs` ranges, and it rate-limits… A paid wide-range Robinhood RPC removes this.~~ **Wrong — corrected in §28.1.** The wide-range endpoint was returning Cloudflare `403 / error code: 1010` because the client sent no `User-Agent`. It serves 10,000-block windows at up to ~17,000 blocks/s. No purchase was ever required.
+2. **Exposed keypairs.** onlypump.me must be redeployed without the removed key files (283 public keys are permanently refused via `exposedVanityAddresses.json`), and the public vanity repository's history still needs a decision.
+3. **Credential rotation:** Helius keys (formerly shipped in the frontend), the E2E user B password, the `ROBINHOOD_RPC_HTTPS2` key, and the Supabase secret key.
+4. ~~**Blockscout** is behind a Cloudflare challenge from this host.~~ Re-verified 2026-09-19: returns `HTTP 200` in 1.6s (§28.5).
+5. **No Solana discovery ingestion**, so Solana is reported `UNAVAILABLE` end to end.
+
+
+## 28. Phase 7D.5 — Robinhood live-data readiness
+
+**Status:** branch `feature/phase-7d5-live-data-readiness`, draft PR, not merged. Starting point: `88d6ec4` (PR #23) on both repositories' `main`.
+
+### 28.1 The headline correction
+
+Phase 7D.4 closed with one blocker above all others: *"Only the public default RPC serves wide `eth_getLogs` ranges, and it rate-limits… A paid wide-range RPC removes this."* (§27.6, item 1.)
+
+That was wrong, and nothing was ever going to be bought that fixed it.
+
+`rpc-robinhood.blockmachine.io` sits behind Cloudflare. Cloudflare answers a request that carries **no `User-Agent` header** with `HTTP 403` and the `text/plain` body `error code: 1010`. viem's fetch transport sets no `User-Agent`. So every request the backend ever made to the one endpoint that serves wide ranges was rejected before it reached the node, and failover fell back to Alchemy free-tier keys whose plan caps `eth_getLogs` at **10 blocks**.
+
+Measured on 2026-09-19 against the live chain, with a `User-Agent` and nothing else changed:
+
+| Query | Window | Result |
+|---|---|---|
+| V2 `TokenLaunched` (address + topic) | 10,000 blocks | 254 logs in 0.57s — **~17,000 blocks/s** |
+| Curve `CurveBuy`/`CurveSell` (topic-only) | 9,999 blocks | 13,975 logs in 3.38s — **~3,000 blocks/s** |
+
+Chain growth is ~10 blocks/s. The provider was never the constraint. Any non-empty `User-Agent` is accepted, so `chainClient.ts` sends `OnlyPumpBackend/1.0 (+https://onlypump.me)` — it states what the client is rather than impersonating a browser.
+
+### 28.2 The other four defects, each found by measurement
+
+1. **A bot shield read as a dead key.** `classifyRpcFailure` mapped any 401/403 to `QUOTA_EXHAUSTED`, a 30-minute cooldown. So Cloudflare's 1010 parked the only wide-range endpoint for half an hour at a time and reported it as a billing problem. There is now a `BOT_CHALLENGE` class (60s cooldown) matched on shield fingerprints; a plain `403 Forbidden` still means a revoked key.
+
+2. **The graduation poller had no `venue` filter.** `graduationStatus(token)` is a Pons **V1** factory method. V2 curves do not implement it — V2 graduation is a real `PoolGraduated` event read by `discoveryV2Listener`, which is why no V2 poller exists. Without the filter the poller walked every non-graduated V2 token — **39,623 of them against ~150 real V1 rows** — and every call reverted with `0xcbdb7b30`, costing one RPC round trip and one WARN line each, on the endpoints V2 discovery and curve-trade ingestion were starving for. After the fix the poller emits nothing and V1 discovery went from ~790 to **~2,300 blocks/s**.
+
+3. **The curve-trade window narrowed on evidence that was not about width.** `isSizeFailure` counted viem's generic `"Request failed"` — its wording for *any* non-2xx — and any timeout as proof the window was too wide. The window collapsed 1875 → 10 blocks and stayed pinned at the floor; ingestion ran at ~35 blocks/s against a 6.3M-block backlog while the provider served 10,000-block windows happily. It is now a three-way `classifyWindowFailure`: `RANGE` (a provider naming a range or result cap) narrows and remembers, `SOFT` (timeout/deadline) narrows and remembers nothing, `NONE` (throttling, cooldown, transport) leaves the window alone. Listeners and the failover classifier now share one definition of a range failure, `isRangeLimitMessage`.
+
+4. **A range cap from an endpoint that was never capable.** Endpoints are tried best-key-first and the Alchemy keys refuse anything over 10 blocks. When the wide-range endpoint was merely in cooldown, `FailoverChainClient` still surfaced Alchemy's *"up to a 10 block range"*, the listener believed it and halved — repeatedly, down to the floor. A range cap is only evidence about the range when every configured endpoint got to speak; otherwise the failure now reports itself as an availability problem and the window is left alone.
+
+Also corrected: a client-side `"HTTP response body exceeded the size limit"` (viem's 10 MB cap, hit by a topic-only curve query over 10,000 blocks ≈ 10.5 MB) was classified `CONNECTION`, cooling down a healthy endpoint. It is a `RANGE_LIMIT` — no cooldown, narrow the window — which is what lets the curve window settle at its real ceiling instead of oscillating.
+
+And `tradeV2Listener` logged `"No pons_v2 trade checkpoint found — starting fresh at height N"` at WARN on a branch that persists no `lastHeight` and therefore recomputes it every tick: 37 such lines in 4 minutes, drowning the fact that the barrier it waits on — V2 discovery — was the thing actually stuck. It now logs where a scan really begins.
+
+### 28.3 Ingestion, before and after
+
+All figures from the live chain on 2026-09-19. The stack had been down since 2026-09-15 08:36 (the app database is the `onlypump-pg` container, which had exited); the chain had grown ~3.7M blocks meanwhile.
+
+| Stream | Before (7D.4 code) | After | Backlog at measurement |
+|---|---|---|---|
+| Pons V1 discovery | ~790 blocks/s | **~2,300 blocks/s** | 2.67M blocks |
+| Pons V2 discovery | ~48 blocks/s | ~46 blocks/s (unchanged — see §28.4) | 4.72M blocks |
+| V2 curve trades | ~19–35 blocks/s, window pinned at 10 | window reaches 5,000–7,500 | 6.32M blocks |
+| V4 pool trades | never advanced a checkpoint | still barriered on V2 discovery | — |
+
+Chain growth is ~10 blocks/s, so any rate above that shrinks the backlog.
+
+### 28.4 The remaining bottleneck, quantified — NOT fixed here
+
+**V2 discovery is now the long pole, and it is not an RPC-capability problem.** Each 10,000-block tick finds ~254 launches and enriches each one with three `eth_call`s (`totalSupply`, `name`, `symbol`) plus one `getTransaction` for launch metadata — ~1,016 RPC round trips per tick, at `PONS_ENRICHMENT_CONCURRENCY=5` (default), against three quota-exhausted Alchemy keys and one workhorse endpoint.
+
+At the measured ~46 blocks/s against ~10 blocks/s of chain growth, the 4.72M-block backlog closes in roughly **36 hours** unattended. It does close — the backlog shrinks — but that is the honest number.
+
+The obvious fix is to batch the three ERC-20 reads through Multicall3, which `marketSnapshot.ts` already does for its own reads (one Multicall3 read per batch at a pinned block); that would cut the dominant per-tick cost by roughly 30×. It is **deliberately not implemented in this phase**: it changes a correctness-sensitive path (enrichment under block pinning and reorg recovery) and deserves its own change with its own fork tests, rather than being appended to a phase whose measurements were only just taken.
+
+### 28.5 Security posture — verified, and one live exposure
+
+`src/services/vanity/exposedVanityAddresses.json` lists 283 public keys and every one of the 281 keypairs served by the site is in it. Verified on 2026-09-19 by deriving the public addresses from the *live* responses: `test_pump.json` 215/215, `test_fan.json` 50/50, `vanity-keypairs.json` 16/16 — **all already permanently rejected**. Removing the files or rewriting history would not change that, and must not.
+
+**Still live, and the reason this section exists:** `https://onlypump.me` was still serving all three files on 2026-09-19, five days after 76a0681 deleted them. Not a SPA fallback — a control path returns `404 text/plain` while these return `application/json` at 41542, 9737 and 5415 bytes, **byte-for-byte the blobs removed from git**. The repository has been clean since 76a0681; the site was never redeployed. `only-pump-me/scripts/checkDeployedSecrets.mjs` (`npm run check:deployed-secrets`) now proves this against a deployed origin, because a clean repository is not evidence of a clean origin — the existing `noShippedSecrets.test.ts` cannot see the live site.
+
+Rotation status that requires account access and could not be verified from here: the two exposed Helius keys, the `ROBINHOOD_RPC_HTTPS2` key, the Supabase secret key, and the E2E user B password. What *is* observable: `ROBINHOOD_RPC_HTTPS` and `ROBINHOOD_RPC_HTTPS2` both answer `429` (quota exhausted) and `ROBINHOOD_RPC_HTTPS3` serves.
+
+**Blockscout is no longer blocked.** §27.6 item 4 recorded it behind a Cloudflare challenge; on 2026-09-19 `robinhoodchain.blockscout.com` returned `HTTP 200` in 1.6s with the browser `User-Agent` `blockscoutTrace.ts` already sends.

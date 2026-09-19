@@ -18,6 +18,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { isRangeLimitMessage } from "./rpcEndpoints";
 
 import type { ChainReader, EventLogReader } from "./chainClient";
 import type { RobinhoodChainConfig } from "./config";
@@ -81,10 +82,33 @@ export function selectCurveTrades(logs: Parameters<typeof ponsV2Adapter.decodeCu
   return { trades, foreign };
 }
 
-/** Whether a getLogs failure is about the window's size (as opposed to rate limits or endpoint health). */
-export function isSizeFailure(reason: string): boolean {
-  if (/no usable RPC endpoint|rate.?limit|429|too many requests|quota|cool/i.test(reason)) return false;
-  return /range|more than \d+ results|too many (results|logs)|response size|exceeds|timeout|timed out|Request failed|deadline/i.test(reason);
+/**
+ * How a failed `getLogs` should affect the window width.
+ *
+ * Phase 7D.5. The previous single boolean counted a bare "Request failed" — viem's
+ * wording for *any* non-2xx — and any timeout as proof the window was too wide. Measured
+ * on 2026-09-19 the window collapsed 1875 → 10 blocks and stayed pinned at the floor, so
+ * curve-trade ingestion advanced ~35 blocks/s against a 6.3M-block backlog while the
+ * provider was in fact happily serving 10,000-block windows at ~3,000 blocks/s.
+ *
+ * - `RANGE`  the provider named a range/result cap. Hard evidence: shrink and remember.
+ * - `SOFT`   a timeout or cross-provider deadline. A window that is too wide can cause
+ *            this, but so can congestion — shrink to make progress, remember nothing.
+ * - `NONE`   rate limits, cooldowns, no usable endpoint, transport faults. Nothing to do
+ *            with width: keep the window and let failover/backoff handle it.
+ */
+/** Never narrow below this: a 10-block window is the Alchemy free-tier cap, not a useful working width. */
+const MIN_RANGE = 10n;
+/** Clean ticks required before a remembered range cap is forgotten. */
+const CEILING_SUCCESSES = 20;
+
+export type WindowFailureKind = "RANGE" | "SOFT" | "NONE";
+
+export function classifyWindowFailure(reason: string): WindowFailureKind {
+  if (/no usable RPC endpoint|rate.?limit|429|too many requests|quota|cool/i.test(reason)) return "NONE";
+  if (isRangeLimitMessage(reason)) return "RANGE";
+  if (/timeout|timed out|deadline/i.test(reason)) return "SOFT";
+  return "NONE";
 }
 
 export class CurveTradeListener {
@@ -186,10 +210,21 @@ export class CurveTradeListener {
       // A window too large for the provider (result cap, response size, timeout) is retried smaller.
       // Rate limits and cooled-down endpoints are not about size: wait, keep the window.
       const width = toBlock - fromBlock + 1n;
-      if (isSizeFailure(logsResult.reason)) {
+      const kind = classifyWindowFailure(logsResult.reason);
+      if (kind !== "NONE") {
         const next = width / 2n;
-        this.range = next < 10n ? 10n : next;
-        this.ceiling = { width: (width * 3n) / 4n, successesLeft: 20 };
+        this.range = next < MIN_RANGE ? MIN_RANGE : next;
+        // Only hard evidence installs a ceiling. A ceiling must also never sit below the
+        // width we just dropped to, or `range < cap` is false forever and the window is
+        // pinned at the floor until 20 clean ticks happen to occur — which is exactly how
+        // this listener got stuck at 10 blocks.
+        if (kind === "RANGE") {
+          const remembered = (width * 3n) / 4n;
+          this.ceiling = { width: remembered > this.range ? remembered : this.range, successesLeft: CEILING_SUCCESSES };
+        }
+        this.logger.warn(
+          `curve-trade log window ${width} → ${this.range} blocks after a ${kind === "RANGE" ? "provider range cap" : "timeout"}: ${logsResult.reason.slice(0, 160)}`
+        );
       }
       await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getLogs(CurveBuy|CurveSell) over ${toBlock - fromBlock + 1n} blocks: ${logsResult.reason}`);
       return { status: "UNAVAILABLE", reason: `getLogs: ${logsResult.reason}` };
@@ -281,7 +316,13 @@ export class CurveTradeListener {
     for (const h of timestamps.keys()) this.blockRefs.delete(h);
     if (this.ceiling && --this.ceiling.successesLeft <= 0) this.ceiling = null;
     const cap = this.ceiling && this.ceiling.width < this.maxRange ? this.ceiling.width : this.maxRange;
-    if (this.range < cap) this.range = this.range * 2n > cap ? cap : this.range * 2n;
+    if (this.range < cap) {
+      const grown = this.range * 2n > cap ? cap : this.range * 2n;
+      if (grown !== this.range) {
+        this.range = grown;
+        this.logger.info(`curve-trade log window grew to ${this.range} blocks (cap ${cap}).`);
+      }
+    }
     this.logger.info(`pons_v2 curve trade tick: processed blocks ${fromBlock}-${toBlock}, ${trades.length} trade(s) recorded, ${foreign} foreign log(s) dropped.`);
     return { status: "PROCESSED", fromBlock, toBlock, tradesRecorded: trades.length, foreignLogsDropped: foreign };
   }

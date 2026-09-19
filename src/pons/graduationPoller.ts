@@ -54,7 +54,15 @@ export class GraduationPoller {
       // Phase 7B.5A §2/§9 — never poll a reorg-orphaned row; it is no
       // longer a canonical fact and its graduation state was already reset
       // by reorgRecovery.ts.
-      where: { chain: "robinhood", graduated: false, canonicalStatus: "CANONICAL", enrichmentStatus: "COMPLETE" },
+      // Phase 7D.5 — `venue: "pons"` is not optional. `graduationStatus(token)` is a V1
+      // factory method; Pons V2 curves do not implement it, and V2 graduation is a real
+      // `PoolGraduated` event read by discoveryV2Listener in the same tick as discovery
+      // (which is why no V2 graduation poller exists). Without this filter the poller
+      // walked every non-graduated V2 token — 39,623 of them on 2026-09-19 against ~150
+      // real V1 rows — and every call reverted with 0xcbdb7b30. Those reverts cost a full
+      // RPC round trip each and a WARN line each, on the same rate-limited endpoints V2
+      // discovery and curve-trade ingestion were starving for.
+      where: { chain: "robinhood", venue: "pons", graduated: false, canonicalStatus: "CANONICAL", enrichmentStatus: "COMPLETE" },
       select: { tokenAddress: true },
     });
     if (notGraduated.length === 0) return { status: "NO_POOLS_TRACKED" };
