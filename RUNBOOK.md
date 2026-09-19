@@ -171,6 +171,23 @@ Postgres at the same IP (ARCHITECTURE.md §26.4). Use `psql "$DATABASE_URL"` or 
 Fork verification (`evm-verification/scripts/fork-verify.sh`) needs Foundry 1.8.1 and an
 archive RPC; see `evm-verification/README.md`.
 
+## Phase 7D.4 settings
+
+- `PONS_MAX_BLOCK_RANGE_PER_POLL` — the local `.env` uses 2000. Alchemy free-tier endpoints cap `eth_getLogs` at 10 blocks; failover now skips them for wide ranges (`RANGE_LIMIT`) instead of cooling them down.
+- `PONS_CURVE_TRADES_START_HEIGHT` — optional start block for curve-trade ingestion. Unset starts at the earliest discovered V2 launch.
+- `TOKEN_IMAGE_IPFS_GATEWAYS` — put working gateways first. On 2026-09-15 ipfs.io and dweb.link returned 429 for Pons logos; Filebase and Pinata served them.
+- **Vanity keystore.**
+  - Set `VANITY_KEYSTORE_KEY` with `openssl rand -base64 32`.
+  - Set `VANITY_KEYSTORE_DIR` to an absolute path outside the repo, mode 0700.
+  - Import with `npm run vanity:import -- --file <generator output> --apply`. Run it without `--apply` first.
+  - Delete the plaintext generator file after import.
+  - Losing the key makes stored keypairs unusable; losing the key and the directory together exposes them.
+- `API_KEYS` — required for the internal consume route. User tokens are refused there.
+- `PONS_CURVE_TRADES_MAX_RANGE` — widest curve-trade log window. The local `.env` uses 10000, together with `PONS_MAX_BLOCK_RANGE_PER_POLL=10000` and `PONS_FRESH_START_LOOKBACK_BLOCKS=300000`. The last one gives V4 swaps six hours of baseline when that stream starts.
+- `COINGECKO_DEMO_API_KEY` — optional. The Crypto and Stocks lists work without a key at lower limits.
+- **Trending is empty.** Check `GET /api/v1/tokens/robinhood?lifecycle=trending`, which returns `trending.reason` with the indexing lag. It turns on by itself once both Pons trade streams are within 10 minutes of the tip.
+- **Stopping the pons worker.** `scripts/dev-stack.sh stop` may leave the `node` child running for a few seconds. Stop it by PID. Never use `pkill -f`/`pgrep -f` with a pattern your own shell's command line also contains.
+
 ## Logs
 
 `.run/logs/<service>.log`, git-ignored. `scripts/dev-stack.sh logs <service>` tails one.

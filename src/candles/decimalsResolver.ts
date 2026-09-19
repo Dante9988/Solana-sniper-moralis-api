@@ -34,7 +34,17 @@ export interface ResolvedDecimals {
   readonly quoteDecimals: number;
 }
 
+/**
+ * Phase 7D.4 — Pons V2 launches paired with the chain's native currency record `pairToken` as the
+ * zero address (TokenLaunched), and the curve takes that leg as msg.value. Native ETH amounts are
+ * wei by protocol definition, so the zero address has 18 decimals. It has no decimals() to call:
+ * reading it reverts, which had left every native-paired V2 token (most of them) without candles.
+ */
+export const NATIVE_QUOTE_ADDRESS = "0x0000000000000000000000000000000000000000";
+const NATIVE_DECIMALS = 18;
+
 async function readDecimals(chainClient: ChainReader, address: string): Promise<number | null> {
+  if (address.toLowerCase() === NATIVE_QUOTE_ADDRESS) return NATIVE_DECIMALS;
   const result = await chainClient.readContract<number>({ address, abi: ERC20_ABI, functionName: "decimals", args: [] });
   if (result.status === "UNAVAILABLE") return null;
   const value = Number(result.data);

@@ -1900,3 +1900,87 @@ Evidence is in `only-pump-me/docs/phase-7d3-2/auth/` (screenshots, `auth-journey
 - **Earlier phases:** they reported 1,594–1,711 passing tests. Those runs also collected tests vendored under `evm-verification/lib`, `.claude/` worktrees and `.run/`.
 - **Now:** `vitest.config.ts` excludes those directories. The default suite is **1,111 passed, 82 skipped** (2026-09-14). All DB suites on a disposable database: 1,192 passed, 0 failed.
 - **Conclusion:** the drop is the exclusion, not lost coverage.
+
+## 27. Phase 7D.4 — market terminal, guided Practice, vanity handoff
+
+**Status:** branch `feature/phase-7d4-market-terminal-practice`, not merged. It builds on the 7D.3.3 follow-up commits (PR #22). The row-by-row delivery record, with sources and blockers, is `docs/phase-7d4/implementation-matrix.md`.
+
+### 27.1 Data paths added
+
+| Path | Where | Notes |
+|---|---|---|
+| Pons V2 curve trades | `src/pons/curveTradeListener.ts`, `ponsV2Adapter.decodeCurveTrade` | `CurveBuy`/`CurveSell` from the Sourcify-verified factory bundle (solc 0.8.35). The trader is `recipient` (buyer/seller is a router). Topic-only log query, filtered to discovered curve addresses, behind the discovery barrier. Source `robinhood:pons_v2:curve-trades` |
+| RPC range caps | `rpcEndpoints.ts` `RANGE_LIMIT` | A block-range cap is a per-request limit: move to the next endpoint without cooldown or retry |
+| USD valuation | `src/pons/usd/chainlinkQuoteUsdRateProvider.ts`, `quoteAssetRegistry.robinhood-mainnet.json` | Feeds from the Chainlink directory for Robinhood mainnet, verified on chain (description, decimals). Staleness is heartbeat × 1.1. Historical rounds are walked back within a phase. Chainlink publishes no sequencer uptime feed for this chain, so chain liveness is checked instead |
+| Market data | `src/pons/market/*`, `GET /tokens/robinhood/:address/market` | Rolling windows with coverage `COMPLETE`/`PARTIAL`/`NONE`; zero volume only when coverage is complete; USD volume only when every trade was valued; FDV = total supply × last price |
+| Discovery filters | `GET /tokens/robinhood?lifecycle=&q=`, `GET /discovery/chains` | Per-row `quoteAsset`; Solana reported `UNAVAILABLE` |
+| Metadata gap-fill | `src/pons/metadata/alchemyMetadataFallback.ts` | Alchemy hosts only; null fields only; `metadataProvenance` per field; decimals conflicts recorded, never applied |
+| Artwork | `src/media/tokenImageCache.ts` | Queued at discovery; never-tried rows newest first; fetched concurrently |
+
+### 27.2 Practice
+
+Prisma models `Practice*` (migration `20260915024239`). `src/services/practiceService.ts` runs every ledger write in a serializable transaction with row locks and retries on `40001`/`40P01`. CHECK constraints keep balances and holdings non-negative. Creates are idempotent on (user, key) plus a request fingerprint. Lesson steps are derived from stored facts; only reading steps can be acknowledged. Achievements reward learning actions, never profit. Routes live under `/me/practice` (Supabase users only).
+
+Curve exits: `PonsV2BondingCurve.sell()` executes `trackedQuote -= quoteOut` and panics (0x11) when the curve holds less quote than the exit pays. Paper buys add nothing to the real curve, so such quotes are refused as `CURVE_CANNOT_PAY` (`CURVE_QUOTE_CALCULATION_VERSION = "pons-v2-curve-2"`).
+
+### 27.3 Vanity address handoff
+
+- **Mechanism.** `OnlyPump-Vanity-Generator` grinds Solana ed25519 keypairs whose address ends in `pump`. The address is a pump.fun mint, and the mint keypair must co-sign create, so signing material is unavoidable at launch time. Robinhood Chain has no equivalent (the Pons factory assigns addresses) and reports `UNSUPPORTED`.
+- **Storage.** `src/services/vanity/keystore.ts`: one AES-256-GCM file per address (address bound as AAD, mode 0600) under `VANITY_KEYSTORE_DIR`, key `VANITY_KEYSTORE_KEY`. `VanityAddress.secretRef` holds only `keystore:v1:<address>`.
+- **Import.** `npm run vanity:import -- --file <batch> [--apply]`. It derives each public key from its secret and checks the suffix. It refuses addresses in `exposedVanityAddresses.json`: 283 public keys whose private keys were committed to Git or served by onlypump.me. It refuses any account that already exists on chain (`getMultipleAccounts`) or cannot be checked. A dry run touches neither the database nor the keystore.
+- **State machine.** `AVAILABLE → RESERVED → CONSUMED`, plus `RETIRED`, enforced by CHECK constraints (migration `20260915031429`).
+  - Reserve takes `FOR UPDATE SKIP LOCKED` under a per-user advisory lock, lasts 15 minutes, and is idempotent. A user holds one live reservation at a time.
+  - An expired reservation returns to stock. A consumed address never does.
+- **API.**
+  - `GET /vanity/availability`.
+  - `GET /me/vanity/reservation`, `POST /me/vanity/reservations`, `DELETE /me/vanity/reservations/:id`.
+  - `POST /internal/vanity/reservations/:id/consume` requires the internal API key and returns `secretRef` for the launch signer.
+  - Nothing signs, deploys or broadcasts.
+- **Public JSON.** `VanityHandoffV1` always carries `deployed: false`.
+
+### 27.5 Live market state, Almost bonded, Trending, Stocks and Crypto
+
+**Why it exists.** Cards showed every token as bonding, with price, market cap and liquidity unavailable. The stage was correct: 548 of about 35.5k tokens had graduated. The values were missing because they came only from indexed trades, and curve-trade ingestion was stuck.
+
+- **`TokenMarketSnapshot`** (`src/pons/market/marketSnapshot.ts`, `marketSnapshotWorker.ts`, in the pons worker).
+  - Each batch is one Multicall3 read at a pinned block.
+  - Bonding curves: spot price from `getReserves()`; liquidity from `realQuoteReserve()`.
+  - Bonding progress is measured on the token side, because `readyToGraduate()` is `sellableTokens() == 0`. That makes progress = the bought-out share of `launchSupply − reservedTokens`.
+  - Graduated tokens use StateView `getSlot0` and `getLiquidity`. Liquidity is reported as a full-range equivalent, because graduation seeds one full-range position.
+  - A token that graduated after discovery's height gets its pool derived the same way the quoter does it. The pool is accepted only if the hook's registration names that token.
+  - USD comes from the verified Chainlink provider.
+  - Scheduling: active tokens are re-read every 1–2 minutes. Unchanged tokens back off to 6 hours. New tokens are queued on every tick.
+- **Trending** (`trendingVolume.ts`, every minute).
+  - Ranks by trade-volume surge: last-hour USD volume against the token's average hourly volume over the previous six hours, boosted when the last five minutes run hotter.
+  - Guards: at least $500, 10 trades and 3 distinct traders. New launches need $1,000.
+  - It is computed only while every Pons trade stream is indexed to within 10 minutes of now. Otherwise `lifecycle=trending` reports `trending.available=false` with the lag.
+- **List API.**
+  - `lifecycle` accepts `almost-bonded` and `trending`.
+  - `sort` accepts `new`, `marketCap`, `liquidity`, `progress`, `volume1h`, `trending` and `change1h`.
+  - Every row carries a `market` object.
+- **`GET /markets/crypto|stocks`** (`src/markets/coingecko.ts`).
+  - Crypto uses CoinGecko `/coins/markets`, ordered by market cap.
+  - Stocks use the category `robinhood-chain-stocks-ecosystem`.
+  - Robinhood Chain addresses come from `/coins/list?include_platform=true` (platform `robinhood`) and are checked against Robinhood's official list.
+  - Responses are cached for 1 minute. A stale list is served and flagged when CoinGecko fails.
+- **Curve-trade ingestion fixes.**
+  - The listener was livelocked: it read one block per trade height, a single rate-limited read restarted the whole tick, and it kept retrying the same range.
+  - It now uses the logs' `blockTimestamp` when present; all logs of a block must agree, or the tick fails closed.
+  - Block reads are cached across ticks.
+  - The log window adapts: it halves only on size failures and stops growing just below a failing width.
+  - Throughput is still bounded by the one public RPC that serves wide `eth_getLogs` ranges.
+
+### 27.4 Verification (2026-09-15)
+
+- **Default suite:** 1,145 passed, 111 skipped.
+- **All DB suites on the disposable `ci_7d4_test`:** 1,255 passed, 1 skipped (the Anvil reorg test).
+- **Build checks:** `tsc` clean; `openapi:check` passes with 40 paths.
+- **Browser checks (only-pump-me `docs/phase-7d4/`):**
+
+| Check | Result |
+|---|---|
+| Discovery | 11/11 |
+| Terminal | 13/13 |
+| Practice journey | 20/20 |
+| Vanity | 13/13 |
+| Artwork arrival | 3/3 |

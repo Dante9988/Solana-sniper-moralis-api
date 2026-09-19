@@ -837,6 +837,10 @@ model DiscoveredToken {
   /// abiV2.ts). Null until graduation. isToken0 above is reused for V2 too
   /// once poolId is set: true when this token is Initialize's currency0.
   poolId                    String?
+  /// Phase 7D.4 §2 — per-field provenance for metadata filled after discovery, e.g.
+  /// { "name": { "source": "alchemy_getTokenMetadata", "observedAt": "…" }, "alchemyAttemptedAt": "…",
+  ///   "decimalsConflict": { "chain": 18, "alchemy": 9 } }. Null when everything came from launch/ERC-20 reads.
+  metadataProvenance        Json?
 
   @@unique([chain, tokenAddress])
   @@index([chain, observedAt])
@@ -1181,4 +1185,246 @@ model TokenImageCache {
 
   @@unique([chain, tokenAddress, sourceUrl])
   @@index([status, nextAttemptAt])
+}
+
+/// Phase 7D.4 §5 — Practice: a user's paper-money portfolio. Balances are per quote currency and
+/// explicit; nothing here is a wallet balance, and nothing is ever signed or broadcast.
+model PracticePortfolio {
+  id                 String            @id @default(uuid())
+  userId             String
+  name               String
+  idempotencyKey     String
+  requestFingerprint String
+  createdAt          DateTime          @default(now())
+  balances           PracticeBalance[]
+  holdings           PracticeHolding[]
+  trades             PracticeTrade[]
+  plans              PracticePlan[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+}
+
+/// Paper cash in one quote currency (address; the zero address is native ETH), in base units.
+model PracticeBalance {
+  portfolioId    String
+  portfolio      PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  currency       String
+  symbol         String
+  decimals       Int
+  startingAmount Decimal           @db.Decimal(78, 0)
+  amount         Decimal           @db.Decimal(78, 0)
+  updatedAt      DateTime          @updatedAt
+
+  @@id([portfolioId, currency])
+}
+
+/// Tokens held on paper, with cost basis in the quote currency they were bought with.
+model PracticeHolding {
+  portfolioId   String
+  portfolio     PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  chain         String
+  tokenAddress  String
+  quoteCurrency String
+  amount        Decimal           @db.Decimal(78, 0)
+  /// Quote spent on what is still held (fees included), in quote base units.
+  costBasis     Decimal           @db.Decimal(78, 0)
+  /// Realized result of sells so far, quote base units (signed).
+  realizedPnl   Decimal           @db.Decimal(78, 0)
+  updatedAt     DateTime          @updatedAt
+
+  @@id([portfolioId, chain, tokenAddress])
+}
+
+/// A saved trade plan: what the user intends and why. Exit ideas are notes, never automatic orders.
+model PracticePlan {
+  id                 String            @id @default(uuid())
+  userId             String
+  portfolioId        String
+  portfolio          PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  chain              String
+  tokenAddress       String
+  thesis             String
+  sizeNote           String?
+  exitNote           String?
+  status             String            @default("OPEN") // OPEN | CLOSED
+  idempotencyKey     String
+  requestFingerprint String
+  createdAt          DateTime          @default(now())
+  closedAt           DateTime?
+  review             PracticeReview?
+  trades             PracticeTrade[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, portfolioId, createdAt])
+}
+
+/// One paper entry or exit, backed by an unexpired quote and optionally its successful simulation.
+model PracticeTrade {
+  id                   String            @id @default(uuid())
+  userId               String
+  portfolioId          String
+  portfolio            PracticePortfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  planId               String?
+  plan                 PracticePlan?     @relation(fields: [planId], references: [id], onDelete: SetNull)
+  chain                String
+  tokenAddress         String
+  side                 String
+  venue                String
+  fillBasis            String // EXECUTION_SIMULATION | QUOTE
+  quoteCurrency        String
+  inputAmount          Decimal           @db.Decimal(78, 0)
+  outputAmount         Decimal           @db.Decimal(78, 0)
+  minimumOutput        Decimal           @db.Decimal(78, 0)
+  /// All-in shortfall vs the pre-trade price, basis points, from the quote.
+  allInCostBps         Int
+  realizedPnl          Decimal?          @db.Decimal(78, 0)
+  quoteSnapshotId      String
+  simulationSnapshotId String?
+  idempotencyKey       String
+  requestFingerprint   String
+  createdAt            DateTime          @default(now())
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, portfolioId, createdAt])
+}
+
+model PracticeReview {
+  id        String       @id @default(uuid())
+  userId    String
+  planId    String       @unique
+  plan      PracticePlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  outcome   String // MATCHED_PLAN | DEVIATED | STOPPED_EARLY | OTHER
+  notes     String
+  createdAt DateTime     @default(now())
+}
+
+model PracticeJournalEntry {
+  id          String   @id @default(uuid())
+  userId      String
+  portfolioId String?
+  planId      String?
+  tradeId     String?
+  text        String
+  createdAt   DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model PracticeLessonProgress {
+  userId      String
+  lessonId    String
+  steps       String[]
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  @@id([userId, lessonId])
+}
+
+/// Phase 7D.4 §6 — personal learning achievements. One row per user and code; evidence records why.
+model PracticeAchievement {
+  userId    String
+  code      String
+  evidence  Json
+  awardedAt DateTime @default(now())
+
+  @@id([userId, code])
+}
+
+/// Phase 7D.4 §7 — pre-generated vanity addresses and their reservation. Only the public address
+/// and an opaque reference to server-side, encrypted signing material live here; the secret itself
+/// never enters the database, an API response, a frontend bundle or a log.
+model VanityAddress {
+  id                    String    @id @default(uuid())
+  chain                 String // "solana"
+  address               String    @unique
+  /// How the address was produced: "ed25519-keypair-suffix" (OnlyPump-Vanity-Generator grinds keypairs).
+  generationType        String
+  suffix                String
+  /// Opaque server-side reference, e.g. "keystore:v1:<address>". Never returned by public routes.
+  secretRef             String
+  status                String    @default("AVAILABLE") // AVAILABLE | RESERVED | CONSUMED | RETIRED
+  retiredReason         String?
+  reservationId         String?   @unique
+  reservedBy            String?
+  reservedAt            DateTime?
+  reservationExpiresAt  DateTime?
+  reserveIdempotencyKey String?
+  consumedAt            DateTime?
+  consumeIdempotencyKey String?
+  importedAt            DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([reservedBy, reserveIdempotencyKey])
+  @@index([chain, status, reservationExpiresAt])
+}
+
+/// Phase 7D.4 — live on-chain market state per Pons token, read with Multicall3 at one pinned block.
+/// Independent of trade ingestion, so price, market cap, liquidity and bonding progress are
+/// available even while log ingestion trails the chain tip. Amounts are integers in base units.
+model TokenMarketSnapshot {
+  id                      String    @id @default(uuid())
+  chain                   String
+  tokenAddress            String
+  venue                   String? // "PONS_V2_BONDING_CURVE" | "UNISWAP_V4_POOL"
+  status                  String    @default("PENDING") // PENDING | OK | FAILED | UNSUPPORTED
+  lastError               String?
+  blockNumber             BigInt?
+  blockTimestamp          DateTime?
+  quoteAddress            String?
+  quoteDecimals           Int?
+  tokenDecimals           Int?
+  totalSupply             Decimal?  @db.Decimal(78, 0)
+  /// Quote base units per token base unit, scaled by 1e36.
+  priceQuoteX36           Decimal?  @db.Decimal(78, 0)
+  marketCapQuote          Decimal?  @db.Decimal(78, 0)
+  /// Curve: real quote held (excludes virtual liquidity and pending fees). Pool: 2 × quote side of the active liquidity at the current price (full-range equivalent).
+  liquidityQuote          Decimal?  @db.Decimal(78, 0)
+  priceUsd                Decimal?  @db.Decimal(60, 30)
+  marketCapUsd            Decimal?  @db.Decimal(38, 6)
+  liquidityUsd            Decimal?  @db.Decimal(38, 6)
+  usdRateSource           String?
+  bondingProgressBps      Int?
+  quoteRaised             Decimal?  @db.Decimal(78, 0)
+  graduationThreshold     Decimal?  @db.Decimal(78, 0)
+  graduated               Boolean   @default(false)
+  readyToGraduate         Boolean   @default(false)
+  marketCapChange1hUsd    Decimal?  @db.Decimal(38, 6)
+  marketCapChange1hPct    Decimal?  @db.Decimal(20, 6)
+  /// Phase 7D.4 — Trending by trade volume, from indexed ChainTrade rows (see trendingVolume.ts).
+  volume5mUsd             Decimal?  @db.Decimal(38, 6)
+  volume1hUsd             Decimal?  @db.Decimal(38, 6)
+  volumeBaselineHourlyUsd Decimal?  @db.Decimal(38, 6)
+  volumeSurge             Decimal?  @db.Decimal(20, 6)
+  trades1h                Int?
+  buys1h                  Int?
+  sells1h                 Int?
+  traders1h               Int?
+  trendingScore           Decimal?  @db.Decimal(38, 6)
+  trendingComputedAt      DateTime?
+  unchangedReads          Int       @default(0)
+  nextRefreshAt           DateTime?
+  updatedAt               DateTime  @updatedAt
+  createdAt               DateTime  @default(now())
+
+  @@unique([chain, tokenAddress])
+  @@index([chain, status, nextRefreshAt])
+  @@index([chain, bondingProgressBps])
+  @@index([chain, marketCapUsd])
+  @@index([chain, liquidityUsd])
+  @@index([chain, marketCapChange1hUsd])
+  @@index([chain, trendingScore])
+}
+
+/// Phase 7D.4 — market-cap samples for the 1h change used by Trending. Pruned after 48h.
+model TokenMarketSample {
+  id            String   @id @default(uuid())
+  chain         String
+  tokenAddress  String
+  at            DateTime
+  marketCapUsd  Decimal? @db.Decimal(38, 6)
+  priceQuoteX36 Decimal? @db.Decimal(78, 0)
+
+  @@index([chain, tokenAddress, at])
+  @@index([at])
 }

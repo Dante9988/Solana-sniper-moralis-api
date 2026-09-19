@@ -133,6 +133,52 @@
               "null"
             ]
           },
+          "total": {
+            "type": "integer"
+          },
+          "trending": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "TRADE_VOLUME"
+                ]
+              },
+              "indexedUntil": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "lagSeconds": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "computedAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "available",
+              "basis",
+              "indexedUntil",
+              "lagSeconds",
+              "reason",
+              "computedAt"
+            ]
+          },
           "observedAt": {
             "type": "string"
           }
@@ -140,6 +186,7 @@
         "required": [
           "tokens",
           "nextCursor",
+          "total",
           "observedAt"
         ]
       },
@@ -175,6 +222,9 @@
           },
           "quoteAddress": {
             "type": "string"
+          },
+          "quoteAsset": {
+            "$ref": "#/components/schemas/QuoteAssetRef"
           },
           "name": {
             "type": [
@@ -292,6 +342,9 @@
               "string",
               "null"
             ]
+          },
+          "market": {
+            "$ref": "#/components/schemas/TokenMarket"
           }
         },
         "required": [
@@ -302,6 +355,7 @@
           "poolAddress",
           "curveAddress",
           "quoteAddress",
+          "quoteAsset",
           "name",
           "symbol",
           "logoUrl",
@@ -324,7 +378,61 @@
           "graduationPositionId",
           "graduationTokenAmount",
           "graduationPairTokenAmount",
-          "poolId"
+          "poolId",
+          "market"
+        ]
+      },
+      "QuoteAssetRef": {
+        "type": "object",
+        "properties": {
+          "identified": {
+            "type": "boolean"
+          },
+          "symbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decimals": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "native",
+              "wrapped-native",
+              "stablecoin",
+              "stock-token",
+              null
+            ]
+          },
+          "usdFeed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "identified",
+          "symbol",
+          "name",
+          "decimals",
+          "kind",
+          "usdFeed"
         ]
       },
       "TokenLogo": {
@@ -393,6 +501,228 @@
           "telegram",
           "discord",
           "farcaster"
+        ]
+      },
+      "TokenMarket": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "OK",
+              "FAILED",
+              "UNSUPPORTED"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "venue": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "PONS_V2_BONDING_CURVE",
+              "UNISWAP_V4_POOL",
+              null
+            ]
+          },
+          "blockNumber": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asOf": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Timestamp of the block the values were read at."
+          },
+          "priceQuote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Whole quote units per whole token (spot)."
+          },
+          "priceUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marketCapQuote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Total supply × spot price, in whole quote units."
+          },
+          "marketCapUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liquidityQuote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liquidityUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liquidityBasis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "CURVE_REAL_QUOTE",
+              "POOL_FULL_RANGE_EQUIVALENT",
+              null
+            ]
+          },
+          "bondingProgressPct": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Share of the curve's sellable allocation bought out (graduation triggers at 100)."
+          },
+          "quoteRaised": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "graduationThreshold": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readyToGraduate": {
+            "type": "boolean"
+          },
+          "marketCapChange1hUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marketCapChange1hPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volume5mUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volume1hUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volumeBaselineHourlyUsd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Average hourly USD volume over the six hours before the last hour."
+          },
+          "volumeSurge": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last-hour volume ÷ that baseline (baseline floored at $50)."
+          },
+          "trades1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "buys1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sells1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "traders1h": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "trendingScore": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usdSource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "venue",
+          "blockNumber",
+          "asOf",
+          "priceQuote",
+          "priceUsd",
+          "marketCapQuote",
+          "marketCapUsd",
+          "liquidityQuote",
+          "liquidityUsd",
+          "liquidityBasis",
+          "bondingProgressPct",
+          "quoteRaised",
+          "graduationThreshold",
+          "readyToGraduate",
+          "marketCapChange1hUsd",
+          "marketCapChange1hPct",
+          "volume5mUsd",
+          "volume1hUsd",
+          "volumeBaselineHourlyUsd",
+          "volumeSurge",
+          "trades1h",
+          "buys1h",
+          "sells1h",
+          "traders1h",
+          "trendingScore",
+          "usdSource"
         ]
       },
       "RobinhoodStatusResponse": {
@@ -2164,6 +2494,553 @@
           "quoteId"
         ]
       },
+      "DiscoveryChainsResponse": {
+        "type": "object",
+        "properties": {
+          "chains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "chain": {
+                  "type": "string",
+                  "enum": [
+                    "robinhood",
+                    "solana"
+                  ]
+                },
+                "discovery": {
+                  "type": "string",
+                  "enum": [
+                    "AVAILABLE",
+                    "UNAVAILABLE"
+                  ]
+                },
+                "providers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "AVAILABLE",
+                          "UNAVAILABLE"
+                        ]
+                      },
+                      "reason": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label",
+                      "status",
+                      "reason"
+                    ]
+                  }
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "chain",
+                "discovery",
+                "providers",
+                "reason"
+              ]
+            }
+          }
+        },
+        "required": [
+          "chains"
+        ]
+      },
+      "TokenMarketDataResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "AVAILABLE"
+                ]
+              },
+              "market": {
+                "$ref": "#/components/schemas/TokenMarketData"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "market"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "UNKNOWN_TOKEN",
+                  "DECIMALS_UNAVAILABLE",
+                  "DECIMALS_CONFLICT",
+                  "DATABASE_ONLY_DEPLOYMENT"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail"
+            ]
+          }
+        ]
+      },
+      "TokenMarketData": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "lifecycle": {
+                "type": "string",
+                "enum": [
+                  "BONDING",
+                  "GRADUATED"
+                ]
+              }
+            },
+            "required": [
+              "address",
+              "symbol",
+              "name",
+              "decimals",
+              "lifecycle"
+            ]
+          },
+          "quoteAsset": {
+            "type": "object",
+            "properties": {
+              "address": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Only set when the address is on an official registry; never inferred from the token's own symbol()."
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "identified": {
+                "type": "boolean"
+              },
+              "usdFeed": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "address",
+              "symbol",
+              "decimals",
+              "identified",
+              "usdFeed"
+            ]
+          },
+          "price": {
+            "type": "object",
+            "properties": {
+              "native": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "lastTradeAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usd": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "usdBasis": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usdUnavailableReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "native",
+              "lastTradeAt",
+              "usd",
+              "usdBasis",
+              "usdUnavailableReason"
+            ]
+          },
+          "valuation": {
+            "type": "object",
+            "properties": {
+              "totalSupply": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "fdvNative": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "fdvUsd": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "pattern": "^-?\\d+(\\.\\d+)?$",
+                "description": "Decimal string, already scaled by decimals.",
+                "example": "0.000000014640145702"
+              },
+              "basis": {
+                "type": "string",
+                "enum": [
+                  "TOTAL_SUPPLY_x_LAST_TRADE_PRICE"
+                ]
+              },
+              "circulatingSupply": {
+                "type": "null"
+              },
+              "circulatingSupplyReason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "totalSupply",
+              "fdvNative",
+              "fdvUsd",
+              "basis",
+              "circulatingSupply",
+              "circulatingSupplyReason"
+            ]
+          },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "to": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "notes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "from",
+              "to",
+              "truncated",
+              "notes"
+            ]
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketWindow"
+            }
+          },
+          "recentTrades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketRecentTrade"
+            }
+          },
+          "live": {
+            "$ref": "#/components/schemas/TokenMarket"
+          },
+          "observedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "quoteAsset",
+          "price",
+          "valuation",
+          "coverage",
+          "windows",
+          "recentTrades",
+          "live",
+          "observedAt"
+        ]
+      },
+      "MarketWindow": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string",
+            "enum": [
+              "5m",
+              "15m",
+              "30m",
+              "1h",
+              "24h"
+            ]
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "coverage": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL",
+              "NONE"
+            ],
+            "description": "COMPLETE: ingestion covers the whole window, so zero means no activity. PARTIAL: observed values only. NONE: not covered; all values null."
+          },
+          "trades": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "buys": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sells": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "volumeQuote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Sum of trader-side quote amounts; each trade counted once.",
+            "example": "0.000000014640145702"
+          },
+          "volumeUsd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Sum of per-trade USD at each trade's time; null unless every trade in the window was valued.",
+            "example": "0.000000014640145702"
+          },
+          "tradesValuedUsd": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "priceChangePct": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Latest price vs the last price at or before the window start; null without a baseline.",
+            "example": "0.000000014640145702"
+          }
+        },
+        "required": [
+          "window",
+          "from",
+          "to",
+          "coverage",
+          "trades",
+          "buys",
+          "sells",
+          "volumeQuote",
+          "volumeUsd",
+          "tradesValuedUsd",
+          "priceChangePct"
+        ]
+      },
+      "MarketRecentTrade": {
+        "type": "object",
+        "properties": {
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "tokenAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "quoteAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "price": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "usd": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+(\\.\\d+)?$",
+            "description": "Decimal string, already scaled by decimals.",
+            "example": "0.000000014640145702"
+          },
+          "trader": {
+            "type": "string"
+          },
+          "txHash": {
+            "type": "string"
+          },
+          "logIndex": {
+            "type": "integer"
+          },
+          "block": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "venue": {
+            "type": "string",
+            "enum": [
+              "BONDING_CURVE",
+              "UNISWAP_V4"
+            ]
+          }
+        },
+        "required": [
+          "side",
+          "tokenAmount",
+          "quoteAmount",
+          "price",
+          "usd",
+          "trader",
+          "txHash",
+          "logIndex",
+          "block",
+          "timestamp",
+          "venue"
+        ]
+      },
       "MarketEvidenceResponse": {
         "oneOf": [
           {
@@ -2953,6 +3830,1036 @@
           "positions",
           "observedAt"
         ]
+      },
+      "PracticeOverviewResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "portfolios": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticePortfolio"
+            }
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/PracticeLesson"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "portfolios",
+          "lesson"
+        ]
+      },
+      "PracticePortfolio": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "balances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeBalance"
+            }
+          },
+          "holdings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeHolding"
+            }
+          },
+          "trades": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticeTrade"
+            }
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PracticePlan"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "balances",
+          "holdings",
+          "trades",
+          "plans"
+        ]
+      },
+      "PracticeBalance": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "decimals": {
+            "type": "integer"
+          },
+          "startingAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          }
+        },
+        "required": [
+          "currency",
+          "symbol",
+          "decimals",
+          "startingAmount",
+          "amount"
+        ]
+      },
+      "PracticeHolding": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "quoteCurrency": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "costBasis": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "realizedPnl": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "chain",
+          "tokenAddress",
+          "quoteCurrency",
+          "amount",
+          "costBasis",
+          "realizedPnl",
+          "updatedAt"
+        ]
+      },
+      "PracticeTrade": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "planId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "venue": {
+            "type": "string"
+          },
+          "fillBasis": {
+            "type": "string",
+            "enum": [
+              "EXECUTION_SIMULATION",
+              "QUOTE"
+            ]
+          },
+          "quoteCurrency": {
+            "type": "string"
+          },
+          "inputAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "outputAmount": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "minimumOutput": {
+            "type": "string",
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "allInCostBps": {
+            "type": "integer",
+            "description": "Shortfall versus the pre-trade price, fees included, from the quote."
+          },
+          "realizedPnl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^-?\\d+$",
+            "description": "Integer amount in base units, as a decimal string."
+          },
+          "quoteSnapshotId": {
+            "type": "string"
+          },
+          "simulationSnapshotId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "paper": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "planId",
+          "tokenAddress",
+          "side",
+          "venue",
+          "fillBasis",
+          "quoteCurrency",
+          "inputAmount",
+          "outputAmount",
+          "minimumOutput",
+          "allInCostBps",
+          "realizedPnl",
+          "quoteSnapshotId",
+          "simulationSnapshotId",
+          "createdAt",
+          "paper"
+        ]
+      },
+      "PracticePlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          },
+          "sizeNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exitNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "OPEN",
+              "CLOSED"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "closedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "outcome": {
+                "type": "string"
+              },
+              "notes": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "outcome",
+              "notes",
+              "createdAt"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "tokenAddress",
+          "thesis",
+          "sizeNote",
+          "exitNote",
+          "status",
+          "createdAt",
+          "closedAt",
+          "review"
+        ]
+      },
+      "PracticeLesson": {
+        "type": "object",
+        "properties": {
+          "lessonId": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "done": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "done"
+              ]
+            }
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "achievements": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "earned": {
+                  "type": "boolean"
+                },
+                "awardedAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "code",
+                "title",
+                "description",
+                "earned",
+                "awardedAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "lessonId",
+          "steps",
+          "complete",
+          "achievements"
+        ]
+      },
+      "PracticePortfolioResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "portfolio": {
+            "$ref": "#/components/schemas/PracticePortfolio"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "portfolio"
+        ]
+      },
+      "CreatePracticePortfolioRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "balances": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "currency": {
+                  "type": "string",
+                  "pattern": "^0x[0-9a-fA-F]{40}$"
+                },
+                "amount": {
+                  "type": "string",
+                  "pattern": "^\\d+$"
+                }
+              },
+              "required": [
+                "currency",
+                "amount"
+              ]
+            },
+            "minItems": 1,
+            "maxItems": 4
+          }
+        },
+        "required": [
+          "name",
+          "balances"
+        ]
+      },
+      "PracticePlanResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/PracticePlan"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "plan"
+        ]
+      },
+      "CreatePracticePlanRequest": {
+        "type": "object",
+        "properties": {
+          "tokenAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "thesis": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          },
+          "sizeNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "exitNote": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "tokenAddress",
+          "thesis"
+        ]
+      },
+      "PracticeTradeResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "trade": {
+            "$ref": "#/components/schemas/PracticeTrade"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "created",
+          "trade"
+        ]
+      },
+      "CreatePracticeTradeRequest": {
+        "type": "object",
+        "properties": {
+          "quoteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "simulationId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "planId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "quoteId",
+          "simulationId"
+        ]
+      },
+      "PracticeLessonResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "lesson": {
+            "$ref": "#/components/schemas/PracticeLesson"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "lesson"
+        ]
+      },
+      "ReviewPracticePlanRequest": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "MATCHED_PLAN",
+              "DEVIATED",
+              "STOPPED_EARLY",
+              "OTHER"
+            ]
+          },
+          "notes": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "outcome",
+          "notes"
+        ]
+      },
+      "CompareSizesRequest": {
+        "type": "object",
+        "properties": {
+          "quoteIds": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "string",
+                "format": "uuid"
+              }
+            ]
+          }
+        },
+        "required": [
+          "quoteIds"
+        ]
+      },
+      "LessonStepRequest": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string",
+            "enum": [
+              "preview-costs",
+              "track"
+            ]
+          }
+        },
+        "required": [
+          "step"
+        ]
+      },
+      "VanityAvailability": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string"
+          },
+          "supported": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "integer",
+            "description": "Addresses that can be reserved now."
+          },
+          "suffix": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "chain",
+          "supported",
+          "available",
+          "suffix",
+          "reason"
+        ]
+      },
+      "ActiveVanityReservationResponse": {
+        "type": "object",
+        "properties": {
+          "reservation": {
+            "$ref": "#/components/schemas/VanityHandoffV1"
+          }
+        },
+        "required": [
+          "reservation"
+        ]
+      },
+      "VanityHandoffV1": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "version": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "reservationId": {
+            "type": "string"
+          },
+          "chain": {
+            "type": "string",
+            "enum": [
+              "solana"
+            ]
+          },
+          "address": {
+            "type": "string"
+          },
+          "generationType": {
+            "type": "string",
+            "enum": [
+              "ed25519-keypair-suffix"
+            ]
+          },
+          "suffix": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "RESERVED",
+              "CONSUMED",
+              "EXPIRED",
+              "RELEASED"
+            ]
+          },
+          "reservedAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "consumedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deployed": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "Always false: a reservation is not a token. Deployment is confirmed on chain, elsewhere."
+          },
+          "deployment": {
+            "type": "object",
+            "properties": {
+              "program": {
+                "type": "string",
+                "enum": [
+                  "pump.fun"
+                ]
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "mint"
+                ]
+              },
+              "requiresServerSigner": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "program",
+              "role",
+              "requiresServerSigner",
+              "note"
+            ]
+          }
+        },
+        "required": [
+          "version",
+          "reservationId",
+          "chain",
+          "address",
+          "generationType",
+          "suffix",
+          "status",
+          "reservedAt",
+          "expiresAt",
+          "consumedAt",
+          "deployed",
+          "deployment"
+        ]
+      },
+      "VanityReservationResponse": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "reservation": {
+            "$ref": "#/components/schemas/VanityHandoffV1"
+          }
+        },
+        "required": [
+          "created",
+          "reservation"
+        ]
+      },
+      "ReserveVanityRequest": {
+        "type": "object",
+        "properties": {
+          "chain": {
+            "type": "string",
+            "enum": [
+              "solana",
+              "robinhood"
+            ]
+          }
+        },
+        "required": [
+          "chain"
+        ]
+      },
+      "ConsumeVanityResponse": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "boolean"
+          },
+          "reservation": {
+            "$ref": "#/components/schemas/VanityHandoffV1"
+          },
+          "secretRef": {
+            "type": "string",
+            "description": "Opaque server-side keystore reference for the launch signer. Internal callers only."
+          }
+        },
+        "required": [
+          "created",
+          "reservation",
+          "secretRef"
+        ]
+      },
+      "MarketListResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "AVAILABLE",
+              "UNAVAILABLE"
+            ]
+          },
+          "segment": {
+            "type": "string",
+            "enum": [
+              "crypto",
+              "stocks"
+            ]
+          },
+          "page": {
+            "type": "integer"
+          },
+          "perPage": {
+            "type": "integer"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketRow"
+            }
+          },
+          "fetchedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "enum": [
+                  "CoinGecko"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "attribution": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "url",
+              "attribution"
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "segment",
+          "page",
+          "perPage",
+          "rows",
+          "fetchedAt",
+          "stale",
+          "reason",
+          "source"
+        ]
+      },
+      "MarketRow": {
+        "type": "object",
+        "properties": {
+          "rank": {
+            "type": "integer"
+          },
+          "marketCapRank": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "imageUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priceUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "marketCapUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fdvUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "volume24hUsd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change1hPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change24hPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "change7dPct": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "circulatingSupply": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastUpdated": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "robinhoodChainAddress": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "officialRobinhoodToken": {
+            "type": "boolean"
+          },
+          "chainlinkFeed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "coingeckoUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rank",
+          "marketCapRank",
+          "id",
+          "symbol",
+          "name",
+          "imageUrl",
+          "priceUsd",
+          "marketCapUsd",
+          "fdvUsd",
+          "volume24hUsd",
+          "change1hPct",
+          "change24hPct",
+          "change7dPct",
+          "circulatingSupply",
+          "lastUpdated",
+          "robinhoodChainAddress",
+          "officialRobinhoodToken",
+          "chainlinkFeed",
+          "coingeckoUrl"
+        ]
       }
     },
     "parameters": {}
@@ -3221,13 +5128,77 @@
     },
     "/api/v1/tokens/robinhood": {
       "get": {
-        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4).",
+        "summary": "Recently discovered Pons/Robinhood Chain tokens, newest first (Phase 7B.4). Phase 7D.4: server-side lifecycle (all, bonding, graduated, almost-bonded, trending) and search filters with a filtered total, sorting by newest, market cap, liquidity, bonding progress or 1h market-cap change, a verified quote asset and the live on-chain market snapshot per row.",
         "tags": [
           "robinhood-chain"
         ],
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "bonding",
+                "graduated",
+                "almost-bonded",
+                "trending"
+              ],
+              "default": "all"
+            },
+            "required": false,
+            "name": "lifecycle",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "new",
+                "marketCap",
+                "liquidity",
+                "progress",
+                "change1h",
+                "volume1h",
+                "trending"
+              ]
+            },
+            "required": false,
+            "name": "sort",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "required": false,
+            "name": "q",
+            "in": "query"
           }
         ],
         "responses": {
@@ -4162,6 +6133,98 @@
         }
       }
     },
+    "/api/v1/discovery/chains": {
+      "get": {
+        "summary": "Which chains and launch providers have discovery in this deployment (Phase 7D.4).",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Discovery capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveryChainsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/market": {
+      "get": {
+        "summary": "Market data from OnlyPump's indexed trades: last traded price (native, and USD from a verified Chainlink feed), total supply and FDV, rolling 5m–24h windows with explicit coverage, and recent trades. Circulating market cap is not provided.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Market data, or an explicit unavailable reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenMarketDataResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tokens/robinhood/{tokenAddress}/market-evidence": {
       "get": {
         "summary": "Pinned-block market evidence for a Pons V2 token on either venue: phase, pair asset, spot price, fee terms, curve progress, depth at reference sizes (curve formula or official quoter) and advanced protocol parameters. No USD.",
@@ -4401,6 +6464,1090 @@
             }
           },
           "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice": {
+      "get": {
+        "summary": "The signed-in user's practice portfolios (paper balances, holdings, trades, plans) and intro-lesson progress with achievements. Never a wallet balance.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Practice overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeOverviewResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios": {
+      "post": {
+        "summary": "Start a practice portfolio with explicit paper balances in verified quote assets. Idempotent per Idempotency-Key.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePracticePortfolioRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePortfolioResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePortfolioResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios/{portfolioId}": {
+      "get": {
+        "summary": "One of the signed-in user's practice portfolios.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "portfolioId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Portfolio",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePortfolioResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios/{portfolioId}/plans": {
+      "post": {
+        "summary": "Record a trade plan: why, how much, and exit notes. Exit notes are never executed automatically.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "portfolioId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePracticePlanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePlanResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticePlanResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/portfolios/{portfolioId}/trades": {
+      "post": {
+        "summary": "Place a paper entry or exit from an unexpired quote and, optionally, its successful simulation. Buys need paper cash in the pair's currency; sells need the tokens. The real pool is not changed.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "portfolioId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{8,128}$"
+            },
+            "required": true,
+            "name": "Idempotency-Key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePracticeTradeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeTradeResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Filled on paper",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeTradeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/plans/{planId}/review": {
+      "post": {
+        "summary": "Review a plan after its practice entry and exit.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "planId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewPracticePlanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Reviewed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INSUFFICIENT_PAPER_BALANCE, INSUFFICIENT_PAPER_HOLDING, NO_PAPER_BALANCE_IN_CURRENCY, QUOTE_EXPIRED, PLAN_MISMATCH, PLAN_NOT_CLOSEABLE or ALREADY_REVIEWED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "IDEMPOTENCY_KEY_REUSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/lesson": {
+      "get": {
+        "summary": "Intro lesson progress, derived from what the user has actually done, and learning achievements.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lesson",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/lesson/compare-sizes": {
+      "post": {
+        "summary": "Record a comparison of two quotes for the same token and side at different sizes.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompareSizesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lesson",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/practice/lesson/steps": {
+      "post": {
+        "summary": "Mark a reading step (preview-costs, track) as done. Other steps complete by doing them.",
+        "tags": [
+          "practice"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonStepRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Lesson",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PracticeLessonResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/vanity/availability": {
+      "get": {
+        "summary": "How many vanity mint addresses can be reserved on a chain, or why the chain has none.",
+        "tags": [
+          "vanity"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "solana",
+                "robinhood"
+              ],
+              "default": "solana"
+            },
+            "required": false,
+            "name": "chain",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VanityAvailability"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/vanity/reservation": {
+      "get": {
+        "summary": "The caller's live (or consumed) reservation on a chain, if any.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "solana",
+                "robinhood"
+              ],
+              "default": "solana"
+            },
+            "required": false,
+            "name": "chain",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reservation or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActiveVanityReservationResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/vanity/reservations": {
+      "post": {
+        "summary": "Reserve a vanity mint address for 15 minutes. Idempotent on the Idempotency-Key header; one live reservation per user.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReserveVanityRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing reservation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VanityReservationResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Reserved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VanityReservationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/vanity/reservations/{reservationId}": {
+      "delete": {
+        "summary": "Release a reservation back to stock. A consumed address cannot be released.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "reservationId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Released"
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/internal/vanity/reservations/{reservationId}/consume": {
+      "post": {
+        "summary": "Internal launch service only: mark a reserved address as taken. Idempotent. Signs and broadcasts nothing.",
+        "tags": [
+          "vanity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "reservationId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "idempotency-key",
+            "in": "header"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Replayed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumeVanityResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Consumed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumeVanityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/markets/{segment}": {
+      "get": {
+        "summary": "Crypto ranked by market cap, or Robinhood Chain stock tokens, from CoinGecko (cached one minute; stale lists are flagged).",
+        "tags": [
+          "markets"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "crypto",
+                "stocks"
+              ]
+            },
+            "required": true,
+            "name": "segment",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 40,
+              "default": 1
+            },
+            "required": false,
+            "name": "page",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 100,
+              "default": 50
+            },
+            "required": false,
+            "name": "perPage",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Market list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketListResponse"
+                }
+              }
+            }
+          },
+          "400": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

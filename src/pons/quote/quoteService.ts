@@ -80,6 +80,7 @@ export type UnsupportedReason =
   | "CURVE_GRADUATED"
   | "OUTPUT_ROUNDS_TO_ZERO"
   | "INSUFFICIENT_LIQUIDITY"
+  | "CURVE_CANNOT_PAY"
   | "QUOTER_REVERTED"
   | "PRICE_IMPACT_EXCEEDS_POLICY";
 
@@ -355,6 +356,7 @@ async function quoteCurve(
     launchedAt: readValue<bigint>(r[8], "launchedAt"),
   };
   const trackedQuote = readValue<bigint>(r[9], "trackedQuote");
+  state.trackedQuote = trackedQuote;
   // The memecoin is always an ERC-20, so its two metadata reads always occupy 10 and 11.
   const tokenMeta = assetMeta(token, r[10], r[11]);
   const pairMeta = assetMeta(pairToken, r[12], r[13]);
@@ -406,7 +408,12 @@ async function quoteCurve(
   }
 
   const q = quoteCurveSell(state, req.amountIn);
-  if (!q.ok) throw new Unsupported(q.refusal, `curve refused the sell: ${q.refusal}`, venue);
+  if (!q.ok) {
+    if (q.refusal === "CURVE_CANNOT_PAY") {
+      throw new Unsupported(q.refusal, `This sell would pay out more than the curve really holds (${trackedQuote.toString()} base units of the pair asset from real buyers), so it would revert. A smaller sell may still work.`, venue);
+    }
+    throw new Unsupported(q.refusal, `curve refused the sell: ${q.refusal}`, venue);
+  }
   const allIn = shortfallVsSpotBps({ amountIn: req.amountIn, outAmount: q.quoteOut, spotX36: quotePerTokenX36 });
   enforceImpact(allIn, venue);
   return {

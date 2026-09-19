@@ -22,6 +22,7 @@
 import type { Abi, AbiEvent } from "viem";
 
 import {
+  type EventLogReader,
   PonsChainClient,
   type ChainCaller,
   type ChainClientResult,
@@ -107,7 +108,7 @@ function extractHttpDetails(error: unknown): { status?: number; retryAfter?: str
   return { status, retryAfter, message, code };
 }
 
-export class FailoverChainClient implements ChainCaller {
+export class FailoverChainClient implements ChainCaller, EventLogReader {
   private readonly entries: EndpointEntry[];
   private readonly config: RobinhoodChainConfig;
   private readonly perEndpointRetries: number;
@@ -311,6 +312,18 @@ export class FailoverChainClient implements ChainCaller {
         } catch (error) {
           const details = extractHttpDetails(error);
           const failure = classifyRpcFailure(details);
+          if (failure === "RANGE_LIMIT") {
+            // A plan limit on this request shape, not a sick endpoint: move on, no cooldown.
+            last = {
+              status: "UNAVAILABLE",
+              source: "robinhood-chain-rpc",
+              fetchedAt: new Date(),
+              code: "RPC_ERROR",
+              reason: redactRpcUrls(details.message),
+              attempts: attempt + 1,
+            };
+            break;
+          }
           if (!shouldFailover(failure)) {
             // A request fault: report it, never burn other endpoints on it.
             return {
@@ -351,6 +364,7 @@ export class FailoverChainClient implements ChainCaller {
         const failure = classifyRpcFailure({ message: result.reason, code: result.code });
         last = result;
 
+        if (failure === "RANGE_LIMIT") break; // next endpoint, no cooldown, no retry
         if (!shouldFailover(failure)) return result;
 
         this.recordFailure(entry, failure, null);
@@ -399,6 +413,14 @@ export class FailoverChainClient implements ChainCaller {
     args?: Record<string, unknown>;
   }): Promise<ChainClientResult<RawEvmLog[]>> {
     return this.run((client) => client.getLogs(params));
+  }
+
+  getLogsByEvents(params: { events: readonly AbiEvent[]; fromBlock: bigint; toBlock: bigint; address?: string | string[] }): Promise<ChainClientResult<RawEvmLog[]>> {
+    return this.run((client) =>
+      typeof (client as Partial<EventLogReader>).getLogsByEvents === "function"
+        ? (client as unknown as EventLogReader).getLogsByEvents(params)
+        : Promise.resolve({ status: "UNAVAILABLE" as const, source: "robinhood-chain-rpc", fetchedAt: new Date(), code: "RPC_ERROR" as const, reason: "client does not implement getLogsByEvents", attempts: 1 })
+    );
   }
 
   readContract<T>(params: {
