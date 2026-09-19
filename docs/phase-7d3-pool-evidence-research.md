@@ -1,3 +1,9 @@
+> **Partly superseded (2026-09-13).** [phase-7d3-2-quote-verification.md](./phase-7d3-2-quote-verification.md) corrects two conclusions here:
+> - An official V4Quoter **is** deployed on Robinhood Chain (G4 below is wrong).
+> - The hook fee is `hookFeeBps + creatorTaxBps`, not a flat 2% creator tax (§7.3).
+>
+> The PoolKey/PoolId and StateLibrary derivations remain valid.
+
 # Phase 7D.3 §5/§6 — protocol source matrix and gap analysis
 
 > `CLAUDE.md` (frontend repo, applied repo-wide): *"Never implement or modify blockchain

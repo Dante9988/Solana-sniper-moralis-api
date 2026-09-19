@@ -1,3 +1,9 @@
+> **Status update (2026-09-14).** Still accurate as the Phase 7D record, with these later changes:
+> - The frontend "Live Discovery" table moved to the launchpad Explore feed (`src/features/launchpad/`).
+> - Logos are now served by the backend's own cache (`/api/v1/media/token-logos/...`), not resolved from `ipfs://` in the browser.
+> - WSS subscriptions got a recovery layer in Phase 7D.3.1 (`src/pons/wsSubscriptionManager.ts`); HTTP polling still carries ingestion.
+> - The V4 swap path now has verified quotes and simulation (Phase 7D.3.2). See [ARCHITECTURE.md](./ARCHITECTURE.md) §23–§26.
+
 # Phase 7D — Pons V2 / Uniswap V4 ingestion, and a new dual-AMM launchpad
 
 This is a single-file summary of everything built across three repos in this phase:

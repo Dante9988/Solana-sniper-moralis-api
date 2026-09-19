@@ -1,43 +1,55 @@
-# 🎯 Solana Sniper and Token Intelligence Platform
+# 🎯 OnlyPump backend (Solana-sniper-moralis-api)
 
-An event-driven Solana listener with Discord alerts, legacy trading utilities, and a new read-only token-intelligence pipeline. The intelligence layer researches newly discovered tokens, persists normalized reports, and optionally uses Anthropic Claude to synthesize evidence into a constrained `RESEARCH_ONLY` assessment.
+The backend for [OnlyPump](https://github.com/Dante9988/only-pump-me). It has two halves:
 
-The current intelligence implementation covers Phases 1–4:
+- **Robinhood Chain / Pons discovery and paper trading.** This half serves the web app today.
+  - Ingestion workers index Pons V1 and V2 launches, trades and graduations into PostgreSQL, and a candle worker aggregates OHLCV.
+  - The `/api/v1` gateway serves discovery, token detail, candles and block-pinned market evidence.
+  - It also serves **quotes verified against the real contracts on a fork**, route simulations, immutable evidence snapshots and per-user **paper positions**.
+  - Nothing in this path signs or broadcasts a transaction.
+- **Solana token intelligence.** Event-driven Pump.fun/PumpSwap listeners with Discord alerts, deterministic research, forensics, and optional Anthropic synthesis into `RESEARCH_ONLY` reports. A legacy non-custodial Telegram/Discord trading surface also lives here (see `ARCHITECTURE.md` §8).
 
-- Event normalization and non-blocking listener dispatch
-- Deterministic metadata, market, social, and safety research
-- Prisma-backed report and evidence persistence
-- Anthropic structured-output synthesis with strict safety boundaries
-- Moralis API compatibility cleanup for the 2026 endpoint removals
-- Removal of trench.bot from runtime paths
-- Canonical Solana/Ethereum/BNB asset identity and durable research observations
-
-Later features such as Chroma/RAG, trending tracking, macro/news ingestion, X ingestion, live EVM providers, portfolios, and internal bundle/wallet-cluster forensics are not implemented.
+| Document | Read it for |
+|---|---|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | How everything works today, phase by phase (Robinhood/Pons: §19–§21, §23–§26) |
+| [RUNBOOK.md](./RUNBOOK.md) | Running the API, workers and frontend locally |
+| [docs/phase-7d3-2-quote-verification.md](./docs/phase-7d3-2-quote-verification.md) | Why quotes can be trusted: sources, contract identities, fork evidence |
+| [evm-verification/README.md](./evm-verification/README.md) | The Foundry harness |
+| [PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md](./PHASE_7D_ROBINHOOD_V2_AND_LAUNCHPAD.md) | Pons V2 / Uniswap V4 ingestion |
+| [src/intelligence/README.md](./src/intelligence/README.md), [src/forensics/README.md](./src/forensics/README.md), [src/assets/README.md](./src/assets/README.md) | Solana intelligence, forensics, canonical assets |
 
 ## 🏗️ Current architecture
 
 ```text
-Solana listener
-  -> TokenDiscoveryEvent
-  -> bounded, non-blocking dispatcher
-  -> deterministic researchers
-       metadata
-       market
-       safety
-       social
-       bundle/sniper (currently UNAVAILABLE)
-  -> Anthropic synthesis (optional)
-  -> TokenIntelligenceReport
-  -> Prisma persistence
+Robinhood Chain RPC (HTTPS/WSS, multi-key failover)
+  ├─ npm run pons:worker     Pons V1/V2 launches, trades, graduation → PostgreSQL (checkpoints, reorg recovery)
+  ├─ npm run candles:worker  ChainTrade → MarketCandle
+  └─ npm run api             /api/v1 on :8787
+        discovery, token detail, candles, source health           (DB reads)
+        quotes, simulations, market evidence                      (block-pinned chain reads)
+        evidence snapshots, /me/paper-positions                   (Postgres, Supabase auth)
+        token logos                                               (in-process cache worker)
+
+Solana listener (npm run dev)
+  -> TokenDiscoveryEvent -> bounded dispatcher -> deterministic researchers
+  -> Anthropic synthesis (optional) -> TokenIntelligenceReport (Prisma)
+  -> forensics:worker (opt-in) -> /api/v1/tokens/:mint/{report,forensics,scans}
 ```
 
-The listener does not wait for intelligence processing. Dispatch is deduplicated, concurrency-bounded, timeout-isolated, and protected against synchronous errors and unhandled promise rejections.
+## 🚀 Quick start (Robinhood Chain stack)
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the broader legacy application map and [src/intelligence/README.md](./src/intelligence/README.md) for intelligence-specific boundaries.
+```bash
+npm install
+cp .env.example .env          # set DATABASE_URL, ROBINHOOD_*, PONS_*, SUPABASE_URL
+npx prisma generate
+npx prisma migrate deploy
+scripts/dev-stack.sh start    # api + pons + candles, supervised
+curl -s localhost:8787/api/v1/tokens/robinhood/status
+```
 
-The Phase 4 asset foundation is documented in [src/assets/README.md](./src/assets/README.md). It is intentionally not connected to an active listener or tracker yet.
+Then start the frontend with `VITE_API_BASE_URL=http://localhost:8787/api/v1 npm run dev` in `only-pump-me`, and open `http://localhost:8080`. See [RUNBOOK.md](./RUNBOOK.md).
 
-## 🧠 Token intelligence
+## 🧠 Solana token intelligence (Phases 1–4)
 
 ### 📡 Event model
 
@@ -150,6 +162,8 @@ trench.bot and the retired Moralis sniper endpoint have been removed from runtim
 
 Until internal forensics is built, the worker returns `INTERNAL_FORENSICS_PENDING`, empty findings/evidence, confidence `0`, and no synthetic percentages. This makes the overall report `PARTIAL`.
 
+Internal forensics now exists (Phases 5A–5E, `src/forensics/`). The researcher still returns `INTERNAL_FORENSICS_PENDING` at dispatch time. When `FORENSICS_ENQUEUE_ENABLED` and `FORENSICS_RECONCILIATION_ENABLED` are on, the separate `forensics:worker` runs later and its results are reconciled onto the report (`ARCHITECTURE.md` §3).
+
 ## 🪪 Canonical assets and observations
 
 Canonical asset identity is the chain ID plus normalized address. Solana public keys remain case-sensitive. EVM addresses normalize to lowercase and require an explicit Ethereum or BNB Smart Chain selection; a bare EVM address returns an ambiguous-chain result. Ticker and name never determine identity.
@@ -186,13 +200,12 @@ Reports are upserted by `eventId` so repeated persistence does not create duplic
 
 ## 📋 Requirements
 
-- Node.js 18 or newer
-- npm
-- PostgreSQL for intelligence report persistence
-- Solana RPC/WSS configuration for listeners
-- Discord configuration for alerts
-- Moralis API key for supported market/metadata enrichment
-- Anthropic API key only when live AI synthesis is desired
+- Node.js 20 (CI) and npm. Use `npm`, not Yarn.
+- PostgreSQL 16.
+- A Robinhood Chain RPC. Quotes and simulations need `eth_call` with state overrides; fork verification needs an archive RPC.
+- A Supabase project (`SUPABASE_URL`) for signed-in routes such as paper positions.
+- Foundry **1.8.1**, only for `evm-verification/`.
+- Solana side, only for its processes: Helius RPC/WSS, Discord, Moralis, and optionally Anthropic.
 
 ## 🛠️ Installation
 
@@ -205,87 +218,71 @@ npx prisma generate
 npx prisma migrate deploy
 ```
 
-Never commit `.env`, API keys, wallet keys, or credentials.
+Never commit `.env`, API keys, wallet keys or credentials. Never put backend secrets (`API_KEYS`, `SUPABASE_SECRET_KEY`, Redis URLs) in the frontend.
 
 ## 🔐 Environment configuration
 
-The committed `.env.example` contains names and non-secret defaults for Anthropic synthesis:
+`.env.example` documents every name with no real values. The main groups:
 
-```dotenv
-ANTHROPIC_API_KEY=
-ANTHROPIC_MODEL=claude-haiku-4-5-20251001
-ANTHROPIC_TIMEOUT_MS=15000
-ANTHROPIC_MAX_TOKENS=1024
-```
+| Group | Names |
+|---|---|
+| Database | `DATABASE_URL` |
+| Robinhood Chain | `ROBINHOOD_CHAIN_ID`, `ROBINHOOD_RPC_HTTPS` / `_WSS`, failover `ROBINHOOD_RPC_HTTPS2`/`3`, `DEAFULT_RPC_HTTPS` (and WSS equivalents), `ROBINHOOD_EXPLORER` |
+| Pons | `PONS_FACTORY`, `PONS_LOCKER`, `PONS_FACTORY_LEGACY`, `PONS_LOCKER_LEGACY`, `PONS_V2_FACTORY`, `WETH_QUOTE`, `PONS_*` polling/health tuning |
+| API | `API_PORT` (8787), `API_PUBLIC_READS`, `API_KEYS`, `CORS_ALLOWED_ORIGINS`, `CORS_DEV_ORIGINS`, `RATE_LIMIT_BACKEND`, `REDIS_URL` |
+| Auth | `SUPABASE_URL`, `SUPABASE_JWT_AUDIENCE` |
+| Media | `TOKEN_IMAGE_IPFS_GATEWAYS` |
+| Solana intelligence | `HELIUS_*`, `MORALIS_API_KEY`, `DISCORD_*`, `ANTHROPIC_*`, `FORENSICS_*`, `X_*` |
 
-Existing runtime components may also require these names, depending on which process is started:
-
-- `DATABASE_URL`
-- `MORALIS_API_KEY`
-- `HELIUS_HTTPS_URI`, `HELIUS_WSS_URI`, `HELIUS_HTTPS_URI_TX`
-- `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`
-- PnL and summary Discord channel IDs
-- Jupiter and DexScreener endpoint variables
-- Legacy wallet variables for explicitly enabled execution paths
-
-Do not place real values in `.env.example`.
+The full table is in `ARCHITECTURE.md` §12.
 
 ## ⚙️ Commands
 
 ```bash
-# Compile TypeScript
-npm run build
+npm run build                  # tsc
+npx vitest run                 # default suite (1,111 passed / 82 skipped on 2026-09-14)
+npm run openapi:check          # Zod contracts vs committed openapi.json
+npm run api                    # /api/v1 gateway on :8787
+npm run pons:worker            # Robinhood Chain ingestion
+npm run candles:worker         # candle aggregation
+scripts/dev-stack.sh start|stop|status|logs <svc>
 
-# Run every mocked test
-npx vitest run
+# Opt-in DB suites — DISPOSABLE database only (name must contain test/ci/tmp as a word)
+PAPER_RUN_DB_TESTS=true PONS_RUN_DB_TESTS=true npx vitest run --no-file-parallelism
 
-# Run only token-intelligence tests
-npm run test:intelligence
+# Foundry verification
+cd evm-verification && scripts/install-deps.sh && forge test -vv
+ROBINHOOD_FORK_RPC_URL=<archive RPC> scripts/fork-verify.sh
 
-# Validate the Prisma schema
-npx prisma@6.5.0 validate
-
-# Start the primary listener
-npm run dev
-
-# Start the Pump.fun listener
+# Solana side
+npm run dev                    # listener + Discord + Telegram bot (see ARCHITECTURE.md §0 first)
 npm run pumpfun
-
-# Start token tracking
-npm run tracker
-
-# Start the 15k monitor
-npm run pumpfun15k
-
-# Start the development server
-npm run server:dev
+npm run forensics:worker
+npm run test:intelligence
 ```
 
-All intelligence and provider tests mock network access. Tests do not call Moralis, Anthropic, RugCheck, SolSniffer, Pump.fun, or other live services.
+All intelligence and provider tests mock network access. DB suites refuse to run against a non-disposable database (`ARCHITECTURE.md` §26.3).
 
 ## ✅ Verification status
 
-The latest Phase 4 verification covers:
+As of 2026-09-14:
 
-- TypeScript production build passing
-- Canonical resolution, ambiguous EVM chains, observation validation, idempotent mocked persistence, and execution-boundary tests
-- Prisma 6.5 schema validation
-- No active trench.bot URL or client
-- No active removed Moralis endpoint calls
-- No temporary Anthropic smoke-test files or background listener processes
-
-Native bigint bindings may emit a warning during tests and fall back to their pure-JavaScript implementation.
+- **CI:** `build-and-test` (typecheck, OpenAPI drift, default and DB suites on a throwaway Postgres, anvil reorg proof, build) and `foundry-verification` (Foundry 1.8.1; 17/17 fork tests at block 62211539) are green on `main` (`b1de963`).
+- **Quotes:** 68 of 68 fork quote rows equal the executed swap.
+- **Browser acceptance:** paper positions passed 11/11 with two confirmed Supabase users (`ARCHITECTURE.md` §26.1).
 
 ## 🚧 Known limitations and next work
 
-- The Phase 4 asset store is not wired into listeners or the intelligence orchestrator yet.
-- Live Ethereum and BNB data providers are not implemented.
-- Internal bundle, sniper, developer, insider, and wallet-cluster forensics are pending.
-- Hard eligibility policy is pending; missing forensic evidence must prevent a future `ELIGIBLE` or safe conclusion.
-- Chroma/RAG, trending history, macro/news research, and X ingestion are not implemented.
-- Optional live provider smoke tests require explicit credentials and are not part of the mocked suite.
-- Some legacy analytics paths still use zero-valued presentation fallbacks; intelligence reports preserve unavailable evidence separately.
-- The broader repository includes legacy execution-capable code and should not be treated as safe for unattended trading without a separate audit.
+- **V2 trade ingestion stalls:** Pons V2 discovery polls 10 blocks at a time and is far behind the tip, so V2 trades and candles are not ingested (`ARCHITECTURE.md` §26.4). The earlier `ORPHANED` data damage was repaired on 2026-09-15.
+- **Unsupported quote paths:** Swept, Rescued and Pons V1 tokens, and trades inside the 3-second snipe window.
+- **No USD pricing on Robinhood Chain.**
+- **Enrichment via `alchemy_getTokenMetadata` is pending.**
+- **No real execution:** paper positions only.
+- **Solana side:**
+  - The Phase 4 asset store is not wired into listeners.
+  - No live Ethereum/BNB providers.
+  - No Chroma/RAG.
+  - Legacy execution-capable code still exists and needs its own audit before any unattended use.
 
 ## ⚠️ Security and disclaimer
 
