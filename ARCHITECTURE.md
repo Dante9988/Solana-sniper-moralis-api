@@ -2043,20 +2043,41 @@ And `tradeV2Listener` logged `"No pons_v2 trade checkpoint found — starting fr
 
 All figures from the live chain on 2026-09-19. The stack had been down since 2026-09-15 08:36 (the app database is the `onlypump-pg` container, which had exited); the chain had grown ~3.7M blocks meanwhile.
 
-| Stream | Before (7D.4 code) | After | Backlog at measurement |
+| Stream | Before (7D.4 code) | After | Lag at session end |
 |---|---|---|---|
-| Pons V1 discovery | ~790 blocks/s | **~2,300 blocks/s** | 2.67M blocks |
-| Pons V2 discovery | ~48 blocks/s | ~46 blocks/s (unchanged — see §28.4) | 4.72M blocks |
-| V2 curve trades | ~19–35 blocks/s, window pinned at 10 | window reaches 5,000–7,500 | 6.32M blocks |
+| Pons V1 discovery | ~790 blocks/s | **~800–2,300 blocks/s** | 1.68M blocks (was 3.71M) |
+| Pons V2 discovery | ~46 blocks/s | **~97–123 blocks/s**, full 10,000-block windows | 4.66M blocks |
+| V2 curve trades | ~19–35 blocks/s, window **pinned at 10** | ticking again, window climbing (10 → 640 and rising) | 6.33M blocks |
 | V4 pool trades | never advanced a checkpoint | still barriered on V2 discovery | — |
 
-Chain growth is ~10 blocks/s, so any rate above that shrinks the backlog.
+Chain growth is ~10 blocks/s, so any rate above that shrinks the backlog. Over the session
+V1 discovery advanced **2.06M blocks** and `DiscoveredToken` went 39,770 → 42,407.
 
-### 28.4 The remaining bottleneck, quantified — NOT fixed here
+Note what the "after" column does *not* say. Curve trades recovered from a hard stop to a
+climbing window, but they are not fast yet, and the reason is contention — see §28.4.
 
-**V2 discovery is now the long pole, and it is not an RPC-capability problem.** Each 10,000-block tick finds ~254 launches and enriches each one with three `eth_call`s (`totalSupply`, `name`, `symbol`) plus one `getTransaction` for launch metadata — ~1,016 RPC round trips per tick, at `PONS_ENRICHMENT_CONCURRENCY=5` (default), against three quota-exhausted Alchemy keys and one workhorse endpoint.
+### 28.4 The remaining bottlenecks, quantified — NOT fixed here
 
-At the measured ~46 blocks/s against ~10 blocks/s of chain growth, the 4.72M-block backlog closes in roughly **36 hours** unattended. It does close — the backlog shrinks — but that is the honest number.
+**First, and cheapest to fix: Pons V1 discovery is scanning for nothing, at the expense of everything else.**
+
+In 36 consecutive ticks it discovered **0 tokens**, and the database contains **zero**
+`venue = 'pons'` rows — V1 discovery has never produced a single row in this deployment.
+Yet it is the heaviest consumer of the one usable wide-range endpoint, running at ~800
+blocks/s while it backfills 1.68M blocks. V2 discovery and curve trades, the two streams
+that actually feed the product, contend with it for the same provider and are the ones that
+get starved and cooled down.
+
+This is a configuration decision, not a code defect, so it is reported rather than changed
+unilaterally: with `PONS_FACTORY` set, `ponsWorkerMain` always starts the V1 discovery,
+trade and graduation loops. Confirming the V1 factory is genuinely dead on this chain and
+then standing that loop down would hand its entire share of the provider to V2 discovery
+and curve trades. Expect that to be worth more than any other single change listed here.
+
+
+
+**Second: V2 discovery's per-tick enrichment cost.** Each 10,000-block tick finds ~254 launches and enriches each one with three `eth_call`s (`totalSupply`, `name`, `symbol`) plus one `getTransaction` for launch metadata — ~1,016 RPC round trips per tick, at `PONS_ENRICHMENT_CONCURRENCY=5` (default), against three quota-exhausted Alchemy keys and one workhorse endpoint.
+
+At the measured ~97–123 blocks/s against ~10 blocks/s of chain growth, the 4.66M-block backlog closes in roughly **12–14 hours** unattended. It does close — the backlog shrinks — but that is the honest number, and it assumes the contention above is not made worse.
 
 The obvious fix is to batch the three ERC-20 reads through Multicall3, which `marketSnapshot.ts` already does for its own reads (one Multicall3 read per batch at a pinned block); that would cut the dominant per-tick cost by roughly 30×. It is **deliberately not implemented in this phase**: it changes a correctness-sensitive path (enrichment under block pinning and reorg recovery) and deserves its own change with its own fork tests, rather than being appended to a phase whose measurements were only just taken.
 
