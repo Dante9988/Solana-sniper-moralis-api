@@ -2047,14 +2047,29 @@ All figures from the live chain on 2026-09-19. The stack had been down since 202
 |---|---|---|---|
 | Pons V1 discovery | ~790 blocks/s | **~800–2,300 blocks/s** | 1.68M blocks (was 3.71M) |
 | Pons V2 discovery | ~46 blocks/s | **~97–123 blocks/s**, full 10,000-block windows | 4.66M blocks |
-| V2 curve trades | ~19–35 blocks/s, window **pinned at 10** | ticking again, window climbing (10 → 640 and rising) | 6.33M blocks |
+| V2 curve trades | ~19–35 blocks/s, window **pinned at 10**, then a hard stop | ticking again, but a **sawtooth**: ~15–21 blocks/s (see below) | 6.33M blocks |
 | V4 pool trades | never advanced a checkpoint | still barriered on V2 discovery | — |
 
 Chain growth is ~10 blocks/s, so any rate above that shrinks the backlog. Over the session
 V1 discovery advanced **2.06M blocks** and `DiscoveredToken` went 39,770 → 42,407.
 
-Note what the "after" column does *not* say. Curve trades recovered from a hard stop to a
-climbing window, but they are not fast yet, and the reason is contention — see §28.4.
+Note what the "after" column does *not* say. Curve trades recovered from a hard stop, but
+they have **not** recovered their throughput, and an early reading of this phase overstated
+it: catching the window mid-climb at 640 looked like recovery. Measured over a full 10
+minutes, 89 ticks, the window is a sawtooth —
+
+| Window width | 10 | 20 | 40 | 80 | 160 | 320 | 640 | 1280 | 2560 |
+|---|---|---|---|---|---|---|---|---|---|
+| Ticks | **57** | 6 | 5 | 6 | 6 | 4 | 3 | 1 | 1 |
+
+— climbing by doubling whenever the wide-range endpoint is free, then collapsing straight
+back to the 10-block floor the moment it is not. Every recent narrowing gives the same
+reason: `after a timeout: no usable RPC endpoint for this request right now: 3 of 4
+endpoint(s) in cooldown`. Net **~15–21 blocks/s against ~10 blocks/s of chain growth**, so
+the 6.33M-block backlog is very nearly static. The `SOFT` classification is doing its job —
+it makes progress instead of stalling, and it installs no permanent ceiling — but it cannot
+manufacture provider capacity. **Curve-trade throughput is gated on the contention in §28.4,
+not on anything left in this listener.**
 
 ### 28.4 The remaining bottlenecks, quantified — NOT fixed here
 
@@ -2071,7 +2086,12 @@ This is a configuration decision, not a code defect, so it is reported rather th
 unilaterally: with `PONS_FACTORY` set, `ponsWorkerMain` always starts the V1 discovery,
 trade and graduation loops. Confirming the V1 factory is genuinely dead on this chain and
 then standing that loop down would hand its entire share of the provider to V2 discovery
-and curve trades. Expect that to be worth more than any other single change listed here.
+and curve trades.
+
+This is not merely the largest remaining win — for curve trades it is **the** win. Their
+window collapses to the floor precisely because the wide-range endpoint is busy serving V1
+discovery and then times out under the heavier topic-only query, cooling itself. No further
+change inside `curveTradeListener` will fix that; the provider has to be freed up.
 
 
 
