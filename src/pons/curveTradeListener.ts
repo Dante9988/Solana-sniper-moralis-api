@@ -105,7 +105,20 @@ const CEILING_SUCCESSES = 20;
 export type WindowFailureKind = "RANGE" | "SOFT" | "NONE";
 
 export function classifyWindowFailure(reason: string): WindowFailureKind {
-  if (/no usable RPC endpoint|rate.?limit|429|too many requests|quota|cool/i.test(reason)) return "NONE";
+  /**
+   * "No capable endpoint *right now*" is transient, and stalling on it is worse than
+   * narrowing. Measured 2026-09-19: once this case was excluded from narrowing entirely,
+   * curve-trade ingestion made zero progress for 11 minutes — the wide-range endpoint was
+   * being cooled down by timeouts under contention from the two discovery loops, leaving
+   * only 10-block-capped keys, and the listener kept asking them for 10,000 blocks.
+   *
+   * SOFT is the right answer: squeeze through at a smaller width, remember no ceiling, and
+   * spring straight back to full width on the first clean tick. A missing *configuration*
+   * is a different thing and still narrows nothing.
+   */
+  if (/no usable RPC endpoint is configured/i.test(reason)) return "NONE";
+  if (/no usable RPC endpoint for this request right now/i.test(reason)) return "SOFT";
+  if (/rate.?limit|429|too many requests|quota|cool/i.test(reason)) return "NONE";
   if (isRangeLimitMessage(reason)) return "RANGE";
   if (/timeout|timed out|deadline/i.test(reason)) return "SOFT";
   return "NONE";

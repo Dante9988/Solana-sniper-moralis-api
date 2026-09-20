@@ -35,14 +35,19 @@ describe("curve-trade log window sizing", () => {
     expect(classifyWindowFailure("every endpoint is in cooldown")).toBe("NONE");
   });
 
-  it("does not narrow when the capable endpoint was merely in cooldown", () => {
-    // The wording FailoverChainClient uses when a range cap came only from endpoints that
-    // are narrower than the one that was skipped. Believing it collapsed the window to the
-    // 10-block floor while a provider stood ready to serve 7,500.
+  it("narrows without remembering when the capable endpoint is transiently cooled down", () => {
+    // FailoverChainClient's wording when a range cap came only from endpoints narrower than
+    // the one that sat out. Treating it as hard evidence pinned the window at the floor;
+    // treating it as nothing at all stalled ingestion completely for 11 minutes. SOFT makes
+    // progress at a smaller width and springs back on the first clean tick.
     const reason =
       "no usable RPC endpoint for this request right now: 3 of 4 endpoint(s) in cooldown, " +
       "and every endpoint tried caps eth_getLogs to a narrower window than asked";
-    expect(classifyWindowFailure(reason)).toBe("NONE");
+    expect(classifyWindowFailure(reason)).toBe("SOFT");
+  });
+
+  it("still does nothing when no endpoint is configured at all — that is not a width problem", () => {
+    expect(classifyWindowFailure("no usable RPC endpoint is configured")).toBe("NONE");
   });
 
   it("no longer narrows for a bare transport failure — the bug that pinned the window", () => {
