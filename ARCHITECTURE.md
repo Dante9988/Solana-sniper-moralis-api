@@ -180,7 +180,7 @@ supervises all three with one-owner protection (RUNBOOK.md).
 | **7D.3.2** | Official V4Quoter verified on a pinned fork; block-pinned quotes, route simulation, market evidence, immutable evidence snapshots, paper positions, token-logo cache | Done, merged as PR #20 — §25 |
 | **7D.3.3** | Browser acceptance with two confirmed Supabase test users; CORS fixes; disposable-DB guard | Done, merged as PR #21 and follow-up PR #22 — §26 |
 | **7D.4** | Market terminal, live market snapshots, Almost bonded/Trending, guided Practice with paper money, light gamification, vanity address handoff | Done, merged as PR #23 (2026-09-19) — §27; infrastructure blockers remain in §27.6 |
-| **7D.5** | Robinhood live-data readiness: RPC identity, failure classification, adaptive log windows, graduation-poller scope, deployed-secret proof | Done, draft PR — §28; V2 discovery enrichment cost remains (§28.4) |
+| **7D.5** | Robinhood live-data readiness: RPC identity, failure classification, adaptive log windows, graduation-poller scope, tick pacing, batched V2 enrichment, V1 pause switches, deployed-secret proof | Code done and tested, **local branch only, no PR** — §28. Operationally **not ready**: ingestion catching up, production still serving the burned key files (§28.6) |
 | **7G.1** | Robinhood Chain deterministic investigation snapshots, checks and AI thesis | Not started — brief is `phase7g1.txt` in the frontend repository |
 
 Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt`, `phase4.txt`, `phase5*.txt`, `phase6`, `phase7b1.txt`, `phase7b2.txt`, `phase7b4.txt`, `phase7b5a.txt` and `phase7b5b.txt` (repository root, historical prompts). The Phase 7C/7D/7G briefs (`phase7d3.txt` … `phase7d3.3.txt`) live in the frontend repository root (`only-pump-me`). The implemented Phase 7B.4 behavior and deviations are recorded in §19; the brief is not an exact runtime description. The `main2` merge had no corresponding phase brief — it is independent legacy work with its own history (commits from May 2025), reconciled into `master` (see git log around `10668e0`).
@@ -2006,7 +2006,38 @@ Curve exits: `PonsV2BondingCurve.sell()` executes `trackedQuote -= quoteOut` and
 
 ## 28. Phase 7D.5 — Robinhood live-data readiness
 
-**Status:** branch `feature/phase-7d5-live-data-readiness`, draft PR, not merged. Starting point: `88d6ec4` (PR #23) on both repositories' `main`.
+**Status — implemented vs. operationally ready.** These are different things and this
+section keeps them apart.
+
+| | |
+|---|---|
+| **Code** | Implemented and tested on branch `feature/phase-7d5-live-data-readiness` in both repositories. |
+| **Delivery** | **Local commits only.** The branches have *not* been pushed and **no draft PR exists** in either repository — `git push` is blocked pending approval. An earlier draft of this section said "draft PR", which was wrong. |
+| **Operational readiness** | **Not reached.** Ingestion is catching up, not caught up, and the production site is still serving the burned key files (§28.5). |
+
+**Starting point, per repository** (they are not the same SHA):
+
+| Repository | Starting `main` | Branch |
+|---|---|---|
+| `Solana-sniper-moralis-api` | `88d6ec4` (PR #23) | `feature/phase-7d5-live-data-readiness` |
+| `only-pump-me` | `fb27831` (PR #12) | `feature/phase-7d5-live-data-readiness` |
+
+### 28.0 How throughput is stated here
+
+Earlier readings in this phase were reported inconsistently, once concluding "nearly
+static" from a rate that was already net of nothing. Every figure below uses these
+definitions, and none of them subtracts chain growth twice:
+
+| Term | Definition |
+|---|---|
+| **Processing rate** | checkpoint advancement ÷ elapsed time |
+| **Chain growth** | tip advancement ÷ elapsed time (~10 blocks/s on Robinhood Chain) |
+| **Backlog reduction** | processing rate − chain growth |
+| **Catch-up ETA** | current backlog ÷ backlog reduction, only when that is positive |
+
+So a stream processing 15–21 blocks/s against 10 blocks/s of chain growth is reducing its
+backlog at 5–11 blocks/s — a 6.33M-block backlog clears in roughly 7–15 days. That is slow,
+but it is progress, and calling it "static" was wrong.
 
 ### 28.1 The headline correction
 
@@ -2041,67 +2072,98 @@ And `tradeV2Listener` logged `"No pons_v2 trade checkpoint found — starting fr
 
 ### 28.3 Ingestion, before and after
 
-All figures from the live chain on 2026-09-19. The stack had been down since 2026-09-15 08:36 (the app database is the `onlypump-pg` container, which had exited); the chain had grown ~3.7M blocks meanwhile.
+All figures on the live chain, using the §28.0 definitions. The stack had been down since
+2026-09-15 08:36 (`onlypump-pg` had exited) and the chain had grown ~3.7M blocks meanwhile.
 
-| Stream | Before (7D.4 code) | After | Lag at session end |
+| Stream | Processing rate, 7D.4 code | Processing rate, end of 7D.5 | Chain growth | Backlog reduction | Lag | ETA |
+|---|---|---|---|---|---|---|
+| Pons V1 discovery | ~790 b/s (backfilling) | tracks the tip | ~10 b/s | — | **5 blocks** | at tip |
+| Pons V2 discovery | ~46 b/s | **162 b/s** | ~11 b/s | ~151 b/s | 4.21M | **~7.7 h** |
+| V2 curve trades | ~19–35 b/s, window pinned at 10 | **~530 b/s** (V1 paused) / ~380 b/s (V1 running) | ~10 b/s | 370–520 b/s | 4.78M | **~2.6–3.9 h** |
+| V4 pool trades | never advanced a checkpoint | still barriered on V2 discovery | — | — | — | follows V2 discovery |
+
+Over the session V1 discovery closed a 3.71M-block backlog entirely, `DiscoveredToken` went
+39,770 → 57,815+, and `ChainTrade` went 211,378 → **1.98M**. Candle aggregation is keeping
+pace with the trades as they land: newest candle bucket sits ~13 minutes behind the newest
+indexed trade, both actively written.
+
+Two corrections to earlier readings in this phase, both arithmetic or sampling errors rather
+than changes in the system:
+
+- A 10-minute window measured while V1 was mid-backfill gave curve trades 15–21 b/s and was
+  reported as "very nearly static". By §28.0 that is a backlog reduction of 5–11 b/s — about
+  **7–15 days**, slow but real progress. It was never static.
+- An earlier reading caught the curve window mid-climb at 640 blocks and called it
+  "climbing"; over a full window it was a sawtooth pinned mostly at the 10-block floor. Both
+  readings are superseded by the rates above, taken after the §28.4 fixes.
+
+### 28.4 What was actually fixed after the first measurements
+
+Three further changes, each motivated by a measurement rather than by reading code:
+
+1. **Caught-up listeners were busy-polling** (`tickPacing.ts`). Phase 7D added a zero delay
+   after any processed tick so narrow catch-up windows would not be slower than new-block
+   production. Its comment said *"don't wait when this tick processed a full range but
+   hasn't reached the tip yet"* — the code never checked the width. Measured with V1
+   discovery at the tip: **262 ticks in two minutes**, each scanning 5–14 blocks, finding
+   nothing, each costing a `getLogs` plus block reads on the shared provider. After the fix,
+   ~16 ticks in 90s — a **~12× reduction** in tip polling. A tick that filled its window is
+   still behind and loops immediately; one that could not has reached the tip and waits.
+
+2. **V2 enrichment batched through Multicall3.** A 10,000-block tick finds ~254 launches and
+   spent three `eth_call`s each — ~762 round trips. Now **3 reads/token → 1 `aggregate3` per
+   40 tokens**, reusing the block-pinned `multicallAt` verified in 7D.3.2. Per-call
+   `allowFailure` keeps a reverting token FAILED and retryable without discarding the batch;
+   every read in a batch shares one block; and it falls back to per-token reads whenever the
+   batch cannot run, so it can only be faster, never less complete. Verified that pinning
+   changes nothing for these contracts: on six sampled tokens, `totalSupply` at the launch
+   block equals the value at the tip and the stored value. `getTransaction` for launch
+   metadata is untouched — Multicall does not remove it.
+
+3. **`multicallAt` hardened.** A call can succeed and return nothing decodable: `eth_call`
+   to an address with no code at that block returns `0x` with `success: true` — which is
+   exactly what reading a token *before it was deployed* looks like. That threw, taking down
+   the aggregate and every token batched alongside it. It is now reported like a revert.
+
+### 28.5 Does V1 starve V2? A measured A/B
+
+Treated as a hypothesis, not an assumption. Zero discoveries and zero stored V1 rows do not
+prove a factory is inactive — and indeed they did not: sampled across history,
+`PONS_FACTORY` emitted **444 logs around block 20M and 40 around block 30M**, then nothing
+in any sampled window from 40M to the tip. **V1 is dormant, not dead.** An earlier claim in
+this phase that it "has never discovered anything" was wrong in substance: its active era
+simply sits far below any range discovery has scanned, because a fresh source starts near
+the tip. Chain id (4663) and all three factory addresses were confirmed deployed with code.
+
+Three bounded runs on the same process version, `PONS_V1_DISCOVERY_ENABLED` the only change,
+compared at matched window lengths:
+
+| Stream | A′ V1 enabled | B V1 paused | C V1 re-enabled |
 |---|---|---|---|
-| Pons V1 discovery | ~790 blocks/s | **~800–2,300 blocks/s** | 1.68M blocks (was 3.71M) |
-| Pons V2 discovery | ~46 blocks/s | **~97–123 blocks/s**, full 10,000-block windows | 4.66M blocks |
-| V2 curve trades | ~19–35 blocks/s, window **pinned at 10**, then a hard stop | ticking again, but a **sawtooth**: ~15–21 blocks/s (see below) | 6.33M blocks |
-| V4 pool trades | never advanced a checkpoint | still barriered on V2 discovery | — |
+| Curve trades @370s | 434.1 b/s | **533.8 b/s** | 330.9 b/s |
+| Curve trades @490s | 447.0 b/s | **533.8 b/s** | 336.2 b/s |
+| V2 discovery @370s | 108.1 b/s | 162.2 b/s | 161.8 b/s |
+| V2 discovery @490s | 115.7 b/s | 162.2 b/s | 161.7 b/s |
 
-Chain growth is ~10 blocks/s, so any rate above that shrinks the backlog. Over the session
-V1 discovery advanced **2.06M blocks** and `DiscoveredToken` went 39,770 → 42,407.
+**Curve trades: contention confirmed, worth about +40%** (~530 vs ~380 blocks/s). Run C is
+what makes this a conclusion rather than a coincidence — re-enabling V1 put the rate back
+down, which a drifting provider or a still-recovering window could not explain.
 
-Note what the "after" column does *not* say. Curve trades recovered from a hard stop, but
-they have **not** recovered their throughput, and an early reading of this phase overstated
-it: catching the window mid-climb at 640 looked like recovery. Measured over a full 10
-minutes, 89 ticks, the window is a sawtooth —
+**V2 discovery: no V1 effect.** It rose from A′ to B and *stayed* at 162 b/s in C with V1
+running again. That is warm-up — the batch-enrichment path and the recovering log window —
+not contention. Claiming a V1 effect here would not survive the C run.
 
-| Window width | 10 | 20 | 40 | 80 | 160 | 320 | 640 | 1280 | 2560 |
-|---|---|---|---|---|---|---|---|---|---|
-| Ticks | **57** | 6 | 5 | 6 | 6 | 4 | 3 | 1 | 1 |
+So the earlier statement that standing down V1 was "the only thing that moves curve trades"
+was too strong twice over: listener changes did help (items 1–3 above did most of the work),
+and V1's share is a meaningful ~40%, not the whole story.
 
-— climbing by doubling whenever the wide-range endpoint is free, then collapsing straight
-back to the 10-block floor the moment it is not. Every recent narrowing gives the same
-reason: `after a timeout: no usable RPC endpoint for this request right now: 3 of 4
-endpoint(s) in cooldown`. Net **~15–21 blocks/s against ~10 blocks/s of chain growth**, so
-the 6.33M-block backlog is very nearly static. The `SOFT` classification is doing its job —
-it makes progress instead of stalling, and it installs no permanent ceiling — but it cannot
-manufacture provider capacity. **Curve-trade throughput is gated on the contention in §28.4,
-not on anything left in this listener.**
+**The fix, and the way back.** `PONS_V1_DISCOVERY_ENABLED`, `PONS_V1_TRADES_ENABLED` and
+`PONS_V1_GRADUATION_ENABLED` (`ponsWorkerMain.ts`) default to enabled, so nothing changes
+unless set. Pausing touches no checkpoint: unset the variable, restart the worker, and the
+loop resumes from where it stopped with the same reorg-recovery behaviour. Production
+configuration was not changed here; the recommendation is recorded in `.env.example`.
 
-### 28.4 The remaining bottlenecks, quantified — NOT fixed here
-
-**First, and cheapest to fix: Pons V1 discovery is scanning for nothing, at the expense of everything else.**
-
-In 36 consecutive ticks it discovered **0 tokens**, and the database contains **zero**
-`venue = 'pons'` rows — V1 discovery has never produced a single row in this deployment.
-Yet it is the heaviest consumer of the one usable wide-range endpoint, running at ~800
-blocks/s while it backfills 1.68M blocks. V2 discovery and curve trades, the two streams
-that actually feed the product, contend with it for the same provider and are the ones that
-get starved and cooled down.
-
-This is a configuration decision, not a code defect, so it is reported rather than changed
-unilaterally: with `PONS_FACTORY` set, `ponsWorkerMain` always starts the V1 discovery,
-trade and graduation loops. Confirming the V1 factory is genuinely dead on this chain and
-then standing that loop down would hand its entire share of the provider to V2 discovery
-and curve trades.
-
-This is not merely the largest remaining win — for curve trades it is **the** win. Their
-window collapses to the floor precisely because the wide-range endpoint is busy serving V1
-discovery and then times out under the heavier topic-only query, cooling itself. No further
-change inside `curveTradeListener` will fix that; the provider has to be freed up.
-
-
-
-**Second: V2 discovery's per-tick enrichment cost.** Each 10,000-block tick finds ~254 launches and enriches each one with three `eth_call`s (`totalSupply`, `name`, `symbol`) plus one `getTransaction` for launch metadata — ~1,016 RPC round trips per tick, at `PONS_ENRICHMENT_CONCURRENCY=5` (default), against three quota-exhausted Alchemy keys and one workhorse endpoint.
-
-At the measured ~97–123 blocks/s against ~10 blocks/s of chain growth, the 4.66M-block backlog closes in roughly **12–14 hours** unattended. It does close — the backlog shrinks — but that is the honest number, and it assumes the contention above is not made worse.
-
-The obvious fix is to batch the three ERC-20 reads through Multicall3, which `marketSnapshot.ts` already does for its own reads (one Multicall3 read per batch at a pinned block); that would cut the dominant per-tick cost by roughly 30×. It is **deliberately not implemented in this phase**: it changes a correctness-sensitive path (enrichment under block pinning and reorg recovery) and deserves its own change with its own fork tests, rather than being appended to a phase whose measurements were only just taken.
-
-### 28.5 Security posture — verified, and one live exposure
+### 28.6 Security posture — verified, and one live exposure
 
 `src/services/vanity/exposedVanityAddresses.json` lists 283 public keys and every one of the 281 keypairs served by the site is in it. Verified on 2026-09-19 by deriving the public addresses from the *live* responses: `test_pump.json` 215/215, `test_fan.json` 50/50, `vanity-keypairs.json` 16/16 — **all already permanently rejected**. Removing the files or rewriting history would not change that, and must not.
 
