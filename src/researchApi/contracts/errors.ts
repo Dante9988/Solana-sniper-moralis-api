@@ -40,6 +40,9 @@ export const ErrorCode = {
   VANITY_NONE_AVAILABLE: "VANITY_NONE_AVAILABLE",
   RESERVATION_EXPIRED: "RESERVATION_EXPIRED",
   ALREADY_CONSUMED: "ALREADY_CONSUMED",
+  // Phase 7D.5.1 — a provider the deployment has no credentials for. Distinct from an
+  // outage: the operator must configure it, the user can do nothing.
+  PROVIDER_NOT_CONFIGURED: "PROVIDER_NOT_CONFIGURED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -64,6 +67,7 @@ const STATUS_FOR_CODE: Record<ErrorCode, number> = {
   AUTH_NOT_CONFIGURED: 503,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
+  PROVIDER_NOT_CONFIGURED: 503,
   CHALLENGE_EXPIRED: 410,
   CHALLENGE_ALREADY_USED: 409,
   WALLET_ALREADY_CLAIMED: 409,

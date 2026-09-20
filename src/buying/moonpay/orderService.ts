@@ -38,6 +38,24 @@ const PROVIDER_STATUS: Record<string, OrderStatus> = {
   cancelled: "CANCELLED",
 };
 
+/**
+ * How far along a status is. A webhook that arrives late must not drag an order backwards:
+ * MoonPay retries and can redeliver out of order, so a stale `pending` landing after
+ * `completed` would otherwise un-complete a finished purchase.
+ *
+ * FAILED and CANCELLED are terminal and rank above COMPLETED deliberately — a chargeback or
+ * cancellation genuinely does supersede an earlier completion, and hiding that would be the
+ * more dangerous error.
+ */
+const STATUS_RANK: Record<OrderStatus, number> = {
+  PENDING: 0,
+  SUBMITTED: 1,
+  UNCERTAIN: 1,
+  COMPLETED: 2,
+  FAILED: 3,
+  CANCELLED: 3,
+};
+
 export interface CreateCheckoutInput {
   readonly userId: string;
   /** Fiat the user pays, e.g. "usd". */
@@ -152,9 +170,22 @@ export class MoonPayOrderService {
         const order = await tx.moonPayOrder.findUnique({ where: { externalTransactionId } });
         if (!order) return { applied: false, reason: "no order matches this externalTransactionId" };
 
+        /**
+         * Validate the event against the checkout we stored before applying it. A verified
+         * signature proves MoonPay sent it; it does not prove it belongs to this order, or
+         * that the asset and destination are the ones the user reviewed.
+         */
+        const mismatch = describeMismatch(order, data, this.config.environment);
+        if (mismatch) return { applied: false, reason: mismatch };
+
         const providerStatus = typeof data.status === "string" ? data.status : "";
         const mapped = PROVIDER_STATUS[providerStatus];
         if (!mapped) return { applied: false, reason: `unrecognised provider status ${JSON.stringify(providerStatus)}` };
+
+        // Out-of-order delivery: never move an order backwards.
+        if (STATUS_RANK[mapped] < STATUS_RANK[(order.status as OrderStatus) ?? "PENDING"]) {
+          return { applied: false, reason: `ignored stale ${mapped} after ${order.status}` };
+        }
 
         await tx.moonPayOrder.update({
           where: { id: order.id },
@@ -190,4 +221,41 @@ export function toOrderStatus(order: { status: string; cryptoTransactionId: stri
 
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: string }).code === "P2002";
+}
+
+/**
+ * Why this event does not belong to this order, or null when it does.
+ *
+ * Checked because a signature only proves MoonPay sent something — not that it concerns the
+ * asset, network, destination or environment the user actually approved. A delivery to a
+ * different wallet than the one signed into the checkout URL is exactly the outcome worth
+ * refusing loudly.
+ */
+export function describeMismatch(
+  order: {
+    providerTransactionId: string | null;
+    environment: string;
+    currencyCode: string;
+    walletAddress: string;
+  },
+  data: Record<string, unknown>,
+  environment: string
+): string | null {
+  const providerId = typeof data.id === "string" ? data.id : null;
+  if (order.providerTransactionId && providerId && order.providerTransactionId !== providerId) {
+    return `event is for provider transaction ${providerId}, order is bound to ${order.providerTransactionId}`;
+  }
+  if (order.environment !== environment) {
+    // A sandbox order must never be advanced by a production event, or vice versa.
+    return `order was created in ${order.environment} but this event arrived in ${environment}`;
+  }
+  const currency = typeof data.currencyCode === "string" ? data.currencyCode : null;
+  if (currency && currency.toLowerCase() !== order.currencyCode.toLowerCase()) {
+    return `event asset ${currency} does not match ordered asset ${order.currencyCode}`;
+  }
+  const wallet = typeof data.walletAddress === "string" ? data.walletAddress : null;
+  if (wallet && wallet.toLowerCase() !== order.walletAddress.toLowerCase()) {
+    return `event destination ${wallet} does not match the address signed into this checkout`;
+  }
+  return null;
 }

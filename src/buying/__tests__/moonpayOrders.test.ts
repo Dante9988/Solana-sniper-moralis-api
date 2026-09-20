@@ -47,7 +47,18 @@ function db(over: { order?: Record<string, unknown> | null; createEventThrows?: 
   };
 }
 
-const ORDER = { id: "order-1", externalTransactionId: "ext-1", providerTransactionId: null, cryptoTransactionId: null, deliveredAmount: null, failureReason: null };
+const ORDER = {
+  id: "order-1",
+  externalTransactionId: "ext-1",
+  providerTransactionId: null,
+  cryptoTransactionId: null,
+  deliveredAmount: null,
+  failureReason: null,
+  status: "PENDING",
+  environment: "sandbox",
+  currencyCode: "eth",
+  walletAddress: "0xabc",
+};
 
 describe("checkout creation", () => {
   it("creates the order before sending the user anywhere", async () => {
@@ -166,6 +177,55 @@ describe("webhook reconciliation", () => {
   it("rejects a non-JSON payload", async () => {
     const d = db({ order: ORDER });
     expect(await new MoonPayOrderService(d.client as never, config).applyWebhook("not json", 1)).toMatchObject({ applied: false });
+  });
+});
+
+describe("out-of-order and mismatched events", () => {
+  const body = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: "transaction_updated", data: { id: "tx_1", externalTransactionId: "ext-1", status: "completed", ...over } });
+
+  it("does not let a late pending event un-complete a finished order", async () => {
+    // MoonPay retries and can redeliver out of order.
+    const d = db({ order: { ...ORDER, status: "COMPLETED" } });
+    const result = await new MoonPayOrderService(d.client as never, config).applyWebhook(body({ status: "pending" }), 1_700_000_000);
+    expect(result).toMatchObject({ applied: false });
+    expect(result.reason).toMatch(/stale PENDING after COMPLETED/);
+    expect(d.tx.moonPayOrder.update).not.toHaveBeenCalled();
+  });
+
+  it("still lets a failure supersede a completion — a chargeback genuinely does", async () => {
+    const d = db({ order: { ...ORDER, status: "COMPLETED" } });
+    const result = await new MoonPayOrderService(d.client as never, config).applyWebhook(body({ status: "failed" }), 1_700_000_000);
+    expect(result.applied).toBe(true);
+    expect(d.updates[0]).toMatchObject({ status: "FAILED" });
+  });
+
+  it("refuses an event whose destination is not the address signed into the checkout", async () => {
+    const d = db({ order: ORDER });
+    const result = await new MoonPayOrderService(d.client as never, config).applyWebhook(body({ walletAddress: "0xsomeoneelse" }), 1_700_000_000);
+    expect(result.applied).toBe(false);
+    expect(result.reason).toMatch(/does not match the address signed into this checkout/);
+  });
+
+  it("refuses an event for a different asset", async () => {
+    const d = db({ order: ORDER });
+    const result = await new MoonPayOrderService(d.client as never, config).applyWebhook(body({ currencyCode: "btc" }), 1_700_000_000);
+    expect(result.applied).toBe(false);
+    expect(result.reason).toMatch(/does not match ordered asset/);
+  });
+
+  it("refuses an event for a different provider transaction once bound", async () => {
+    const d = db({ order: { ...ORDER, providerTransactionId: "tx_original" } });
+    const result = await new MoonPayOrderService(d.client as never, config).applyWebhook(body({ id: "tx_other" }), 1_700_000_000);
+    expect(result.applied).toBe(false);
+    expect(result.reason).toMatch(/bound to tx_original/);
+  });
+
+  it("refuses to advance a sandbox order with a production event", async () => {
+    const d = db({ order: { ...ORDER, environment: "production" } });
+    const result = await new MoonPayOrderService(d.client as never, config).applyWebhook(body(), 1_700_000_000);
+    expect(result.applied).toBe(false);
+    expect(result.reason).toMatch(/created in production but this event arrived in sandbox/);
   });
 });
 

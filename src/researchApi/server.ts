@@ -10,6 +10,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
+import { createMoonPayRouter, createMoonPayWebhookRouter } from "./routes/moonpay";
 import express, { Express, NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { ApiConfig, loadApiConfig } from "./config";
@@ -60,6 +61,19 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
 
   app.use(requestId);
   app.use(createCorsMiddleware(config.cors));
+
+  /**
+   * Phase 7D.5.1 — the MoonPay webhook is mounted BEFORE `express.json()`, and this order
+   * is load-bearing rather than stylistic.
+   *
+   * Its signature is an HMAC over the exact bytes MoonPay sent. Once `express.json()` has
+   * parsed the stream, the original bytes are gone and cannot be reconstructed —
+   * `JSON.stringify(req.body)` does not round-trip key order, spacing or number formatting.
+   * A verifier fed a re-serialised body fails every time, and "fixing" that by trusting the
+   * parsed body instead would make the signature check decorative.
+   */
+  app.use("/api/v1", createMoonPayWebhookRouter(db));
+
   app.use(express.json());
 
   app.use((req, _res, next) => {
@@ -81,6 +95,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   app.use("/api/v1", createMarketDataRouter(db, config, deps));
   app.use("/api/v1", createPracticeRouter(db, config, deps));
   app.use("/api/v1", createVanityRouter(db, config, deps));
+  app.use("/api/v1", createMoonPayRouter(db, config, deps));
   app.use("/api/v1", createMarketsRouter(config, deps));
   app.use("/api/v1/media", createMediaRouter(db, config));
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
