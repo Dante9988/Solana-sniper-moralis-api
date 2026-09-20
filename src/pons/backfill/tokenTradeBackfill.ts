@@ -19,16 +19,19 @@
  * key, same dedup, same provenance columns. Running this while the live listener is running
  * is safe: both upsert on `(chain, sourceTxHash, sourceIndex)`.
  *
- * Scope: bonding-curve trades. A graduated token's post-graduation Uniswap V4 swaps are a
- * separate log shape and are NOT covered here — `coveredVenues` says so rather than
- * implying a complete history.
+ * Covers both venues a Pons token trades on: its bonding curve before graduation, and its
+ * Uniswap V4 pool after. Both are index-backed filters — the curve by contract address, the
+ * pool by its `poolId` topic — so neither is a scan.
  */
 
 import type { PrismaClient } from "@prisma/client";
 
 import type { ChainReader, EventLogReader } from "../chainClient";
 import type { RobinhoodChainConfig } from "../config";
-import { PONS_V2_CURVE_ABI } from "../abiV2";
+import { getAbiItem } from "viem";
+
+import { PONS_V2_CURVE_ABI, PONS_V2_FACTORY_ABI, UNISWAP_V4_POOL_MANAGER_ABI } from "../abiV2";
+import { ponsV2Adapter } from "../ponsV2Adapter";
 import { selectCurveTrades } from "../curveTradeListener";
 import { classifyWindowFailure } from "../curveTradeListener";
 import { ROBINHOOD_CHAIN } from "../discoveryListener";
@@ -78,6 +81,12 @@ export interface BackfillDeps {
   deadlineMs?: number;
   maxRange?: bigint;
   now?: () => number;
+  /**
+   * The Pons V2 factory, used to resolve the Uniswap V4 PoolManager for the swap leg.
+   * Injected rather than read from the environment inside the backfill, so a test can
+   * exercise the V4 path without a configured process env.
+   */
+  v2FactoryAddress?: string;
 }
 
 /**
@@ -94,7 +103,17 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
 
   const token = await deps.db.discoveredToken.findUnique({
     where: { chain_tokenAddress: { chain: ROBINHOOD_CHAIN, tokenAddress: address } },
-    select: { tokenAddress: true, curveAddress: true, quoteAddress: true, sourceHeight: true, graduated: true, canonicalStatus: true },
+    select: {
+      tokenAddress: true,
+      curveAddress: true,
+      quoteAddress: true,
+      sourceHeight: true,
+      graduated: true,
+      canonicalStatus: true,
+      poolId: true,
+      isToken0: true,
+      graduationSourceHeight: true,
+    },
   });
   if (!token || token.canonicalStatus !== "CANONICAL") {
     return fail(address, "token is not a canonical discovered token", startedAt, now);
@@ -170,42 +189,30 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
         await markStopped(deps.db, address, cursor, tradesWritten, logsScanned, requests, "PARTIAL", "block timestamps unavailable");
         return partial(address, token.sourceHeight, target, cursor, tradesWritten, logsScanned, requests, "block timestamps unavailable", startedAt, now, token.graduated);
       }
-      await deps.db.$transaction(async (tx) => {
-        for (const trade of trades) {
-          const ts = timestamps.get(trade.provenance.sourceHeight) ?? null;
-          if (ts && (earliestTimestamp === null || ts < earliestTimestamp)) earliestTimestamp = ts;
-          await tx.chainTrade.upsert({
-            where: {
-              chain_sourceTxHash_sourceIndex: {
-                chain: trade.chain,
-                sourceTxHash: trade.provenance.sourceTxHash,
-                sourceIndex: trade.provenance.sourceIndex,
-              },
-            },
-            create: {
-              chain: trade.chain,
-              venue: VENUE,
-              tokenAddress: trade.tokenAddress.toLowerCase(),
-              poolAddress: trade.curveAddress,
-              poolId: null,
-              side: trade.side,
-              tokenAmount: trade.tokenAmount,
-              quoteAmount: trade.quoteAmount,
-              quoteAddress: trade.quoteAddress.toLowerCase(),
-              priceQuote: trade.priceQuote,
-              trader: trade.trader.toLowerCase(),
-              sourceHeight: BigInt(trade.provenance.sourceHeight),
-              sourceHash: trade.provenance.sourceHash,
-              sourceTxHash: trade.provenance.sourceTxHash,
-              sourceIndex: trade.provenance.sourceIndex,
-              observedAt: new Date(),
-              sourceTimestamp: ts,
-            },
-            // A live tick may have written this same trade already; leave it alone.
-            update: {},
-          });
-        }
+      const rows = trades.map((trade) => {
+        const ts = timestamps.get(trade.provenance.sourceHeight) ?? null;
+        if (ts && (earliestTimestamp === null || ts < earliestTimestamp)) earliestTimestamp = ts;
+        return {
+          chain: trade.chain,
+          venue: VENUE,
+          tokenAddress: trade.tokenAddress.toLowerCase(),
+          poolAddress: trade.curveAddress,
+          poolId: null,
+          side: trade.side,
+          tokenAmount: trade.tokenAmount,
+          quoteAmount: trade.quoteAmount,
+          quoteAddress: trade.quoteAddress.toLowerCase(),
+          priceQuote: trade.priceQuote,
+          trader: trade.trader.toLowerCase(),
+          sourceHeight: BigInt(trade.provenance.sourceHeight),
+          sourceHash: trade.provenance.sourceHash,
+          sourceTxHash: trade.provenance.sourceTxHash,
+          sourceIndex: trade.provenance.sourceIndex,
+          observedAt: new Date(),
+          sourceTimestamp: ts,
+        };
       });
+      await writeTradesChunked(deps.db, rows as never);
       tradesWritten += trades.length;
     }
 
@@ -215,6 +222,35 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
       data: { cursor, tradesWritten, logsScanned, requests },
     });
   }
+
+  /**
+   * Second leg: a graduated token's Uniswap V4 swaps.
+   *
+   * Also index-backed — the pool's `poolId` is an indexed topic on the PoolManager — so
+   * this is another filtered query, not a scan. Only attempted once the curve leg has
+   * reached the target, and only from the graduation block, because the pool did not exist
+   * before it. A token whose pool identity was never resolved is reported as uncovered
+   * rather than quietly presented as a complete history.
+   */
+  const tally = { trades: tradesWritten, logs: logsScanned, requests };
+  const poolCovered =
+    token.graduated && token.poolId !== null && token.isToken0 !== null && cursor >= target && stoppedReason === null
+      ? await backfillPoolSwaps(
+          deps,
+          { ...token, poolId: token.poolId, isToken0: token.isToken0 },
+          target,
+          range,
+          (ts) => {
+            if (earliestTimestamp === null || ts < earliestTimestamp) earliestTimestamp = ts;
+          },
+          tally
+        )
+      : false;
+  // Totals must cover both venues, or a graduated token reports only its curve trades —
+  // 80 instead of 5,561 on the token this was first measured against.
+  tradesWritten = tally.trades;
+  logsScanned = tally.logs;
+  requests = tally.requests;
 
   /**
    * Candles are rebuilt by the existing recompute engine rather than by a second
@@ -234,8 +270,139 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
   );
 
   return done
-    ? complete(address, token.sourceHeight, target, cursor, tradesWritten, logsScanned, requests, startedAt, now, token.graduated)
-    : partial(address, token.sourceHeight, target, cursor, tradesWritten, logsScanned, requests, stoppedReason, startedAt, now, token.graduated);
+    ? complete(address, token.sourceHeight, target, cursor, tradesWritten, logsScanned, requests, startedAt, now, token.graduated, poolCovered)
+    : partial(address, token.sourceHeight, target, cursor, tradesWritten, logsScanned, requests, stoppedReason, startedAt, now, token.graduated, poolCovered);
+}
+
+/**
+ * Write trades in bounded transactions.
+ *
+ * A backfill window can carry far more trades than a live tick ever does — one V4 window
+ * exceeded Prisma's default 5s transaction timeout outright. Chunking keeps each
+ * transaction short and, because every row is an independent upsert on
+ * `(chain, sourceTxHash, sourceIndex)`, a chunk boundary changes nothing about correctness:
+ * a re-run simply upserts the same rows again.
+ */
+const WRITE_CHUNK = 250;
+const WRITE_TIMEOUT_MS = 60_000;
+
+async function writeTradesChunked(
+  db: PrismaClient,
+  rows: readonly Parameters<PrismaClient["chainTrade"]["create"]>[0]["data"][]
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
+    const slice = rows.slice(i, i + WRITE_CHUNK);
+    await db.$transaction(
+      async (tx) => {
+        for (const data of slice) {
+          await tx.chainTrade.upsert({
+            where: {
+              chain_sourceTxHash_sourceIndex: {
+                chain: data.chain as string,
+                sourceTxHash: data.sourceTxHash as string,
+                sourceIndex: data.sourceIndex as number,
+              },
+            },
+            create: data,
+            // A live tick may have written this same trade already; leave it alone.
+            update: {},
+          });
+        }
+      },
+      { timeout: WRITE_TIMEOUT_MS }
+    );
+  }
+}
+
+/**
+ * Backfill a graduated token's Uniswap V4 swaps, from its graduation block forward.
+ *
+ * Returns whether the pool was actually covered, so the caller can report it honestly
+ * instead of assuming. Any failure here leaves the curve history intact and simply reports
+ * V4 as uncovered — a partial history is a fact to state, not a reason to discard work.
+ */
+async function backfillPoolSwaps(
+  deps: BackfillDeps,
+  token: { tokenAddress: string; quoteAddress: string; poolId: string; isToken0: boolean; graduationSourceHeight: bigint | null; sourceHeight: bigint },
+  target: bigint,
+  maxRange: bigint,
+  noteTimestamp: (ts: Date) => void,
+  /** Counters are shared with the curve leg so the reported totals cover both venues. */
+  tally: { trades: number; logs: number; requests: number }
+): Promise<boolean> {
+  const logger = deps.logger ?? noopLogger;
+  if (!deps.v2FactoryAddress) {
+    logger.warn(`backfill ${token.tokenAddress}: no V2 factory configured, V4 swaps not covered`);
+    return false;
+  }
+
+  const poolManager = await deps.chainClient.readContract<string>({
+    address: deps.v2FactoryAddress,
+    abi: PONS_V2_FACTORY_ABI,
+    functionName: "poolManager",
+    args: [],
+  });
+  if (poolManager.status === "UNAVAILABLE") {
+    logger.warn(`backfill ${token.tokenAddress}: poolManager() unavailable, V4 swaps not covered`);
+    return false;
+  }
+
+  const swapEvent = getAbiItem({ abi: UNISWAP_V4_POOL_MANAGER_ABI, name: "Swap" });
+  // The pool did not exist before graduation, so there is nothing to find below it.
+  let cursor = (token.graduationSourceHeight ?? token.sourceHeight) - 1n;
+  let range = maxRange;
+
+  while (cursor < target) {
+    const from = cursor + 1n;
+    const to = from + range - 1n > target ? target : from + range - 1n;
+    const logs = await deps.chainClient.getLogs({ address: poolManager.data, event: swapEvent, args: { id: [token.poolId] }, fromBlock: from, toBlock: to });
+    tally.requests += 1;
+    if (logs.status === "UNAVAILABLE") {
+      if (classifyWindowFailure(logs.reason) !== "NONE" && range > MIN_RANGE) {
+        range = range / 2n < MIN_RANGE ? MIN_RANGE : range / 2n;
+        continue;
+      }
+      logger.warn(`backfill ${token.tokenAddress}: V4 swap query failed, pool not covered — ${logs.reason.slice(0, 120)}`);
+      return false;
+    }
+
+    tally.logs += logs.data.length;
+    const trades = logs.data
+      .map((log) => ponsV2Adapter.decodeTrade({ log, tokenAddress: token.tokenAddress, quoteAddress: token.quoteAddress, isToken0: token.isToken0 }))
+      .filter((t): t is NonNullable<typeof t> => t !== null);
+
+    if (trades.length > 0) {
+      const timestamps = await resolveTimestamps(deps, logs.data, trades);
+      if (timestamps === null) return false;
+      const rows = trades.map((trade) => {
+        const ts = timestamps.get(trade.provenance.sourceHeight) ?? null;
+        if (ts) noteTimestamp(ts);
+        return {
+          chain: trade.chain,
+          venue: trade.venue,
+          tokenAddress: trade.tokenAddress.toLowerCase(),
+          poolAddress: null,
+          poolId: token.poolId.toLowerCase(),
+          side: trade.side,
+          tokenAmount: trade.tokenAmount,
+          quoteAmount: trade.quoteAmount,
+          quoteAddress: trade.quoteAddress.toLowerCase(),
+          priceQuote: trade.priceQuote,
+          trader: trade.trader.toLowerCase(),
+          sourceHeight: BigInt(trade.provenance.sourceHeight),
+          sourceHash: trade.provenance.sourceHash,
+          sourceTxHash: trade.provenance.sourceTxHash,
+          sourceIndex: trade.provenance.sourceIndex,
+          observedAt: new Date(),
+          sourceTimestamp: ts,
+        };
+      });
+      await writeTradesChunked(deps.db, rows as never);
+      tally.trades += trades.length;
+    }
+    cursor = to;
+  }
+  return true;
 }
 
 /**
@@ -292,26 +459,27 @@ async function markStopped(
     .catch(() => undefined);
 }
 
-function venues(graduated: boolean): { covered: string[]; uncovered: string[] } {
-  return {
-    covered: ["PONS_V2_BONDING_CURVE"],
-    // Said plainly rather than implied: a graduated token's post-graduation swaps are a
-    // different log shape and this backfill does not read them.
-    uncovered: graduated ? ["UNISWAP_V4_POOL"] : [],
-  };
+/**
+ * What a run could actually account for. A graduated token whose pool identity is unknown
+ * is reported as uncovered for V4 rather than silently presented as a complete history.
+ */
+function venues(graduated: boolean, poolCovered: boolean): { covered: string[]; uncovered: string[] } {
+  const covered = ["PONS_V2_BONDING_CURVE"];
+  if (graduated && poolCovered) covered.push("UNISWAP_V4_POOL");
+  return { covered, uncovered: graduated && !poolCovered ? ["UNISWAP_V4_POOL"] : [] };
 }
 
-function base(tokenAddress: string, startedAt: number, now: () => number, graduated = false) {
-  const v = venues(graduated);
+function base(tokenAddress: string, startedAt: number, now: () => number, graduated = false, poolCovered = false) {
+  const v = venues(graduated, poolCovered);
   return { tokenAddress, elapsedMs: now() - startedAt, coveredVenues: v.covered, uncoveredVenues: v.uncovered };
 }
 
-function complete(tokenAddress: string, fromBlock: bigint, toBlock: bigint, cursor: bigint, tradesWritten: number, logsScanned: number, requests: number, startedAt: number, now: () => number, graduated: boolean): BackfillResult {
-  return { status: "COMPLETE", fromBlock, toBlock, cursor, tradesWritten, logsScanned, requests, stoppedReason: null, ...base(tokenAddress, startedAt, now, graduated) };
+function complete(tokenAddress: string, fromBlock: bigint, toBlock: bigint, cursor: bigint, tradesWritten: number, logsScanned: number, requests: number, startedAt: number, now: () => number, graduated: boolean, poolCovered = false): BackfillResult {
+  return { status: "COMPLETE", fromBlock, toBlock, cursor, tradesWritten, logsScanned, requests, stoppedReason: null, ...base(tokenAddress, startedAt, now, graduated, poolCovered) };
 }
 
-function partial(tokenAddress: string, fromBlock: bigint, toBlock: bigint, cursor: bigint, tradesWritten: number, logsScanned: number, requests: number, stoppedReason: string | null, startedAt: number, now: () => number, graduated: boolean): BackfillResult {
-  return { status: "PARTIAL", fromBlock, toBlock, cursor, tradesWritten, logsScanned, requests, stoppedReason, ...base(tokenAddress, startedAt, now, graduated) };
+function partial(tokenAddress: string, fromBlock: bigint, toBlock: bigint, cursor: bigint, tradesWritten: number, logsScanned: number, requests: number, stoppedReason: string | null, startedAt: number, now: () => number, graduated: boolean, poolCovered = false): BackfillResult {
+  return { status: "PARTIAL", fromBlock, toBlock, cursor, tradesWritten, logsScanned, requests, stoppedReason, ...base(tokenAddress, startedAt, now, graduated, poolCovered) };
 }
 
 function fail(tokenAddress: string, reason: string, startedAt: number, now: () => number, cursor = 0n, tradesWritten = 0, logsScanned = 0, requests = 0, graduated = false): BackfillResult {
@@ -333,10 +501,19 @@ export function createBackfillRunner(db: PrismaClient): BackfillRunner {
   return async (tokenAddress: string) => {
     if (deps === null) {
       const { FailoverChainClient } = await import("../failoverChainClient");
-      const { loadRobinhoodChainConfig } = await import("../config");
+      const { loadRobinhoodChainConfig, loadPonsV2Config } = await import("../config");
       const { ponsComponentLogger } = await import("../logger");
       const config = loadRobinhoodChainConfig();
-      deps = { db, chainClient: new FailoverChainClient({ config }), config, logger: ponsComponentLogger("pons:backfill") };
+      // A deployment without PONS_V2_FACTORY still backfills curve trades; it just reports
+      // V4 as uncovered instead of failing.
+      const v2FactoryAddress = (() => {
+        try {
+          return loadPonsV2Config().factoryAddress;
+        } catch {
+          return undefined;
+        }
+      })();
+      deps = { db, chainClient: new FailoverChainClient({ config }), config, v2FactoryAddress, logger: ponsComponentLogger("pons:backfill") };
     }
     return backfillTokenTrades(deps, tokenAddress);
   };

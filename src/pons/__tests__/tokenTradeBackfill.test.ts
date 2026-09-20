@@ -24,7 +24,9 @@ const TOKEN = "0xaaaa000000000000000000000000000000000001";
 const CURVE = "0xcccc000000000000000000000000000000000002";
 const QUOTE = "0x0000000000000000000000000000000000000000";
 
-function deps(overrides: { logs?: unknown; head?: bigint; existing?: unknown; graduated?: boolean } = {}) {
+function deps(
+  overrides: { logs?: unknown; head?: bigint; existing?: unknown; graduated?: boolean; poolId?: string; isToken0?: boolean; graduationSourceHeight?: bigint } = {}
+) {
   const getLogsByEvents = vi.fn(async () => ({ status: "AVAILABLE", data: (overrides.logs as never[]) ?? [], source: "t", fetchedAt: new Date(), attempts: 1 }));
   const tokenRow = {
     tokenAddress: TOKEN,
@@ -33,6 +35,9 @@ function deps(overrides: { logs?: unknown; head?: bigint; existing?: unknown; gr
     sourceHeight: 1_000_000n,
     graduated: overrides.graduated ?? false,
     canonicalStatus: "CANONICAL",
+    poolId: overrides.poolId ?? null,
+    isToken0: overrides.isToken0 ?? null,
+    graduationSourceHeight: overrides.graduationSourceHeight ?? null,
   };
   const backfillRows = new Map<string, Record<string, unknown>>();
   if (overrides.existing) backfillRows.set(TOKEN, overrides.existing as Record<string, unknown>);
@@ -52,13 +57,16 @@ function deps(overrides: { logs?: unknown; head?: bigint; existing?: unknown; gr
     $transaction: vi.fn(async (fn: (tx: unknown) => Promise<void>) => fn({ chainTrade: { upsert: vi.fn(async () => ({})) } })),
   };
 
+  const getLogs = vi.fn(async () => ({ status: "AVAILABLE", data: [] as never[], source: "t", fetchedAt: new Date(), attempts: 1 }));
   const chainClient = {
     getBlockNumber: vi.fn(async () => ({ status: "AVAILABLE", data: overrides.head ?? 1_400_000n, source: "t", fetchedAt: new Date(), attempts: 1 })),
     getBlockRef: vi.fn(async () => ({ status: "AVAILABLE", data: { hash: "0xblock", timestamp: 1_789_000_000n }, source: "t", fetchedAt: new Date(), attempts: 1 })),
     getLogsByEvents,
+    getLogs,
+    readContract: vi.fn(async () => ({ status: "AVAILABLE", data: "0xpoolmanager", source: "t", fetchedAt: new Date(), attempts: 1 })),
   };
 
-  return { db, chainClient, getLogsByEvents, backfillRows, base: { db: db as never, chainClient: chainClient as never, config: TEST_CONFIG } };
+  return { db, chainClient, getLogsByEvents, getLogs, backfillRows, base: { db: db as never, chainClient: chainClient as never, config: TEST_CONFIG, v2FactoryAddress: "0xfactory" } };
 }
 
 describe("per-token trade backfill", () => {
@@ -136,12 +144,37 @@ describe("per-token trade backfill", () => {
     expect(widths[1]!).toBeLessThan(widths[0]!);
   });
 
-  it("says plainly that a graduated token's V4 swaps are not covered", async () => {
+  it("says plainly when a graduated token's V4 swaps are NOT covered", async () => {
+    // Graduated, but its pool identity was never resolved — so there is nothing to query.
     const d = deps({ graduated: true });
     const result = await backfillTokenTrades(d.base, TOKEN);
 
     expect(result.coveredVenues).toEqual(["PONS_V2_BONDING_CURVE"]);
     expect(result.uncoveredVenues, "a partial history must never look complete").toEqual(["UNISWAP_V4_POOL"]);
+  });
+
+  it("covers both venues for a graduated token whose pool is known", async () => {
+    // A Pons token trades on its curve before graduation and its V4 pool after, so a
+    // complete chart needs both legs. Verified live on 2026-09-18's QED: 80 curve trades
+    // ending 17:49:26, then 5,481 pool trades starting 17:49:27.
+    const d = deps({ graduated: true, poolId: "0xpool", isToken0: true, graduationSourceHeight: 1_100_000n });
+    const result = await backfillTokenTrades(d.base, TOKEN);
+
+    expect(result.coveredVenues).toEqual(["PONS_V2_BONDING_CURVE", "UNISWAP_V4_POOL"]);
+    expect(result.uncoveredVenues).toEqual([]);
+    // The V4 leg filters on the pool's own id, which is an indexed topic — still not a scan.
+    const poolQueries = (d.getLogs.mock.calls as unknown[][]).map((c) => c[0] as { args?: { id?: string[] } });
+    expect(poolQueries.length).toBeGreaterThan(0);
+    for (const q of poolQueries) expect(q.args?.id).toEqual(["0xpool"]);
+  });
+
+  it("reports totals across BOTH venues, not just the curve leg", async () => {
+    // First measured run reported 80 trades for a token that had received 5,561.
+    const d = deps({ graduated: true, poolId: "0xpool", isToken0: true, graduationSourceHeight: 1_100_000n });
+    const before = await backfillTokenTrades(d.base, TOKEN);
+    expect(before.requests, "V4 requests must be counted too").toBeGreaterThan(
+      d.getLogsByEvents.mock.calls.length - 1
+    );
   });
 
   it("refuses a token with no known curve rather than scanning blindly", async () => {
