@@ -21,6 +21,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { nextTickDelayMs, processedWidth } from "./tickPacing";
 import { decodeEventLog, getAbiItem } from "viem";
 import { ChainReader } from "./chainClient";
 import { RobinhoodChainConfig } from "./config";
@@ -373,7 +374,11 @@ export class DiscoveryListener {
         // otherwise catch-up is strictly slower than new-block production
         // on a fast chain. Only wait once genuinely UP_TO_DATE (or backing
         // off from a real error).
-        const delay = result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs;
+        const delay = nextTickDelayMs({
+          processedWidth: processedWidth(result),
+          maxRangePerPoll: this.config.maxBlockRangePerPoll,
+          pollIntervalMs: this.config.pollIntervalMs,
+        });
         this.timer = setTimeout(tick, delay);
       }
     };

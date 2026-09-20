@@ -20,6 +20,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { nextTickDelayMs, processedWidth } from "./tickPacing";
 import { getAbiItem } from "viem";
 import { ChainReader } from "./chainClient";
 import { RobinhoodChainConfig } from "./config";
@@ -323,7 +324,11 @@ export class TradeListener {
       await this.currentTick;
       if (!this.stopping) {
         // Phase 7D — same catch-up-shouldn't-wait fix as discoveryListener.ts.
-        const delay = result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs;
+        const delay = nextTickDelayMs({
+          processedWidth: processedWidth(result),
+          maxRangePerPoll: this.config.maxBlockRangePerPoll,
+          pollIntervalMs: this.config.pollIntervalMs,
+        });
         this.timer = setTimeout(tick, delay);
       }
     };
