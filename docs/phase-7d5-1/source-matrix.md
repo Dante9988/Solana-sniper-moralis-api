@@ -44,10 +44,11 @@ ETH->USDC: supported=false ("Jupiter routes Solana tokens only")
 
 No funds moved; no transaction was signed or submitted.
 
-**Licence/custody note.** The pre-existing `jupiterService.ts` signs with a stored key and is
-called only from `src/telegram/**` and `src/discord/**` — the legacy bot surface Phase 7A
-removed from the product. The new adapter shares no code with it and returns an unsigned
-transaction only.
+**Custody note — a correction.** An earlier entry here called `jupiterService.ts` custodial.
+That was wrong: the file contains no key material at all, `buildBuySwapTransaction` returns
+an unsigned `transactionBase64`, and `connectWallet` stores only a public address. The new
+adapter is separate because the old one targets a dead endpoint and predates the shared
+contract, not because of custody. Both return unsigned transactions.
 
 ## TradingView Advanced Charts
 

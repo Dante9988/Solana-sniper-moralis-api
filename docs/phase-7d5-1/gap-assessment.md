@@ -47,13 +47,22 @@ Probed live on 2026-09-20:
 The brief says "do not extend obsolete endpoints blindly". It is obsolete, so the new work
 targets `swap/v1` and the old service is left alone.
 
-### 2. The existing Jupiter service is custodial, and its callers are the legacy bot
+### 2. ~~The existing Jupiter service is custodial~~ — **RETRACTED, this was wrong**
 
-Its callers are `src/telegram/**` and `src/discord/**` — the `main2` bot surface, which signs
-with a stored key. Phase 7A deliberately removed custodial paths from the product. The brief
-requires "signing in the user's wallet. Never collect private keys or introduce backend
-custody", so this cannot be extended into the product path; a non-custodial adapter is a new
-thing that builds an unsigned transaction for the user's wallet.
+Corrected 2026-09-20 after re-reading the file at commit `9d3588e`.
+`src/services/jupiterService.ts` is **not** custodial:
+
+- `grep -cin "keypair|secretkey|privatekey|mnemonic|seed"` over all 470 lines → **0**.
+- `buildBuySwapTransaction` returns `{ transactionBase64, quote }`, and the sibling
+  method's own comment reads *"Does not sign or send anything."*
+- `connectWallet(userId, publicAddress)` validates a `PublicKey` and upserts
+  `{ userId, walletAddress }` — a public address only.
+- Its callers (`src/telegram/scenes.ts`, `showWalletMenu.ts`, `callbackHandlers.ts`,
+  `src/discord/**`) use it for wallet registration, config and menus.
+
+The reason for a separate adapter stands on its own and needs no custody argument: the
+service targets `quote-api.jup.ag/v6`, which is unreachable (HTTP 000, probed 2026-09-20),
+and it predates the shared buying contract.
 
 ### 3. There is no EVM wallet in the frontend at all
 

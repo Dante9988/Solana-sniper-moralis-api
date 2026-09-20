@@ -1,11 +1,16 @@
 /**
  * Phase 7D.5.1 — Jupiter, as a non-custodial buy provider.
  *
- * Deliberately **not** an extension of `src/services/jupiterService.ts`. That service signs
- * with a stored key and its callers are the legacy Telegram/Discord bot — the custodial
- * surface Phase 7A removed from the product. It also targets `quote-api.jup.ag/v6`, which
- * was probed on 2026-09-20 and is unreachable (HTTP 000). Extending it would have meant
- * building on both a dead endpoint and a custody model this phase forbids.
+ * Deliberately **not** an extension of `src/services/jupiterService.ts`, for one verified
+ * reason: that service calls `quote-api.jup.ag/v6`, probed 2026-09-20 and unreachable
+ * (HTTP 000).
+ *
+ * A correction to an earlier claim in this phase: that service is **not** custodial. It
+ * holds no key material (`buildBuySwapTransaction` returns `transactionBase64` and its own
+ * comment says "Does not sign or send anything"; `connectWallet` stores only a public
+ * address). The custody concern was mine and was wrong — see
+ * `docs/phase-7d5-1/gap-assessment.md`. What remains true is the dead endpoint, and that it
+ * predates and does not implement this phase's shared buying contract.
  *
  * Verified live, 2026-09-20 (`docs/phase-7d5-1/source-matrix.md`):
  *   lite-api.jup.ag/swap/v1/quote  -> 200, no API key
