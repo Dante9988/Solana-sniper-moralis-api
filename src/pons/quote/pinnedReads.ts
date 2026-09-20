@@ -70,8 +70,22 @@ export async function multicallAt(caller: ChainCaller, blockNumber: bigint, read
   return decoded.map((entry, i) => {
     if (!entry.success) return { ok: false, revertData: entry.returnData };
     const read = reads[i];
-    const value = decodeFunctionResult({ abi: read.abi, functionName: read.functionName, data: entry.returnData } as never);
-    return { ok: true, value };
+    try {
+      const value = decodeFunctionResult({ abi: read.abi, functionName: read.functionName, data: entry.returnData } as never);
+      return { ok: true, value };
+    } catch {
+      /**
+       * Phase 7D.5 — a call can "succeed" and still return nothing decodable. The case that
+       * matters here: `eth_call` to an address with no code at that block returns `0x` with
+       * `success: true`, which is what happens if a token is read at a block before it was
+       * deployed. Left to throw, one such entry took down the whole aggregate — and with it
+       * every other token batched alongside it.
+       *
+       * An undecodable return is not a usable value, so it is reported the same way a revert
+       * is: that one read failed, the rest of the batch stands.
+       */
+      return { ok: false, revertData: entry.returnData };
+    }
   });
 }
 

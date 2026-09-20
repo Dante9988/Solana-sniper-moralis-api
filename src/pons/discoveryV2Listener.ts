@@ -14,8 +14,10 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { nextTickDelayMs, processedWidth } from "./tickPacing";
 import { decodeEventLog, getAbiItem } from "viem";
-import { ChainReader } from "./chainClient";
+import { ChainReader, type ChainCaller } from "./chainClient";
+import { multicallAt, PinnedReadError } from "./quote/pinnedReads";
 import { RobinhoodChainConfig } from "./config";
 import { PonsV2Config } from "./config";
 import { CheckpointStore, recordChainBlockCheckpoint } from "./checkpointStore";
@@ -24,7 +26,7 @@ import { PONS_V2_FACTORY_ABI, UNISWAP_V4_POOL_MANAGER_ABI } from "./abiV2";
 import { ERC20_ABI } from "./abi";
 import { findMatchingInternalCallInput } from "./blockscoutTrace";
 import { NormalizedTokenDiscovered, NormalizedTokenGraduated } from "../discovery/types";
-import { mapWithConcurrency } from "./concurrency";
+import { mapWithConcurrency, chunk } from "./concurrency";
 import { attemptReorgRecovery } from "./reorgRecovery";
 import { ROBINHOOD_CHAIN } from "./discoveryListener";
 import type { RawEvmLog } from "./ponsAdapter";
@@ -56,8 +58,14 @@ export interface DiscoveryV2ListenerLogger {
 
 const noopLogger: DiscoveryV2ListenerLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
+/**
+ * Phase 7D.5 — `call` is optional on purpose. `FailoverChainClient` has it, so the running
+ * worker batches; a test stub that only implements `ChainReader` keeps the per-token path.
+ */
+type EnrichmentChainClient = ChainReader & Partial<Pick<ChainCaller, "call">>;
+
 export interface DiscoveryV2ListenerDeps {
-  chainClient: ChainReader;
+  chainClient: EnrichmentChainClient;
   db: PrismaClient;
   config: RobinhoodChainConfig;
   v2Config: PonsV2Config;
@@ -92,7 +100,7 @@ interface EnrichmentFailure {
 type RichMetadataOutcome = { status: "FOUND"; metadata: RichLaunchMetadata; source: "direct_tx" | "raw_trace" } | { status: "UNAVAILABLE" };
 
 export class DiscoveryV2Listener {
-  private readonly chainClient: ChainReader;
+  private readonly chainClient: EnrichmentChainClient;
   private readonly db: PrismaClient;
   private readonly config: RobinhoodChainConfig;
   private readonly v2Config: PonsV2Config;
@@ -117,6 +125,101 @@ export class DiscoveryV2Listener {
    * repo — not an off-chain metadata service (Moralis is unavailable and
    * not desired for this project).
    */
+  /**
+   * Phase 7D.5 — the same three ERC-20 reads for many tokens in one Multicall3
+   * `aggregate3` at one pinned block.
+   *
+   * Why: enrichment was the dominant cost of a V2 discovery tick. A 10,000-block tick finds
+   * ~254 launches and spent 3 `eth_call`s each — ~762 round trips — against a single usable
+   * wide-range provider, which is what held V2 discovery near 46-123 blocks/s.
+   *
+   * Semantics preserved:
+   * - `allowFailure` is true per call, so one bad token cannot discard the batch. A token
+   *   whose read reverted comes back FAILED and stays PENDING/retryable, exactly as before.
+   * - Every read in a batch is at one block, so a token's supply/name/symbol cannot be
+   *   stitched from different states.
+   * - Returns `null` when batching is unavailable (no `call` on the client, or the batch
+   *   itself failed) so the caller falls back to the per-token path rather than losing rows.
+   */
+  /**
+   * Enrich many tokens, preferring one Multicall3 round trip and falling back to the
+   * per-token reads whenever batching is unavailable or the batch itself could not run.
+   * The fallback is what guarantees this can only ever be faster, never less complete.
+   */
+  private async enrichMany(
+    addresses: readonly string[],
+    blockNumber: bigint | null
+  ): Promise<Map<string, EnrichmentOutcome | EnrichmentFailure>> {
+    const batched = blockNumber === null ? null : await this.fetchEnrichmentBatch(addresses, blockNumber);
+    if (batched) return batched;
+    const settled = await mapWithConcurrency(addresses, this.config.enrichmentConcurrency, async (address) => ({
+      address,
+      outcome: await this.fetchEnrichment(address),
+    }));
+    const out = new Map<string, EnrichmentOutcome | EnrichmentFailure>();
+    settled.forEach((entry, i) => {
+      if (entry.status === "fulfilled") out.set(entry.value.address, entry.value.outcome);
+      else out.set(addresses[i], { status: "FAILED", reason: `enrichment threw: ${String(entry.reason).slice(0, 160)}` });
+    });
+    return out;
+  }
+
+  private async fetchEnrichmentBatch(
+    addresses: readonly string[],
+    blockNumber: bigint
+  ): Promise<Map<string, EnrichmentOutcome | EnrichmentFailure> | null> {
+    const call = this.chainClient.call?.bind(this.chainClient);
+    if (!call || addresses.length === 0) return null;
+    const caller = { ...this.chainClient, call } as ChainCaller;
+
+    const out = new Map<string, EnrichmentOutcome | EnrichmentFailure>();
+    const batchSize = Math.max(1, this.config.enrichmentMulticallBatchSize);
+
+    for (const group of chunk(addresses, batchSize)) {
+      // Halve on a response-size/aggregate failure before giving up on the group.
+      let width = group.length;
+      let index = 0;
+      while (index < group.length) {
+        const slice = group.slice(index, index + width);
+        const reads = slice.flatMap((address) => [
+          { address, abi: ERC20_ABI, functionName: "totalSupply" },
+          { address, abi: ERC20_ABI, functionName: "name" },
+          { address, abi: ERC20_ABI, functionName: "symbol" },
+        ]);
+        try {
+          const results = await multicallAt(caller, blockNumber, reads);
+          slice.forEach((address, i) => {
+            const [supply, name, symbol] = [results[i * 3], results[i * 3 + 1], results[i * 3 + 2]];
+            if (!supply?.ok || !name?.ok || !symbol?.ok) {
+              const which = !supply?.ok ? "totalSupply" : !name?.ok ? "name" : "symbol";
+              out.set(address, { status: "FAILED", reason: `${which}(${address}): reverted in multicall at block ${blockNumber}` });
+              return;
+            }
+            out.set(address, {
+              status: "COMPLETE",
+              supply: supply.value as bigint,
+              name: name.value as string,
+              symbol: symbol.value as string,
+            });
+          });
+          index += width;
+        } catch (err) {
+          if (!(err instanceof PinnedReadError)) throw err;
+          if (width > 1) {
+            // Too wide for this provider (response size, gas, timeout): try a smaller batch.
+            width = Math.max(1, Math.floor(width / 2));
+            continue;
+          }
+          // Even one token failed through the batch path — hand the whole thing back so the
+          // caller uses the per-token reads it has always used.
+          this.logger.warn(`pons_v2 enrichment multicall unavailable at block ${blockNumber} (${err.kind}) — falling back to per-token reads.`);
+          return null;
+        }
+      }
+    }
+    return out;
+  }
+
   private async fetchEnrichment(tokenAddress: string): Promise<EnrichmentOutcome | EnrichmentFailure> {
     const [supplyResult, nameResult, symbolResult] = await Promise.all([
       this.chainClient.readContract<bigint>({ address: tokenAddress, abi: ERC20_ABI, functionName: "totalSupply", args: [] }),
@@ -244,13 +347,16 @@ export class DiscoveryV2Listener {
     });
     if (pendingRows.length > 0) {
       enrichmentRetried = pendingRows.length;
-      const outcomes = await mapWithConcurrency(pendingRows, this.config.enrichmentConcurrency, async (row) => ({
-        tokenAddress: row.tokenAddress,
-        outcome: await this.fetchEnrichment(row.tokenAddress),
-      }));
-      for (const settled of outcomes) {
-        if (settled.status === "rejected") continue;
-        const { tokenAddress, outcome } = settled.value;
+      // Observation block: the last height this source has fully processed, whose hash the
+      // reorg check above has just re-verified. Null on a fresh source (no pending rows
+      // exist then anyway), which sends enrichMany down the per-token path.
+      const retryBlock = checkpoint ? checkpoint.lastHeight : null;
+      const retryEnrichment = await this.enrichMany(
+        pendingRows.map((row) => row.tokenAddress),
+        retryBlock
+      );
+      for (const { tokenAddress } of pendingRows) {
+        const outcome = retryEnrichment.get(tokenAddress) ?? { status: "FAILED" as const, reason: `no enrichment result for ${tokenAddress}` };
         if (outcome.status === "COMPLETE") {
           await this.db.discoveredToken.update({
             where: { chain_tokenAddress: { chain: ROBINHOOD_CHAIN, tokenAddress } },
@@ -313,15 +419,15 @@ export class DiscoveryV2Listener {
       .map((log) => ({ log, tokenAddress: peekTokenAddress(log, TOKEN_LAUNCHED_EVENT_NAME) }))
       .filter((c): c is { log: RawEvmLog; tokenAddress: string } => c.tokenAddress !== null);
 
-    const enrichmentOutcomes = await mapWithConcurrency(candidateAddresses, this.config.enrichmentConcurrency, async (c) => ({
-      ...c,
-      outcome: await this.fetchEnrichment(c.tokenAddress),
-    }));
-
+    // Observation block: this tick's toBlock — the same block whose hash is written to the
+    // chain block checkpoint below, so a launch and its metadata share one canonical state.
+    const candidateEnrichment = await this.enrichMany(
+      candidateAddresses.map((c) => c.tokenAddress),
+      toBlock
+    );
     const discovered: Array<{ normalized: NormalizedTokenDiscovered & { curveAddress: string }; supply: bigint | null; name: string | null; symbol: string | null; enrichmentError: string | null }> = [];
-    for (const settled of enrichmentOutcomes) {
-      if (settled.status === "rejected") continue;
-      const { log, outcome } = settled.value;
+    for (const { log, tokenAddress } of candidateAddresses) {
+      const outcome = candidateEnrichment.get(tokenAddress) ?? { status: "FAILED" as const, reason: `no enrichment result for ${tokenAddress}` };
       const supply = outcome.status === "COMPLETE" ? outcome.supply : null;
       const normalized = ponsV2Adapter.decodeTokenDiscovered({ log, enrichment: { supply: supply ?? 0n } });
       if (!normalized) continue;
@@ -516,7 +622,11 @@ export class DiscoveryV2Listener {
         // (verified live: fell ~13,700 blocks behind). Only wait when this
         // tick actually reached UP_TO_DATE (or hit a real error worth
         // backing off from) — otherwise loop again immediately.
-        const delay = result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs;
+        const delay = nextTickDelayMs({
+          processedWidth: processedWidth(result),
+          maxRangePerPoll: this.config.maxBlockRangePerPoll,
+          pollIntervalMs: this.config.pollIntervalMs,
+        });
         this.timer = setTimeout(tick, delay);
       }
     };

@@ -18,6 +18,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { nextTickDelayMs, processedWidth } from "./tickPacing";
 import { isRangeLimitMessage } from "./rpcEndpoints";
 
 import type { ChainReader, EventLogReader } from "./chainClient";
@@ -373,7 +374,11 @@ export class CurveTradeListener {
         }
       })();
       await this.currentTick;
-      if (!this.stopping) this.timer = setTimeout(tick, result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs);
+      if (!this.stopping)
+        this.timer = setTimeout(
+          tick,
+          nextTickDelayMs({ processedWidth: processedWidth(result), maxRangePerPoll: Number(this.range), pollIntervalMs: this.config.pollIntervalMs })
+        );
     };
     this.timer = setTimeout(tick, 0);
   }

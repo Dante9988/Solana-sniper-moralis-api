@@ -29,6 +29,7 @@ export const TEST_CONFIG: RobinhoodChainConfig = Object.freeze({
   freshStartLookbackBlocks: 100,
   enrichmentConcurrency: 5,
   enrichmentRetryBatchSize: 25,
+  enrichmentMulticallBatchSize: 40,
   tradePoolChunkSize: 40,
   tradeQueryConcurrency: 3,
   reorgMaxDepthBlocks: 500,
