@@ -180,7 +180,7 @@ supervises all three with one-owner protection (RUNBOOK.md).
 | **7D.3.2** | Official V4Quoter verified on a pinned fork; block-pinned quotes, route simulation, market evidence, immutable evidence snapshots, paper positions, token-logo cache | Done, merged as PR #20 — §25 |
 | **7D.3.3** | Browser acceptance with two confirmed Supabase test users; CORS fixes; disposable-DB guard | Done, merged as PR #21 and follow-up PR #22 — §26 |
 | **7D.4** | Market terminal, live market snapshots, Almost bonded/Trending, guided Practice with paper money, light gamification, vanity address handoff | Done, merged as PR #23 (2026-09-19) — §27; infrastructure blockers remain in §27.6 |
-| **7D.5** | Robinhood live-data readiness: RPC identity, failure classification, adaptive log windows, graduation-poller scope, tick pacing, batched V2 enrichment, V1 pause switches, deployed-secret proof | Code done and tested, **local branch only, no PR** — §28. Operationally **not ready**: ingestion catching up, production still serving the burned key files (§28.6) |
+| **7D.5** | Robinhood live-data readiness, then **local live-head mode**: RPC identity, failure classification, adaptive log windows, graduation-poller scope, tick pacing, batched V2 enrichment, V1 pause switches, ingestion sessions, deployed-secret proof | **Local product readiness: done** (§28.7). Hosted readiness out of scope and still open (§28.6). Branches local, **no PR** |
 | **7G.1** | Robinhood Chain deterministic investigation snapshots, checks and AI thesis | Not started — brief is `phase7g1.txt` in the frontend repository |
 
 Phase briefs live in `phase2.txt`, `phase3.txt`, `phase3-1.txt`, `phase4.txt`, `phase5*.txt`, `phase6`, `phase7b1.txt`, `phase7b2.txt`, `phase7b4.txt`, `phase7b5a.txt` and `phase7b5b.txt` (repository root, historical prompts). The Phase 7C/7D/7G briefs (`phase7d3.txt` … `phase7d3.3.txt`) live in the frontend repository root (`only-pump-me`). The implemented Phase 7B.4 behavior and deviations are recorded in §19; the brief is not an exact runtime description. The `main2` merge had no corresponding phase brief — it is independent legacy work with its own history (commits from May 2025), reconciled into `master` (see git log around `10668e0`).
@@ -2172,3 +2172,90 @@ configuration was not changed here; the recommendation is recorded in `.env.exam
 Rotation status that requires account access and could not be verified from here: the two exposed Helius keys, the `ROBINHOOD_RPC_HTTPS2` key, the Supabase secret key, and the E2E user B password. What *is* observable: `ROBINHOOD_RPC_HTTPS` and `ROBINHOOD_RPC_HTTPS2` both answer `429` (quota exhausted) and `ROBINHOOD_RPC_HTTPS3` serves.
 
 **Blockscout is no longer blocked.** §27.6 item 4 recorded it behind a Cloudflare challenge; on 2026-09-19 `robinhoodchain.blockscout.com` returned `HTTP 200` in 1.6s with the browser `User-Agent` `blockscoutTrace.ts` already sends.
+
+### 28.7 Local live-head mode — the product decision that superseded catch-up
+
+Phases up to here treated historical completeness as a gate: the backlog had to close before
+the product could be judged. For **local development that was the wrong trade**. A developer
+starting the stack wants to see what the chain is doing now, not wait hours for six days of
+history. Durable checkpoint recovery and historical backfill belong to the hosted
+deployment, and they are preserved untouched for it.
+
+**Two modes**, selected by `PONS_INGESTION_MODE`:
+
+| Mode | Behaviour | Who uses it |
+|---|---|---|
+| `resume` | **Default.** Durable `ChainIngestionCheckpoint` rows, read and advanced exactly as in every earlier phase. | Hosted dev/staging/production |
+| `live-head` | The stack agrees on one boundary — the current chain head — and every stream ingests forward from it. | Local development (`scripts/dev-stack.sh`) |
+
+Because `resume` is the default, an environment that sets nothing is unchanged by this
+phase.
+
+**The session.** A `live-head` start records a boundary: block number, block hash, and the
+block's own chain timestamp (never wall clock). That row is the shared agreement every
+worker reads.
+
+- `scripts/dev-stack.sh start` — **opens** a session.
+- `scripts/dev-stack.sh start pons` — **joins** the active one.
+
+That split is the point. A worker restart, an API restart or a frontend reload must not each
+cut their own boundary, because every extra boundary is a silent gap. Within a session,
+short connection gaps still recover from the session checkpoint with the existing
+deduplication and reorg handling — starting fresh is a property of a deliberate stack start,
+not of an RPC retry.
+
+**How history is left alone.** Session checkpoints are written under a prefixed source,
+`session:<id>:<base>`. The prefix lives on `CheckpointStore` rather than at the ~65 call
+sites, so transactional writes, reorg bookkeeping and health fields move together and cannot
+get half-scoped; `resume`, which passes no prefix, is byte-for-byte the old path. No durable
+row is read or advanced in `live-head`, no historical range is ever marked processed, and
+nothing is deleted — tokens, pools, trades, candles and durable checkpoints all survive. An
+old checkpoint is simply not consulted.
+
+**Barriers were adapted, not removed.** Curve and V4 trades barrier on *this session's*
+discovery checkpoint, so discovery-before-trades ordering still holds while no longer
+waiting on a checkpoint from an earlier session.
+
+**A health-projection bug this exposed.** `computeIngestionHealth` reported only the two V1
+streams — written in 7B.5A, before V2 existed — so a stack running entirely on `pons_v2` was
+described by streams nobody used, and an idle V1 trade listener (legitimate: there are no
+`venue = "pons"` tokens) made the whole stack read `UNAVAILABLE`. It now covers every
+stream, exposes the live session, and computes the overall status from streams that have
+actually run.
+
+#### Measured, 2026-09-20
+
+Session `355f2236-d843-4e02-990a-8e948cb655ef`, boundary block **67747143**
+(`0xe245fe06…`), chain time `2026-09-20T07:05:47Z`.
+
+| Property | Result |
+|---|---|
+| Time from stack start to all streams at the tip | **< 90s** |
+| Stream lag once running | 5–43 blocks (seconds) |
+| Chain → database latency | **~4.4s** |
+| Database → browser | 15s poll — reported separately, never called live streaming |
+| Durable checkpoints | untouched (`pons_v2` rows still at their old heights) |
+| Backlog skipped | ~1.3M blocks, deliberately not replayed |
+
+**Trending became `available: true` for the first time in this project** (`lagSeconds: 7`).
+Its freshness and eligibility rules were not weakened — reaching the tip is the condition it
+always required. It returns no rows because nothing currently clears the surge guards, which
+is the honest answer rather than a populated tab.
+
+**Honesty under partial coverage**, verified against live tokens:
+
+- A token observed from session start with no trades: `No trades yet`, `Unavailable`,
+  `$0 partial`, `24h change: No baseline`.
+- A token with pre-session history *and* session trades: `coverage.from: null` plus the note
+  *"Post-graduation trade history has an unknown start, so windows are partial."* Old rows
+  never make a gap look continuously covered.
+
+#### Verdicts
+
+- **Local product readiness: READY.** Start the stack, see current activity, and every
+  supported journey — discovery, terminal, charts, quotes, simulation, Practice, vanity —
+  works against live data within seconds of startup.
+- **Hosted deployment readiness: NOT READY**, and deliberately out of scope here. It needs
+  `resume` mode with durable catch-up, plus the unresolved production items in §28.6 — the
+  site still serves the burned key files and four credentials are unrotated. Those remain
+  open and are tracked separately; they do not block local development.
