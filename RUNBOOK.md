@@ -28,11 +28,11 @@ API and database are fine, but nothing is writing observations.
 ## Starting
 
 ```bash
-# Postgres (host-owned; adjust to your setup)
-docker start solana-sniper-postgres
+# Postgres — the app database is the onlypump-pg container (Phase 7D.5 notes below).
+docker start onlypump-pg
 
-# Backend services
-scripts/dev-stack.sh start          # api, pons, candles
+# Backend services. Opens a live-head observation session, then starts api, pons, candles.
+scripts/dev-stack.sh start
 scripts/dev-stack.sh status
 scripts/dev-stack.sh logs pons
 
@@ -41,6 +41,53 @@ scripts/dev-stack.sh logs pons
 cd ../only-pump-me && VITE_API_BASE_URL=http://localhost:8787/api/v1 npm run dev
 # → http://localhost:8080  (or http://127.0.0.1:8080)
 ```
+
+### Ingestion modes (Phase 7D.5)
+
+`start` prints the boundary it chose — this is the line to record:
+
+```
+opening a new live-head observation session:
+live-head session opened
+  id:        355f2236-d843-4e02-990a-8e948cb655ef
+  boundary:  block 67747143 (0xe245fe06…)
+  chain time:2026-09-20T07:05:47.000Z
+  ingesting: from block 67747144 forward
+```
+
+`PONS_INGESTION_MODE` selects how ingestion begins. `dev-stack.sh` defaults it to
+`live-head`; every other entry point defaults to `resume`.
+
+| Mode | What happens | Use it for |
+|---|---|---|
+| `live-head` | Fresh boundary at the current chain head, ingest forward. Old backlogs are skipped, never replayed. | Local development |
+| `resume` | Durable `ChainIngestionCheckpoint` rows, continuing where they stopped. | Hosted dev/staging/production |
+
+```bash
+scripts/dev-stack.sh start                                  # local: current activity in seconds
+PONS_INGESTION_MODE=resume scripts/dev-stack.sh start       # rehearse hosted catch-up instead
+```
+
+**Who opens a session matters.** `dev-stack.sh start` with no service names opens a new one;
+`dev-stack.sh start pons` *joins* the active session. If every worker restart cut its own
+boundary, each restart would silently create a gap. A browser refresh or an API restart
+never creates one either.
+
+`live-head` never touches durable state: session checkpoints are written under
+`session:<id>:<source>`, so the `robinhood:*` rows keep their heights and no historical range
+is ever marked processed. Nothing is deleted — tokens, pools, trades and candles all remain.
+
+Inspect the live session:
+
+```bash
+curl -s localhost:8787/api/v1/tokens/robinhood/status \
+  | jq '{status, session, streams: [.streams[] | {source, status, blocksBehind}]}'
+```
+
+`session.mode` reads `resume` when no session is in play. Within ~90s of `start` every
+running stream should sit a handful of blocks behind. `robinhood:pons:trades` stays
+`UNAVAILABLE` while no `venue = "pons"` token exists — that is idle, not broken, and it no
+longer drags the overall status down.
 
 ### CORS
 
