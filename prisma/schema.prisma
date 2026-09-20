@@ -925,6 +925,52 @@ model ChainTrade {
 ///
 /// So history is fetched per token, when someone actually opens it, and remembered here so
 /// it happens once rather than on every view.
+/// Phase 7D.5.1 — a MoonPay hosted-checkout order.
+///
+/// Four states are deliberately kept apart here, because collapsing any two of them
+/// misleads the user:
+///   * our business verification / production activation (config, not this table)
+///   * the customer's MoonPay identity verification (MoonPay's, never mirrored as a badge)
+///   * payment/order status (`status`)
+///   * actual on-chain delivery (`cryptoTransactionId`, `deliveredAmount`)
+/// A paid order that has not been delivered is not a completed purchase.
+model MoonPayOrder {
+  id                    String   @id @default(uuid())
+  userId                String
+  /// Our id, sent as externalTransactionId so MoonPay's events map back to a user.
+  externalTransactionId String   @unique
+  /// MoonPay's id, unknown until their first event.
+  providerTransactionId String?
+  environment           String
+  status                String
+  baseCurrencyCode      String
+  baseCurrencyAmount    String
+  currencyCode          String
+  walletAddress         String
+  network               String
+  cryptoTransactionId   String?
+  deliveredAmount       String?
+  failureReason         String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([providerTransactionId])
+}
+
+/// Phase 7D.5.1 — every verified webhook, recorded before it is applied.
+///
+/// MoonPay sends no event id, so identity is a hash of the raw body. The unique index is
+/// what makes a redelivery a no-op instead of a second state transition.
+model MoonPayWebhookEvent {
+  id                    String   @id @default(uuid())
+  signatureTimestamp    BigInt
+  payloadHash           String   @unique
+  eventType             String
+  providerTransactionId String?
+  receivedAt            DateTime @default(now())
+}
+
 model TokenTradeBackfill {
   chain         String
   tokenAddress  String
