@@ -233,6 +233,32 @@ export const RobinhoodStatusResponseSchema = z
   })
   .openapi("RobinhoodStatusResponse");
 
+/**
+ * Phase 7D.5 — per-token trade history backfill.
+ *
+ * `coveredVenues`/`uncoveredVenues` exist so a client can never present a partial history as
+ * complete: a graduated token's post-graduation Uniswap V4 swaps are a different log shape
+ * and are not part of this backfill.
+ */
+export const TokenHistoryBackfillSchema = z
+  .object({
+    tokenAddress: z.string(),
+    status: z.enum(["COMPLETE", "PARTIAL", "FAILED", "NOT_STARTED", "RUNNING"]),
+    fromBlock: z.string().nullable(),
+    toBlock: z.string().nullable(),
+    /** Highest block covered; equals `toBlock` only when COMPLETE. */
+    cursor: z.string().nullable(),
+    tradesWritten: z.number().int(),
+    logsScanned: z.number().int(),
+    requests: z.number().int(),
+    elapsedMs: z.number().int().nullable(),
+    /** Why a bounded run stopped early, or why it failed. */
+    stoppedReason: z.string().nullable(),
+    coveredVenues: z.array(z.string()),
+    uncoveredVenues: z.array(z.string()),
+  })
+  .openapi("TokenHistoryBackfill");
+
 /** Phase 7D.4 — which chains have discovery in this deployment, so clients never imply a missing one. */
 export const DiscoveryChainsResponseSchema = z
   .object({

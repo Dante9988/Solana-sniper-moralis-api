@@ -916,6 +916,38 @@ model ChainTrade {
 ///
 /// `resume` mode creates no session and behaves exactly as before, which is what hosted
 /// environments will use.
+/// Phase 7D.5 — per-token, on-demand trade history backfill.
+///
+/// Chain-wide trade ingestion is a topic-only `eth_getLogs` across every token, which is an
+/// indexer workload. A *chart* needs one token's logs, which is an address-filtered query
+/// the node answers from an index. Measured 2026-09-20: a token launched 5.1M blocks
+/// earlier returned its complete history — 9,781 trades — in **11 requests and 7.0s**.
+///
+/// So history is fetched per token, when someone actually opens it, and remembered here so
+/// it happens once rather than on every view.
+model TokenTradeBackfill {
+  chain         String
+  tokenAddress  String
+  /// PENDING | RUNNING | COMPLETE | PARTIAL | FAILED
+  status        String
+  fromBlock     BigInt
+  toBlock       BigInt
+  /// Highest block written so far; a resumed run continues from here.
+  cursor        BigInt
+  tradesWritten Int       @default(0)
+  logsScanned   Int       @default(0)
+  requests      Int       @default(0)
+  /// Why a bounded run stopped early — surfaced, never swallowed.
+  stoppedReason String?
+  lastError     String?
+  startedAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+  completedAt   DateTime?
+
+  @@id([chain, tokenAddress])
+  @@index([chain, status])
+}
+
 model IngestionSession {
   id             String    @id @default(uuid())
   chain          String

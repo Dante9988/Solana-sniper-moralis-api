@@ -15,6 +15,7 @@ import { RobinhoodTokenListQuerySchema, DiscoveryChainsResponseSchema,
   RobinhoodTokenDetailResponseSchema,
   RobinhoodTokenListResponseSchema,
   RobinhoodStatusResponseSchema,
+  TokenHistoryBackfillSchema,
 } from "./robinhoodTokens";
 import { CandleHistoryResponseSchema } from "./candles";
 import { CalloutListResponseSchema } from "./callouts";
@@ -162,6 +163,37 @@ registry.registerPath({
     400: errorResponse,
     401: errorResponse,
     404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/history",
+  summary:
+    "Phase 7D.5 — fetch this token's trade history on demand. An address-filtered log query the node answers from an index, not the chain-wide indexer scan: measured 2026-09-20, a token with 5.1M blocks of history returned all 9,784 trades in 11 requests. Idempotent, resumable and bounded.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Backfill outcome", content: { "application/json": { schema: TokenHistoryBackfillSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/history",
+  summary: "Phase 7D.5 — what has been backfilled for this token, including which venues the history does NOT cover.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Backfill state", content: { "application/json": { schema: TokenHistoryBackfillSchema } } },
+    400: errorResponse,
+    401: errorResponse,
   },
 });
 
