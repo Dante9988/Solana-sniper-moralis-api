@@ -12,9 +12,14 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { findActiveSession, loadIngestionMode } from "./ingestionSession";
+import { ROBINHOOD_CHAIN } from "./discoveryListener";
 import { CheckpointStore, CheckpointHealthState } from "./checkpointStore";
 import { DISCOVERY_CHECKPOINT_SOURCE } from "./discoveryListener";
 import { TRADE_CHECKPOINT_SOURCE } from "./tradeListener";
+import { DISCOVERY_V2_CHECKPOINT_SOURCE } from "./discoveryV2Listener";
+import { TRADE_V2_CHECKPOINT_SOURCE } from "./tradeV2Listener";
+import { CURVE_TRADE_CHECKPOINT_SOURCE } from "./curveTradeListener";
 import { RobinhoodChainConfig } from "./config";
 
 export type IngestionHealthStatus = "LIVE" | "LAGGING" | "DEGRADED" | "REORG_RECOVERY" | "UNAVAILABLE";
@@ -38,6 +43,19 @@ export interface IngestionHealth {
   readonly status: IngestionHealthStatus;
   readonly discovery: SourceHealthDetail;
   readonly trades: SourceHealthDetail;
+  /**
+   * Phase 7D.5 — every ingestion stream, not just the two V1 ones this projection was
+   * written around in 7B.5A. The product runs on `pons_v2`, so a status built only from
+   * `pons` streams described something nobody was using.
+   */
+  readonly streams: readonly SourceHealthDetail[];
+  /** The live observation session, or null in `resume` mode. */
+  readonly session: {
+    readonly mode: string;
+    readonly id: string | null;
+    readonly startBlock: string | null;
+    readonly startTimestamp: string | null;
+  };
   readonly observedAt: string;
 }
 
@@ -94,17 +112,49 @@ function toDetail(source: string, state: CheckpointHealthState | null, now: Date
   };
 }
 
+/** Every stream this deployment can run, in the order an operator reads them. */
+const ALL_SOURCES = [
+  DISCOVERY_CHECKPOINT_SOURCE,
+  TRADE_CHECKPOINT_SOURCE,
+  DISCOVERY_V2_CHECKPOINT_SOURCE,
+  TRADE_V2_CHECKPOINT_SOURCE,
+  CURVE_TRADE_CHECKPOINT_SOURCE,
+] as const;
+
 export async function computeIngestionHealth(db: PrismaClient, config: Pick<RobinhoodChainConfig, "healthLaggingBlocks" | "healthStaleMs" | "healthErrorWindowMs">, now: Date = new Date()): Promise<IngestionHealth> {
-  const store = new CheckpointStore(db);
-  const [discoveryState, tradeState] = await Promise.all([store.getHealthState(DISCOVERY_CHECKPOINT_SOURCE), store.getHealthState(TRADE_CHECKPOINT_SOURCE)]);
+  // Phase 7D.5 — report against the live session, not an abandoned durable checkpoint. In
+  // live-head mode the durable V2 rows sat 1.3M blocks behind while the session ran at the
+  // tip; reading them would have called a healthy stack badly degraded.
+  const mode = loadIngestionMode();
+  const session = mode === "live-head" ? await findActiveSession(db, ROBINHOOD_CHAIN) : null;
+  const store = new CheckpointStore(db, session ? `session:${session.id}:` : "");
 
-  const discoveryStatus = classifySource(discoveryState, now, config);
-  const tradeStatus = classifySource(tradeState, now, config);
+  const states = await Promise.all(ALL_SOURCES.map((source) => store.getHealthState(source)));
+  const streams = ALL_SOURCES.map((source, i) => toDetail(source, states[i], now, classifySource(states[i], now, config)));
 
+  /**
+   * Overall status covers the streams that have actually committed something under the
+   * current mode. A stream that never started is not evidence of ill health — the V1 trade
+   * listener legitimately idles when no `venue = "pons"` token exists, and letting that
+   * report UNAVAILABLE made a fully live stack look down. If nothing has run at all, the
+   * old pessimistic answer is still the right one.
+   */
+  const started = streams.filter((s, i) => states[i] !== null);
+  const status = started.length > 0 ? started.map((s) => s.status).reduce(worstOf) : "UNAVAILABLE";
+
+  const byName = (source: string) => streams[ALL_SOURCES.indexOf(source as (typeof ALL_SOURCES)[number])];
   return {
-    status: worstOf(discoveryStatus, tradeStatus),
-    discovery: toDetail(DISCOVERY_CHECKPOINT_SOURCE, discoveryState, now, discoveryStatus),
-    trades: toDetail(TRADE_CHECKPOINT_SOURCE, tradeState, now, tradeStatus),
+    status,
+    // Kept for compatibility with clients written against 7B.5A.
+    discovery: byName(DISCOVERY_CHECKPOINT_SOURCE),
+    trades: byName(TRADE_CHECKPOINT_SOURCE),
+    streams,
+    session: {
+      mode,
+      id: session?.id ?? null,
+      startBlock: session ? session.startBlock.toString() : null,
+      startTimestamp: session ? session.startTimestamp.toISOString() : null,
+    },
     observedAt: now.toISOString(),
   };
 }

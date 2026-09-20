@@ -902,6 +902,39 @@ model ChainTrade {
 /// Phase 7B.5A §5/§9 extends this with the persisted, backend-owned facts the
 /// source-health projection (sourceHealth.ts) reads — never inferred from a
 /// live RPC call per API request, and never derived in the browser.
+/// Phase 7D.5 — one local observation session.
+///
+/// Local development starts from the current chain head rather than replaying a
+/// historical backlog. A session records the boundary that decision creates, so every
+/// worker in a stack can share it: the block the stack agreed to start after, its hash and
+/// its chain timestamp.
+///
+/// Checkpoints for a session are written under a prefixed `source`
+/// (`session:<id>:<base>`), which is what keeps the durable `robinhood:*` checkpoints
+/// untouched. Nothing here pretends a historical range was processed — an old durable
+/// checkpoint is simply not consulted in `live-head` mode.
+///
+/// `resume` mode creates no session and behaves exactly as before, which is what hosted
+/// environments will use.
+model IngestionSession {
+  id             String    @id @default(uuid())
+  chain          String
+  /// "live-head" — the only mode that creates a session row.
+  mode           String
+  /// The observation boundary. Ingestion starts at `startBlock + 1`; `startBlock` itself
+  /// is the last block deliberately NOT processed, so the boundary is unambiguous.
+  startBlock     BigInt
+  startHash      String
+  /// The chain's own timestamp for `startBlock`, never wall clock.
+  startTimestamp DateTime
+  createdAt      DateTime  @default(now())
+  /// Set when a later session supersedes this one. The newest row with a null value is the
+  /// active session that restarting workers rejoin.
+  endedAt        DateTime?
+
+  @@index([chain, endedAt, createdAt])
+}
+
 model ChainIngestionCheckpoint {
   source                  String    @id
   lastHeight              BigInt

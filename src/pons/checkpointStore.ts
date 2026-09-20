@@ -46,16 +46,34 @@ export interface CheckpointHealthState {
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
 export class CheckpointStore {
-  constructor(private readonly db: DbClient) {}
+  /**
+   * Phase 7D.5 — an optional namespace for every source this store touches.
+   *
+   * `live-head` mode runs against a session-scoped copy of each checkpoint
+   * (`session:<id>:<base>`) so a local run never reads or advances the durable `robinhood:*`
+   * rows. Putting the prefix here rather than at ~65 call sites means the transactional
+   * writes, reorg bookkeeping and health fields all move together and cannot get
+   * half-scoped — and `resume` mode, which passes no prefix, is byte-for-byte the old
+   * behaviour.
+   */
+  constructor(
+    private readonly db: DbClient,
+    private readonly sourcePrefix = ""
+  ) {}
+
+  /** The row this logical source maps to. Identity when no prefix is set. */
+  private key(source: string): string {
+    return this.sourcePrefix === "" ? source : `${this.sourcePrefix}${source}`;
+  }
 
   async get(source: string): Promise<Checkpoint | null> {
-    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source } });
+    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source: this.key(source) } });
     if (!row) return null;
     return { lastHeight: row.lastHeight, lastHash: row.lastHash };
   }
 
   async getHealthState(source: string): Promise<CheckpointHealthState | null> {
-    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source } });
+    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source: this.key(source) } });
     if (!row) return null;
     return {
       lastHeight: row.lastHeight,
@@ -88,9 +106,9 @@ export class CheckpointStore {
   async set(source: string, checkpoint: Checkpoint, observedChainHeight?: bigint, lastHeightTimestamp?: Date): Promise<void> {
     const now = new Date();
     await this.db.chainIngestionCheckpoint.upsert({
-      where: { source },
+      where: { source: this.key(source) },
       create: {
-        source,
+        source: this.key(source),
         lastHeight: checkpoint.lastHeight,
         lastHash: checkpoint.lastHash,
         lastObservedChainHeight: observedChainHeight ?? null,
@@ -113,7 +131,7 @@ export class CheckpointStore {
 
   /** Phase 7B.5B §10 — read just what candle finality needs from a source's checkpoint, without pulling in the full health-state shape. */
   async getFinalityState(source: string): Promise<CheckpointFinalityState | null> {
-    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source } });
+    const row = await this.db.chainIngestionCheckpoint.findUnique({ where: { source: this.key(source) } });
     if (!row) return null;
     return { lastHeight: row.lastHeight, lastHeightTimestamp: row.lastHeightTimestamp, reorgUnresolvedAt: row.reorgUnresolvedAt };
   }
@@ -130,7 +148,7 @@ export class CheckpointStore {
   async recordUpToDate(source: string, observedChainHeight?: bigint): Promise<void> {
     await this.db.chainIngestionCheckpoint
       .update({
-        where: { source },
+        where: { source: this.key(source) },
         data: { lastPollAt: new Date(), lastObservedChainHeight: observedChainHeight ?? undefined, lastError: null, lastErrorAt: null },
       })
       .catch((err: unknown) => {
@@ -143,7 +161,7 @@ export class CheckpointStore {
   async recordFailure(source: string, reason: string): Promise<void> {
     const now = new Date();
     await this.db.chainIngestionCheckpoint
-      .update({ where: { source }, data: { lastPollAt: now, lastError: reason, lastErrorAt: now } })
+      .update({ where: { source: this.key(source) }, data: { lastPollAt: now, lastError: reason, lastErrorAt: now } })
       .catch((err: unknown) => {
         if (isRecordNotFoundError(err)) return;
         throw err;
@@ -153,10 +171,10 @@ export class CheckpointStore {
   /** Marks (preserving the original detection time if already marked) that this source is halted on an unresolved reorg. */
   async markReorgUnresolved(source: string, reason: string): Promise<void> {
     const now = new Date();
-    const existing = await this.db.chainIngestionCheckpoint.findUnique({ where: { source }, select: { reorgUnresolvedAt: true } });
+    const existing = await this.db.chainIngestionCheckpoint.findUnique({ where: { source: this.key(source) }, select: { reorgUnresolvedAt: true } });
     if (!existing) return; // see recordUpToDate's comment — no row to update against
     await this.db.chainIngestionCheckpoint.update({
-      where: { source },
+      where: { source: this.key(source) },
       data: {
         reorgUnresolvedAt: existing.reorgUnresolvedAt ?? now,
         reorgUnresolvedReason: reason,

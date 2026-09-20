@@ -27,6 +27,8 @@ import { computeTrending } from "../market/trendingVolume";
 import { fillMissingTokenMetadata } from "../metadata/alchemyMetadataFallback";
 import { ChainlinkQuoteUsdRateProvider } from "../usd/chainlinkQuoteUsdRateProvider";
 import { ponsLogger, ponsComponentLogger } from "../logger";
+import { loadIngestionMode, resolveSession, checkpointSourceFor, sessionStartHeight, describeSession } from "../ingestionSession";
+import { ROBINHOOD_CHAIN } from "../discoveryListener";
 
 /**
  * Phase 7D.5 — reversible, local switches for the Pons **V1** loops.
@@ -58,8 +60,22 @@ async function main(): Promise<void> {
   const chainClient = new FailoverChainClient({ config });
   const db = new PrismaClient();
 
-  const discoveryListener = new DiscoveryListener({ chainClient, db, config, logger: ponsComponentLogger("pons:discovery") });
-  const tradeListener = new TradeListener({ chainClient, db, config, logger: ponsComponentLogger("pons:trades") });
+  /**
+   * Phase 7D.5 — resolve the ingestion mode and, in live-head, the shared session.
+   *
+   * `resolveSession` *joins* an existing active session rather than cutting a new boundary,
+   * so restarting one worker mid-session rejoins its siblings instead of opening a gap.
+   * Only `dev-stack.sh start` (all services) opens a new one — see `session:start`.
+   */
+  const mode = loadIngestionMode();
+  const session = await resolveSession(db, chainClient, ROBINHOOD_CHAIN, mode);
+  const sessionPrefix = session ? `session:${session.id}:` : "";
+  const freshStartHeight = session ? sessionStartHeight(session) : undefined;
+  ponsLogger.info(describeSession(mode, session));
+  const sessionOpts = { sessionPrefix, freshStartHeight };
+
+  const discoveryListener = new DiscoveryListener({ chainClient, db, config, ...sessionOpts, logger: ponsComponentLogger("pons:discovery") });
+  const tradeListener = new TradeListener({ chainClient, db, config, ...sessionOpts, logger: ponsComponentLogger("pons:trades") });
   const graduationPoller = new GraduationPoller({ chainClient, db, config, logger: ponsComponentLogger("pons:graduation") });
 
   const v1Discovery = loopEnabled("PONS_V1_DISCOVERY_ENABLED");
@@ -86,14 +102,15 @@ async function main(): Promise<void> {
   let curveTradeListener: CurveTradeListener | null = null;
   try {
     const v2Config = loadPonsV2Config();
-    discoveryV2Listener = new DiscoveryV2Listener({ chainClient, db, config, v2Config, logger: ponsComponentLogger("pons:discovery-v2") });
-    tradeV2Listener = new TradeV2Listener({ chainClient, db, config, v2Config, logger: ponsComponentLogger("pons:trades-v2") });
+    discoveryV2Listener = new DiscoveryV2Listener({ chainClient, db, config, v2Config, ...sessionOpts, logger: ponsComponentLogger("pons:discovery-v2") });
+    tradeV2Listener = new TradeV2Listener({ chainClient, db, config, v2Config, ...sessionOpts, logger: ponsComponentLogger("pons:trades-v2") });
     // Phase 7D.4 §3 — pre-graduation bonding-curve trades.
     const curveStart = process.env.PONS_CURVE_TRADES_START_HEIGHT?.trim();
     curveTradeListener = new CurveTradeListener({
       chainClient,
       db,
       config,
+      ...sessionOpts,
       startHeight: curveStart ? BigInt(curveStart) : undefined,
       maxRange: process.env.PONS_CURVE_TRADES_MAX_RANGE?.trim() ? Number(process.env.PONS_CURVE_TRADES_MAX_RANGE) : undefined,
       logger: ponsComponentLogger("pons:curve-trades"),

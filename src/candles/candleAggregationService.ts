@@ -16,6 +16,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { currentSessionPrefix } from "../pons/ingestionSession";
 import type { ChainReader } from "../pons/chainClient";
 import { CheckpointStore } from "../pons/checkpointStore";
 import { DISCOVERY_CHECKPOINT_SOURCE } from "../pons/discoveryListener";
@@ -69,7 +70,8 @@ const DISCOVERY_SOURCES = [DISCOVERY_CHECKPOINT_SOURCE, DISCOVERY_V2_CHECKPOINT_
  * V1 trade checkpoint was consulted, so V2 buckets could be finalized by an unrelated stream.
  */
 export async function loadFinality(db: PrismaClient, chain = "robinhood"): Promise<FinalityInputs> {
-  const store = new CheckpointStore(db);
+  // Phase 7D.5 — finality follows the live session's trade streams.
+  const store = new CheckpointStore(db, await currentSessionPrefix(db, chain));
   const venuesPresent = (
     await db.discoveredToken.groupBy({ by: ["venue"], where: { chain, canonicalStatus: "CANONICAL" } })
   ).map((r) => r.venue);

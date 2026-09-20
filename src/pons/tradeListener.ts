@@ -66,6 +66,18 @@ export interface TradeListenerDeps {
   db: PrismaClient;
   config: RobinhoodChainConfig;
   logger?: TradeListenerLogger;
+  /**
+   * Phase 7D.5 — namespace for this listener's checkpoints. Set in `live-head` mode to
+   * `session:<id>:`, which keeps the durable `robinhood:*` rows untouched. Empty in
+   * `resume` mode, which is the pre-existing behaviour.
+   */
+  sessionPrefix?: string;
+  /**
+   * Phase 7D.5 — where to begin when this source has no checkpoint yet. In `live-head` mode
+   * this is the shared session boundary, so every stream starts from the same block instead
+   * of each picking its own lookback behind the tip.
+   */
+  freshStartHeight?: bigint;
 }
 
 export class TradeListener {
@@ -78,7 +90,12 @@ export class TradeListener {
   /** Phase 7B.5A §7 — tracked so a graceful shutdown can await the in-flight tick (waitForIdle()) rather than disconnecting Prisma mid-transaction. */
   private currentTick: Promise<void> = Promise.resolve();
 
+  private readonly sessionPrefix: string;
+  private readonly freshStartHeight: bigint | null;
+
   constructor(deps: TradeListenerDeps) {
+    this.sessionPrefix = deps.sessionPrefix ?? "";
+    this.freshStartHeight = deps.freshStartHeight ?? null;
     this.chainClient = deps.chainClient;
     this.db = deps.db;
     this.config = deps.config;
@@ -86,7 +103,7 @@ export class TradeListener {
   }
 
   async runOnce(): Promise<TradeTickResult> {
-    const checkpointStore = new CheckpointStore(this.db);
+    const checkpointStore = new CheckpointStore(this.db, this.sessionPrefix);
 
     // Pools tracked *right now* — deliberately checked before anything else,
     // matching Phase 7B.4's original short-circuit: with nothing discovered
@@ -172,6 +189,7 @@ export class TradeListener {
     const fromBlock = checkpoint
       ? checkpoint.lastHeight + 1n
       : (() => {
+          if (this.freshStartHeight !== null) return this.freshStartHeight;
           const lookback = BigInt(this.config.freshStartLookbackBlocks);
           const start = safeTip - lookback + 1n;
           this.logger.warn(`No trade checkpoint found — starting fresh at height ${start > 0n ? start : 0n}.`);
@@ -289,7 +307,7 @@ export class TradeListener {
           update: { canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null },
         });
       }
-      const checkpointStoreTx = new CheckpointStore(tx);
+      const checkpointStoreTx = new CheckpointStore(tx, this.sessionPrefix);
       await checkpointStoreTx.set(
         TRADE_CHECKPOINT_SOURCE,
         { lastHeight: toBlock, lastHash: toBlockRef.data.hash },

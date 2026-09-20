@@ -217,8 +217,18 @@ export const SourceHealthDetailSchema = z
 export const RobinhoodStatusResponseSchema = z
   .object({
     status: IngestionHealthStatusSchema,
+    /** Kept for clients written against Phase 7B.5A; both also appear in `streams`. */
     discovery: SourceHealthDetailSchema,
     trades: SourceHealthDetailSchema,
+    /** Phase 7D.5 — every ingestion stream, including the pons_v2 ones the product runs on. */
+    streams: z.array(SourceHealthDetailSchema),
+    /** Phase 7D.5 — the live observation session; `id` is null in `resume` mode. */
+    session: z.object({
+      mode: z.string(),
+      id: z.string().nullable(),
+      startBlock: z.string().nullable(),
+      startTimestamp: z.string().nullable(),
+    }),
     observedAt: z.string(),
   })
   .openapi("RobinhoodStatusResponse");

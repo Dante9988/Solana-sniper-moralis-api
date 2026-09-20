@@ -70,6 +70,18 @@ export interface DiscoveryV2ListenerDeps {
   config: RobinhoodChainConfig;
   v2Config: PonsV2Config;
   logger?: DiscoveryV2ListenerLogger;
+  /**
+   * Phase 7D.5 — namespace for this listener's checkpoints. Set in `live-head` mode to
+   * `session:<id>:`, which keeps the durable `robinhood:*` rows untouched. Empty in
+   * `resume` mode, which is the pre-existing behaviour.
+   */
+  sessionPrefix?: string;
+  /**
+   * Phase 7D.5 — where to begin when this source has no checkpoint yet. In `live-head` mode
+   * this is the shared session boundary, so every stream starts from the same block instead
+   * of each picking its own lookback behind the tip.
+   */
+  freshStartHeight?: bigint;
 }
 
 function peekTokenAddress(log: RawEvmLog, eventName: typeof TOKEN_LAUNCHED_EVENT_NAME | typeof POOL_GRADUATED_EVENT_NAME): string | null {
@@ -109,7 +121,12 @@ export class DiscoveryV2Listener {
   private timer: NodeJS.Timeout | null = null;
   private currentTick: Promise<void> = Promise.resolve();
 
+  private readonly sessionPrefix: string;
+  private readonly freshStartHeight: bigint | null;
+
   constructor(deps: DiscoveryV2ListenerDeps) {
+    this.sessionPrefix = deps.sessionPrefix ?? "";
+    this.freshStartHeight = deps.freshStartHeight ?? null;
     this.chainClient = deps.chainClient;
     this.db = deps.db;
     this.config = deps.config;
@@ -292,7 +309,7 @@ export class DiscoveryV2Listener {
   }
 
   async runOnce(): Promise<DiscoveryV2TickResult> {
-    const checkpointStore = new CheckpointStore(this.db);
+    const checkpointStore = new CheckpointStore(this.db, this.sessionPrefix);
 
     const latestResult = await this.chainClient.getBlockNumber();
     if (latestResult.status === "UNAVAILABLE") {
@@ -376,6 +393,10 @@ export class DiscoveryV2Listener {
     const fromBlock = checkpoint
       ? checkpoint.lastHeight + 1n
       : (() => {
+          if (this.freshStartHeight !== null) {
+            this.logger.warn(`No pons_v2 discovery checkpoint for this session — starting at the session boundary, height ${this.freshStartHeight}.`);
+            return this.freshStartHeight;
+          }
           const lookback = BigInt(this.config.freshStartLookbackBlocks);
           const start = safeTip - lookback + 1n;
           this.logger.warn(`No pons_v2 discovery checkpoint found — starting fresh at height ${start > 0n ? start : 0n} (${this.config.freshStartLookbackBlocks} blocks behind tip).`);
@@ -586,7 +607,7 @@ export class DiscoveryV2Listener {
           else this.logger.warn(`pons_v2 PoolGraduated seen for ${tokenAddress} but no DiscoveredToken row exists yet — its TokenLaunched must be in an earlier, already-processed block range outside this deployment's history.`);
         }
 
-        const checkpointStoreTx = new CheckpointStore(tx);
+        const checkpointStoreTx = new CheckpointStore(tx, this.sessionPrefix);
         await checkpointStoreTx.set(DISCOVERY_V2_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight);
         await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
       },

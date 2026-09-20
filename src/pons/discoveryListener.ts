@@ -57,6 +57,18 @@ export interface DiscoveryListenerDeps {
   db: PrismaClient;
   config: RobinhoodChainConfig;
   logger?: DiscoveryListenerLogger;
+  /**
+   * Phase 7D.5 — namespace for this listener's checkpoints. Set in `live-head` mode to
+   * `session:<id>:`, which keeps the durable `robinhood:*` rows untouched. Empty in
+   * `resume` mode, which is the pre-existing behaviour.
+   */
+  sessionPrefix?: string;
+  /**
+   * Phase 7D.5 — where to begin when this source has no checkpoint yet. In `live-head` mode
+   * this is the shared session boundary, so every stream starts from the same block instead
+   * of each picking its own lookback behind the tip.
+   */
+  freshStartHeight?: bigint;
 }
 
 function peekTokenAddress(log: RawEvmLog): string | null {
@@ -92,7 +104,12 @@ export class DiscoveryListener {
   /** Phase 7B.5A §7 — tracked so a graceful shutdown can await the in-flight tick (waitForIdle()) rather than disconnecting Prisma mid-transaction. */
   private currentTick: Promise<void> = Promise.resolve();
 
+  private readonly sessionPrefix: string;
+  private readonly freshStartHeight: bigint | null;
+
   constructor(deps: DiscoveryListenerDeps) {
+    this.sessionPrefix = deps.sessionPrefix ?? "";
+    this.freshStartHeight = deps.freshStartHeight ?? null;
     this.chainClient = deps.chainClient;
     this.db = deps.db;
     this.config = deps.config;
@@ -114,7 +131,7 @@ export class DiscoveryListener {
 
   /** One full unit of work. Never throws — every failure mode is a typed result. */
   async runOnce(): Promise<DiscoveryTickResult> {
-    const checkpointStore = new CheckpointStore(this.db);
+    const checkpointStore = new CheckpointStore(this.db, this.sessionPrefix);
 
     const latestResult = await this.chainClient.getBlockNumber();
     if (latestResult.status === "UNAVAILABLE") {
@@ -210,6 +227,13 @@ export class DiscoveryListener {
     const fromBlock = checkpoint
       ? checkpoint.lastHeight + 1n
       : (() => {
+          // Phase 7D.5 — in live-head mode this is the shared session boundary, so every
+          // stream in the stack starts from the same block rather than each choosing its
+          // own lookback behind a tip it sampled at a slightly different moment.
+          if (this.freshStartHeight !== null) {
+            this.logger.warn(`No discovery checkpoint for this session — starting at the session boundary, height ${this.freshStartHeight}.`);
+            return this.freshStartHeight;
+          }
           const lookback = BigInt(this.config.freshStartLookbackBlocks);
           const start = safeTip - lookback + 1n;
           this.logger.warn(
@@ -335,7 +359,7 @@ export class DiscoveryListener {
           },
         });
       }
-      const checkpointStoreTx = new CheckpointStore(tx);
+      const checkpointStoreTx = new CheckpointStore(tx, this.sessionPrefix);
       await checkpointStoreTx.set(DISCOVERY_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight);
       await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
       // Prisma's default interactive-transaction timeout is 5s. This loop's

@@ -60,6 +60,18 @@ export interface CurveTradeListenerDeps {
   /** Widest log window per tick (PONS_CURVE_TRADES_MAX_RANGE); defaults to PONS_MAX_BLOCK_RANGE_PER_POLL. */
   maxRange?: number;
   logger?: CurveTradeListenerLogger;
+  /**
+   * Phase 7D.5 — namespace for this listener's checkpoints. Set in `live-head` mode to
+   * `session:<id>:`, which keeps the durable `robinhood:*` rows untouched. Empty in
+   * `resume` mode, which is the pre-existing behaviour.
+   */
+  sessionPrefix?: string;
+  /**
+   * Phase 7D.5 — where to begin when this source has no checkpoint yet. In `live-head` mode
+   * this is the shared session boundary, so every stream starts from the same block instead
+   * of each picking its own lookback behind the tip.
+   */
+  freshStartHeight?: bigint;
 }
 
 interface CurveInfo {
@@ -142,7 +154,12 @@ export class CurveTradeListener {
   /** Block refs survive failed ticks, so a retry resumes instead of re-reading every block. */
   private readonly blockRefs = new Map<string, { hash: string; timestamp: bigint }>();
 
+  private readonly sessionPrefix: string;
+  private readonly freshStartHeight: bigint | null;
+
   constructor(deps: CurveTradeListenerDeps) {
+    this.sessionPrefix = deps.sessionPrefix ?? "";
+    this.freshStartHeight = deps.freshStartHeight ?? null;
     this.chainClient = deps.chainClient;
     this.db = deps.db;
     this.config = deps.config;
@@ -158,7 +175,7 @@ export class CurveTradeListener {
   }
 
   async runOnce(): Promise<CurveTradeTickResult> {
-    const checkpointStore = new CheckpointStore(this.db);
+    const checkpointStore = new CheckpointStore(this.db, this.sessionPrefix);
 
     const latestResult = await this.chainClient.getBlockNumber();
     if (latestResult.status === "UNAVAILABLE") {
@@ -201,10 +218,18 @@ export class CurveTradeListener {
     if (checkpoint) {
       fromBlock = checkpoint.lastHeight + 1n;
     } else {
-      const earliest = this.startHeight ?? (await this.earliestLaunchHeight());
-      if (earliest === null) return { status: "NO_CURVES_KNOWN" };
-      fromBlock = earliest;
-      this.logger.warn(`No curve-trade checkpoint found — starting at height ${fromBlock} (earliest known Pons V2 launch).`);
+      // Phase 7D.5 — in live-head mode the session boundary wins over "earliest known
+      // launch": a local session watches current activity on tokens it already knows about,
+      // and must not silently replay a curve's entire history to get there.
+      if (this.freshStartHeight !== null) {
+        fromBlock = this.freshStartHeight;
+        this.logger.warn(`No curve-trade checkpoint for this session — starting at the session boundary, height ${fromBlock}.`);
+      } else {
+        const earliest = this.startHeight ?? (await this.earliestLaunchHeight());
+        if (earliest === null) return { status: "NO_CURVES_KNOWN" };
+        fromBlock = earliest;
+        this.logger.warn(`No curve-trade checkpoint found — starting at height ${fromBlock} (earliest known Pons V2 launch).`);
+      }
     }
 
     const effectiveTip = safeTip < barrierHeight ? safeTip : barrierHeight;
@@ -321,7 +346,7 @@ export class CurveTradeListener {
             update: { canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp },
           });
         }
-        await new CheckpointStore(tx).set(CURVE_TRADE_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight, timestamps.get(toBlock.toString()));
+        await new CheckpointStore(tx, this.sessionPrefix).set(CURVE_TRADE_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight, timestamps.get(toBlock.toString()));
         await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
       },
       { timeout: 60_000 }
