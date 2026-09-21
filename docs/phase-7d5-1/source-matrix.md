@@ -94,6 +94,50 @@ address has been verified, so nothing claims V3 support.
 token and nothing more — not ownership, not redemption rights, not a usable buy route.
 Redemption terms and issuer identity remain unresearched.
 
+## MoonPay
+
+| Item | Value |
+|---|---|
+| Source | Official documentation |
+| Accessed | 2026-09-20 |
+| Environment in use | **sandbox** (all three configured keys are `_test_`) |
+
+Verified and relied upon:
+
+| Fact | Detail |
+|---|---|
+| Widget URL signing | HMAC-SHA256, key = **secret** key, message = query string **including the leading `?`** (`new URL(u).search`), **base64**, appended URL-encoded as `&signature=`. Mandatory whenever `walletAddress` is set. |
+| Webhook signature | Header `Moonpay-Signature-V2: t=<unix>,s=<hex>`; signed payload `` `${t}.${rawBody}` ``; HMAC-SHA256, **hex**; key = the **webhook** key. Raw body required. |
+| Webhook key format | `wk_test_…` / `wk_live_…` — same environment prefix convention as the API keys. **Checked separately rather than assumed**, per the brief. Per-webhook signing secrets are **deprecated**; the account-level Webhook Key is correct. |
+| Sandbox widget host | `https://buy-sandbox.moonpay.com` |
+| Sandbox networks | ETH → **Sepolia**; SOL → **Devnet, native SOL only** (no SPL) |
+| Sandbox ERC-20 | Delivers **MoonPayToken** `0x699cfe8997d647d03325ef4bfd039d5bb0984a17`, not the real token |
+| Replay tolerance | **Not documented by MoonPay.** We enforce ±300s; without a window a captured webhook replays forever. Recorded as our decision, not theirs. |
+
+### A conflict in MoonPay's own documentation
+
+The brief stated sandbox delivery is 1/100 of the quoted amount. MoonPay's pages disagree
+with each other:
+
+- Sandbox testing guide: *"1/100th of the quoted amount… applies across all assets"* (a 0.1 ETH purchase delivers 0.001 ETH).
+- On-ramp FAQ: *"All Ethereum purchases in sandbox will result in the transfer of 0.001 Sepolia ETH **regardless of the purchased amount**."*
+
+These are only the same when the quote happens to be 0.1 ETH. **Unresolved**, and not
+generalised to other assets. A real sandbox run will settle it by recording the quoted and
+delivered amounts for the asset actually tested.
+
+### Missed-webhook reconciliation — **UNVERIFIED, not implemented**
+
+`GET https://api.moonpay.com/v3/buy_transactions/ext/{externalTransactionId}` is documented
+(returning an array, because external ids are not guaranteed unique). Probed 2026-09-20 with
+a nonexistent id and the sandbox secret key, unauthenticated / `?apiKey=` / `Authorization:
+Api-Key`: **all three returned an HTML 404**, not a JSON error, so neither the path nor the
+auth method could be confirmed from here without a real sandbox transaction to look up.
+
+No polling reconciliation is shipped. Guessing this contract risks mis-reconciling real
+orders, which is worse than an order that waits for a webhook. To be confirmed during the
+first real sandbox run, when a genuine `externalTransactionId` exists.
+
 ## Not started
 
 MoonPay, Hyperliquid, Uniswap V3, and Ethereum execution have no verified sources yet and no
