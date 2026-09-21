@@ -940,7 +940,13 @@ model MoonPayOrder {
   /// Our id, sent as externalTransactionId so MoonPay's events map back to a user.
   externalTransactionId String   @unique
   /// MoonPay's id, unknown until their first event.
-  providerTransactionId String?
+  providerTransactionId String?   @unique
+  idempotencyKey        String?
+  redirectUrl           String?
+  providerUpdatedAt     DateTime?
+  quotedAmount          String?
+  lastReconciledAt       DateTime?
+  reconciliationError   String?
   environment           String
   status                String
   baseCurrencyCode      String
@@ -955,7 +961,8 @@ model MoonPayOrder {
   updatedAt             DateTime @default(now()) @updatedAt
 
   @@index([userId, createdAt])
-  @@index([providerTransactionId])
+  @@unique([userId, environment, idempotencyKey])
+  @@index([status, lastReconciledAt])
 }
 
 /// Phase 7D.5.1 — every verified webhook, recorded before it is applied.
@@ -966,6 +973,7 @@ model MoonPayWebhookEvent {
   id                    String   @id @default(uuid())
   signatureTimestamp    BigInt
   payloadHash           String   @unique
+  semanticHash          String?  @unique
   eventType             String
   providerTransactionId String?
   receivedAt            DateTime @default(now())

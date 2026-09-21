@@ -44,12 +44,13 @@ export function parseSignatureHeader(header: string): { timestamp: number; signa
     const [prefix, ...rest] = part.trim().split("=");
     const value = rest.join("=");
     if (prefix === "t") {
-      if (!/^\d+$/.test(value)) return null;
+      if (timestamp !== null || !/^[1-9]\d{0,15}$/.test(value)) return null;
       timestamp = Number(value);
+      if (!Number.isSafeInteger(timestamp)) return null;
     } else if (prefix === "s") {
-      if (!/^[0-9a-f]+$/i.test(value)) return null;
+      if (signature !== null || !/^[0-9a-f]{64}$/i.test(value)) return null;
       signature = value;
-    }
+    } else return null;
   }
   if (timestamp === null || signature === null) return null;
   return { timestamp, signature };
@@ -80,8 +81,7 @@ export function verifyMoonPayWebhook(
     return { ok: false, reason: `timestamp outside ±${tolerance}s tolerance (age ${age}s)` };
   }
 
-  const body = typeof rawBody === "string" ? rawBody : rawBody.toString("utf8");
-  const expected = createHmac("sha256", webhookSecret).update(`${parsed.timestamp}.${body}`).digest("hex");
+  const expected = createHmac("sha256", webhookSecret).update(`${parsed.timestamp}.`).update(rawBody).digest("hex");
 
   const provided = parsed.signature.toLowerCase();
   if (provided.length !== expected.length) return { ok: false, reason: "signature mismatch" };

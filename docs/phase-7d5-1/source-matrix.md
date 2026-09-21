@@ -126,19 +126,16 @@ These are only the same when the quote happens to be 0.1 ETH. **Unresolved**, an
 generalised to other assets. A real sandbox run will settle it by recording the quoted and
 delivered amounts for the asset actually tested.
 
-### Missed-webhook reconciliation — **UNVERIFIED, not implemented**
+### Missed-webhook reconciliation — implemented in 7D.5.3
 
-`GET https://api.moonpay.com/v3/buy_transactions/ext/{externalTransactionId}` is documented
-(returning an array, because external ids are not guaranteed unique). Probed 2026-09-20 with
-a nonexistent id and the sandbox secret key, unauthenticated / `?apiKey=` / `Authorization:
-Api-Key`: **all three returned an HTML 404**, not a JSON error, so neither the path nor the
-auth method could be confirmed from here without a real sandbox transaction to look up.
-
-No polling reconciliation is shipped. Guessing this contract risks mis-reconciling real
-orders, which is worse than an order that waits for a webhook. To be confirmed during the
-first real sandbox run, when a genuine `externalTransactionId` exists.
+The previous `/v3/buy_transactions/ext/…` probe used a stale path. Current official
+Widget server-to-server OpenAPI documents `GET /v1/transactions?externalTransactionId=…`
+with `Authorization: Api-Key <secret key>`. A sandbox read-only probe returned HTTP 200
+and an empty JSON array for a synthetic reference. Native ETH/SOL capability reads also
+returned HTTP 200. This verifies access, not an actual checkout, webhook or delivery.
+See [7D.5.3 evidence](../phase-7d5-3/README.md) and its source matrix.
 
 ## Not started
 
-MoonPay, Hyperliquid, Uniswap V3, and Ethereum execution have no verified sources yet and no
-code that claims support.
+Hyperliquid, Uniswap V3 and Ethereum execution remain outside this MoonPay completion.
+7G.1 intelligence numbering and scope are unchanged.

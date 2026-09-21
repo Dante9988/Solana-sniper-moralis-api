@@ -9,6 +9,7 @@
  * `forensicsWorkerMain.ts` and the rest of Phase 5D/5E.
  */
 
+import { startMoonPayRecovery } from "../buying/moonpay/recoveryWorker";
 import { PrismaClient } from "@prisma/client";
 import { createMoonPayRouter, createMoonPayWebhookRouter } from "./routes/moonpay";
 import express, { Express, NextFunction, Request, Response } from "express";
@@ -72,9 +73,9 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
    * A verifier fed a re-serialised body fails every time, and "fixing" that by trusting the
    * parsed body instead would make the signature check decorative.
    */
-  app.use("/api/v1", createMoonPayWebhookRouter(db));
+  app.use("/api/v1", createMoonPayWebhookRouter(db, config));
 
-  app.use(express.json());
+  app.use(express.json({ limit: "64kb" }));
 
   app.use((req, _res, next) => {
     logger.info({ requestId: req.requestId, method: req.method, path: req.path }, "request received");
@@ -112,6 +113,11 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   // Never leak internal error details or stack traces (phase6.txt §3, phase7b1.txt §7).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const parserError = err as { type?: string; status?: number };
+    if (["entity.too.large", "encoding.unsupported", "entity.parse.failed"].includes(parserError?.type ?? "")) {
+      res.status(parserError.status ?? 400).json({ error: { code: "BAD_REQUEST", message: "Invalid request body", requestId: req.requestId } });
+      return;
+    }
     const requestIdForLog = req.requestId ?? randomUUID();
     logger.error({ requestId: requestIdForLog, err: err instanceof Error ? err.message : String(err) }, "unhandled error");
     sendError(res, "INTERNAL_ERROR", "internal error", requestIdForLog);
@@ -132,6 +138,7 @@ function main(): void {
 
   const realtime = attachRealtimeServer(server, config, { db, ticketStore, eventBus });
   // Phase 7D.3.2 §6 — logos are fetched in the background, never on a request path.
+  const stopMoonPayRecovery = startMoonPayRecovery(db);
   const stopImageWorker = startTokenImageWorker(db, (msg, meta) => logger.info(meta ?? {}, msg));
 
   let shuttingDown = false;
@@ -139,6 +146,7 @@ function main(): void {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, "[api] received signal, shutting down gracefully");
+    stopMoonPayRecovery();
     stopImageWorker();
     realtime
       .close()

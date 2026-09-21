@@ -272,3 +272,78 @@ export const DiscoveryChainsResponseSchema = z
     ),
   })
   .openapi("DiscoveryChainsResponse");
+
+/**
+ * Phase 7D.5.1 — MoonPay hosted checkout.
+ *
+ * `status` is our reconciled view, which is deliberately not MoonPay's: a paid-but-
+ * undelivered order reads SUBMITTED, never COMPLETED. `providerStatus` is kept alongside so
+ * support can see both without the UI having to reconcile them itself.
+ */
+export const MoonPayConfigResponseSchema = z
+  .object({
+    configured: z.boolean(),
+    environment: z.enum(["sandbox", "production"]).nullable(),
+    /** The only MoonPay key that may reach a browser. */
+    publishableKey: z.string().nullable(),
+    sandbox: z.boolean(),
+  })
+  .openapi("MoonPayConfigResponse");
+
+export const MoonPayCheckoutRequestSchema = z
+  .object({
+    baseCurrencyCode: z.string(),
+    /** Decimal string, not a number: the charged amount must not round. */
+    baseCurrencyAmount: z.string(),
+    currencyCode: z.string(),
+    walletAddress: z.string(),
+    network: z.string(),
+    redirectUrl: z.string().url().optional(),
+    /** Repeated clicks with the same key reuse one checkout instead of opening another. */
+    idempotencyKey: z.string().min(8).max(200),
+  })
+  .openapi("MoonPayCheckoutRequest");
+
+export const MoonPayCheckoutResponseSchema = z
+  .object({
+    orderId: z.string(),
+    externalTransactionId: z.string(),
+    url: z.string().optional(),
+    environment: z.string(),
+    sandbox: z.boolean(),
+    reused: z.boolean(),
+    sandboxNotice: z.string().nullable().optional(),
+  })
+  .openapi("MoonPayCheckoutResponse");
+
+export const MoonPayOrderSchema = z
+  .object({
+    orderId: z.string(),
+    externalTransactionId: z.string(),
+    providerTransactionId: z.string().nullable(),
+    environment: z.string(),
+    sandbox: z.boolean(),
+    status: z.enum(["PENDING", "SUBMITTED", "COMPLETED", "FAILED", "CANCELLED", "UNCERTAIN"]),
+    providerStatus: z.string(),
+    baseCurrencyCode: z.string(),
+    baseCurrencyAmount: z.string(),
+    currencyCode: z.string(),
+    walletAddress: z.string(),
+    network: z.string(),
+    quotedAmount: z.string().nullable(),
+    reconciliationError: z.string().nullable(),
+    /** Delivery is tracked separately from payment; one does not imply the other. */
+    delivery: z.object({
+      transactionId: z.string().nullable(),
+      amount: z.string().nullable(),
+      delivered: z.boolean(),
+    }),
+    failureReason: z.string().nullable(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+  })
+  .openapi("MoonPayOrder");
+
+export const MoonPayOrderListResponseSchema = z
+  .object({ orders: z.array(MoonPayOrderSchema) })
+  .openapi("MoonPayOrderListResponse");

@@ -4,7 +4,8 @@
  * The failure this guards against is the expensive one: shipping a build that looks like
  * sandbox and charges real cards. MoonPay keys carry their own environment in the prefix
  * (`pk_test_` / `sk_test_` / `wk_test_` vs `pk_live_` / …), so the environment is *derived
- * from the keys* rather than from a separate flag someone can forget to flip. A mismatched
+ * from each documented key format* rather than from a separate flag. The webhook key
+ * format is verified independently (account-level V2 key, not a legacy per-endpoint secret). A mismatched
  * set, or live keys without an explicit opt-in, refuses to load.
  */
 
@@ -28,7 +29,7 @@ export class MoonPayConfigError extends Error {}
 const SANDBOX_WIDGET_URL = "https://buy-sandbox.moonpay.com";
 const PRODUCTION_WIDGET_URL = "https://buy.moonpay.com";
 
-const KEY_PATTERN = /^(pk|sk|wk)_(test|live)_/;
+const KEY_PATTERN = /^(pk|sk|wk)_(test|live)_[A-Za-z0-9_-]+$/;
 
 function environmentOf(name: string, value: string, expectedPrefix: "pk" | "sk" | "wk"): MoonPayEnvironment {
   const match = KEY_PATTERN.exec(value);

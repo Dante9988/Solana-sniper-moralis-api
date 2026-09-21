@@ -12,11 +12,11 @@
 
 import { Router, raw, type Request, type Response } from "express";
 import type { PrismaClient } from "@prisma/client";
-import { z } from "zod";
+import { MoonPayCheckoutInputSchema, MoonPayInputError } from "../../buying/moonpay/validation";
 
 import type { ApiConfig } from "../config";
 import { createRequireSupabaseUser, type AuthContext, type AuthenticateDeps } from "../middleware/authenticate";
-import { createRateLimiter, createRateLimiterStore, rateLimitKey } from "../middleware/rateLimit";
+import { createRateLimiter, createRateLimiterStore } from "../middleware/rateLimit";
 import { sendError } from "../contracts/errors";
 import { loadMoonPayConfig, describeMoonPayConfig } from "../../buying/moonpay/config";
 import { verifyMoonPayWebhook } from "../../buying/moonpay/webhook";
@@ -31,28 +31,13 @@ function uid(req: { auth?: AuthContext }): string {
   return req.auth.userId;
 }
 
-const CreateCheckoutSchema = z.object({
-  baseCurrencyCode: z.string().min(1).max(10),
-  // A decimal string, not a number: the amount the user is charged must not round.
-  baseCurrencyAmount: z.string().regex(/^\d+(\.\d{1,2})?$/, "amount must be a decimal with at most 2 places"),
-  currencyCode: z.string().min(1).max(20),
-  walletAddress: z.string().min(26).max(64),
-  network: z.string().min(1).max(40),
-  redirectUrl: z.string().url().optional(),
-  /**
-   * Client-supplied key so a double-click, a retry, or a reload reuses one checkout instead
-   * of opening a second one against the same intent.
-   */
-  idempotencyKey: z.string().min(8).max(200).optional(),
-});
-
 export function createMoonPayRouter(db: PrismaClient, config: ApiConfig, deps: AuthenticateDeps): Router {
   const router = Router();
   const requireUser = createRequireSupabaseUser(deps);
   const store = createRateLimiterStore(config.rateLimit);
   // Deliberately tighter than ordinary reads: each call creates an order row.
-  const checkoutLimiter = createRateLimiter({ windowMs: 60_000, max: 10, keyFn: rateLimitKey, store });
-  const readLimiter = createRateLimiter({ windowMs: 60_000, max: config.rateLimitPerMinute, keyFn: rateLimitKey, store });
+  const checkoutLimiter = createRateLimiter({ windowMs: 60_000, max: 10, keyFn: (req) => `moonpay-checkout:${uid(req)}`, store });
+  const readLimiter = createRateLimiter({ windowMs: 60_000, max: config.rateLimitPerMinute, keyFn: (req) => `moonpay-read:${req.auth?.type === "supabase" ? req.auth.userId : req.ip}`, store });
 
   /** Whether card/bank buying is available at all, and in which environment. Never the keys. */
   router.get("/moonpay/config", readLimiter, (_req, res) => {
@@ -72,46 +57,23 @@ export function createMoonPayRouter(db: PrismaClient, config: ApiConfig, deps: A
         sendError(res, "PROVIDER_NOT_CONFIGURED", "Card and bank purchases are not configured.", req.requestId);
         return;
       }
-      const parsed = CreateCheckoutSchema.safeParse(req.body);
+      const parsed = MoonPayCheckoutInputSchema.safeParse(req.body);
       if (!parsed.success) {
         sendError(res, "BAD_REQUEST", "invalid checkout request", req.requestId);
         return;
       }
       const userId = uid(req);
 
-      /**
-       * Repeated clicks must not open repeated checkouts. A PENDING order for the same
-       * user and the same intent within the reuse window is returned as-is — the signed URL
-       * is rebuilt from the stored row, so the user lands back on the same order.
-       */
-      if (parsed.data.idempotencyKey) {
-        const existing = await db.moonPayOrder.findFirst({
-          where: {
-            userId,
-            status: "PENDING",
-            currencyCode: parsed.data.currencyCode,
-            baseCurrencyAmount: parsed.data.baseCurrencyAmount,
-            walletAddress: parsed.data.walletAddress,
-            createdAt: { gt: new Date(Date.now() - 15 * 60_000) },
-          },
-          orderBy: { createdAt: "desc" },
-        });
-        if (existing) {
-          res.json({
-            orderId: existing.id,
-            externalTransactionId: existing.externalTransactionId,
-            reused: true,
-            environment: existing.environment,
-            sandbox: existing.environment === "sandbox",
-          });
-          return;
-        }
+      if (parsed.data.redirectUrl && !config.cors.allowedOrigins.has(new URL(parsed.data.redirectUrl).origin)) {
+        sendError(res, "BAD_REQUEST", "Redirect origin is not allowed.", req.requestId);
+        return;
       }
 
       const service = new MoonPayOrderService(db, moonpay);
       const session = await service.createCheckout({ userId, ...parsed.data });
-      res.status(201).json({ ...session, reused: false, sandbox: moonpay.environment === "sandbox" });
+      res.status(session.reused ? 200 : 201).json(session);
     } catch (err) {
+      if (err instanceof MoonPayInputError) { sendError(res, "BAD_REQUEST", err.message, req.requestId); return; }
       next(err);
     }
   });
@@ -127,7 +89,12 @@ export function createMoonPayRouter(db: PrismaClient, config: ApiConfig, deps: A
         sendError(res, "NOT_FOUND", "order not found", req.requestId);
         return;
       }
-      res.json(toOrderJson(order));
+      const moonpay = loadMoonPayConfig();
+      if (moonpay && !["FAILED", "CANCELLED"].includes(order.status) && (order.status !== "COMPLETED" || !order.cryptoTransactionId)) {
+        await new MoonPayOrderService(db, moonpay).reconcile(order);
+      }
+      const latest = await db.moonPayOrder.findFirst({ where: { id: order.id, userId: uid(req) } });
+      res.json(toOrderJson(latest ?? order));
     } catch (err) {
       next(err);
     }
@@ -157,12 +124,13 @@ export function createMoonPayRouter(db: PrismaClient, config: ApiConfig, deps: A
  * cannot be applied: a non-2xx makes MoonPay retry, and retrying an event we have already
  * recorded and deliberately ignored achieves nothing.
  */
-export function createMoonPayWebhookRouter(db: PrismaClient): Router {
+export function createMoonPayWebhookRouter(db: PrismaClient, config?: ApiConfig): Router {
   const router = Router();
 
   router.post(
     "/moonpay/webhook",
-    raw({ type: "*/*", limit: WEBHOOK_BODY_LIMIT }),
+    createRateLimiter({ windowMs: 60_000, max: 300, keyFn: (req) => `moonpay-webhook:${req.ip}`, store: config ? createRateLimiterStore(config.rateLimit) : undefined }),
+    raw({ type: "application/json", limit: WEBHOOK_BODY_LIMIT, inflate: false }),
     async (req: Request, res: Response, next) => {
       try {
         const moonpay = loadMoonPayConfig();
@@ -170,6 +138,7 @@ export function createMoonPayWebhookRouter(db: PrismaClient): Router {
           res.status(503).json({ error: "moonpay not configured" });
           return;
         }
+        if (!Buffer.isBuffer(req.body)) { res.status(415).json({ error: "application/json required" }); return; }
         const rawBody: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
         const verification = verifyMoonPayWebhook(
           rawBody,
@@ -207,6 +176,8 @@ function toOrderJson(order: {
   network: string;
   cryptoTransactionId: string | null;
   deliveredAmount: string | null;
+  quotedAmount: string | null;
+  reconciliationError: string | null;
   failureReason: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -225,10 +196,12 @@ function toOrderJson(order: {
     currencyCode: order.currencyCode,
     walletAddress: order.walletAddress,
     network: order.network,
+    quotedAmount: order.quotedAmount,
+    reconciliationError: order.reconciliationError,
     delivery: {
       transactionId: order.cryptoTransactionId,
       amount: order.deliveredAmount,
-      delivered: order.cryptoTransactionId !== null,
+      delivered: order.status === "COMPLETED" && order.cryptoTransactionId !== null,
     },
     failureReason: order.failureReason,
     createdAt: order.createdAt.toISOString(),

@@ -158,11 +158,31 @@ describe("webhook verification", () => {
   });
 
   it("parses t and s in either order", () => {
-    expect(parseSignatureHeader("s=ab12,t=99")).toEqual({ timestamp: 99, signature: "ab12" });
+    expect(parseSignatureHeader(`s=${"ab".repeat(32)},t=99`)).toEqual({ timestamp: 99, signature: "ab".repeat(32) });
   });
 
   it("verifies a Buffer body identically to a string", () => {
     const header = signWebhookForTest(body, secret, ts);
     expect(verifyMoonPayWebhook(Buffer.from(body, "utf8"), header, secret, { now }).ok).toBe(true);
+  });
+});
+
+
+describe("strict signature syntax", () => {
+  it.each(["t=01", "t=0", "t=Infinity", "t=1e3", "t=9007199254740993", "t=1,t=1", "t=1,unknown=x"])("rejects %s", (timestamp) => {
+    expect(parseSignatureHeader(`${timestamp},s=${"ab".repeat(32)}`)).toBeNull();
+  });
+  it("rejects duplicate signatures", () => {
+    expect(parseSignatureHeader(`t=1,s=${"ab".repeat(32)},s=${"ab".repeat(32)}`)).toBeNull();
+  });
+  it("authenticates the original bytes, including invalid UTF-8", () => {
+    const body = Buffer.from([0xff, 0xfe]);
+    const ts = 1700000000;
+    const hmac = createHmac("sha256", "wk_test_x").update(`${ts}.`).update(body).digest("hex");
+    expect(verifyMoonPayWebhook(body, `t=${ts},s=${hmac}`, "wk_test_x", { now: () => ts * 1000 }).ok).toBe(true);
+  });
+  it("validates the documented account-level webhook key separately", () => {
+    expect(() => loadMoonPayConfig({ ...SANDBOX, MOONPAY_WEBHOOK_SECRET: "opaque-legacy-endpoint-secret" })).toThrow(/MOONPAY_WEBHOOK_SECRET/);
+    expect(() => loadMoonPayConfig({ ...SANDBOX, MOONPAY_WEBHOOK_SECRET: "wk_live_x" })).toThrow(/mix test and live/);
   });
 });
