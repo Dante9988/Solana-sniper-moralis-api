@@ -42,6 +42,15 @@ export interface CandleAggregationServiceDeps {
   readonly logger: { info: (msg: string, fields?: Record<string, unknown>) => void; warn: (msg: string, fields?: Record<string, unknown>) => void; error: (msg: string, fields?: Record<string, unknown>) => void };
   /** Realtime optimization only (§14) — called only for genuine steady-state forward progress, never during bulk backfill/reorg recompute. */
   onCandleUpdated?: (event: { chain: string; tokenAddress: string; quoteAddress: string; resolution: CandleResolutionId; candle: PersistedCandleChange }) => Promise<void>;
+  /**
+   * Phase 7D.6 — restrict this tick to these token addresses, and skip the invalidation pass.
+   *
+   * The fleet tick is fair but slow: it takes ~100 tokens at a time and, with first-time
+   * backfills in the queue, a pass costs 70–120s. A token someone has open in the terminal must
+   * not wait behind that, so the worker runs a second, tiny loop that passes the watched set
+   * here (docs/phase-7d6/root-cause.md). Empty array means "nothing watched" — not "no filter".
+   */
+  readonly restrictToTokens?: readonly string[];
 }
 
 export interface CandleAggregationTickSummary {
@@ -176,12 +185,18 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
   // Only tokens with canonical trades past their candle checkpoint (or never aggregated). Taking the
   // first N discovered tokens instead, as before, re-checked the same handful forever once there were
   // more tokens than the per-tick budget, so most tokens never got candles.
+  // `restrictToTokens: []` means the watched set is empty — there is genuinely nothing to do,
+  // which is different from "no restriction". Returning early here keeps the fast loop free.
+  if (deps.restrictToTokens?.length === 0) return { tokensProcessed: 0, bucketsRecomputed: 0, candlesWritten: 0 };
+  const restricted = deps.restrictToTokens ? deps.restrictToTokens.map((a) => a.toLowerCase()) : null;
+
   const tokens = await deps.db.$queryRaw<Array<{ tokenAddress: string; quoteAddress: string; venue: string }>>`
     SELECT d."tokenAddress", d."quoteAddress", d.venue
     FROM (
       SELECT DISTINCT ON ("tokenAddress") "tokenAddress", "sourceHeight", "sourceIndex"
       FROM "ChainTrade"
       WHERE chain = ${deps.chain} AND "canonicalStatus" = 'CANONICAL' AND "sourceTimestamp" IS NOT NULL
+        AND (${restricted}::text[] IS NULL OR lower("tokenAddress") = ANY(${restricted}::text[]))
       ORDER BY "tokenAddress", "sourceHeight" DESC, "sourceIndex" DESC
     ) latest
     JOIN "DiscoveredToken" d ON d.chain = ${deps.chain} AND lower(d."tokenAddress") = latest."tokenAddress" AND d."canonicalStatus" = 'CANONICAL'
@@ -310,9 +325,16 @@ export async function runCandleAggregationTick(deps: CandleAggregationServiceDep
 
   const finality = await loadFinality(deps.db, deps.chain);
 
-  const invalidationResult = await processInvalidations(deps, finality, errors);
+  // The watched-token loop does forward progress only. Invalidation recompute and the
+  // finalisation sweep are fleet-wide work with fleet-wide cost — running them every few
+  // seconds would rebuild the very backlog this loop exists to skip, and neither is "live"
+  // news for the token someone is looking at.
+  const restricted = deps.restrictToTokens !== undefined;
+  const invalidationResult = restricted
+    ? { processed: 0, bucketsRecomputed: 0, candlesWritten: 0 }
+    : await processInvalidations(deps, finality, errors);
   const forwardResult = await processForward(deps, finality, errors);
-  await promoteFinalizedCandles(deps, finality);
+  if (!restricted) await promoteFinalizedCandles(deps, finality);
 
   return {
     tokensProcessed: forwardResult.tokensProcessed,

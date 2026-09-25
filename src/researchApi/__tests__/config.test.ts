@@ -49,9 +49,37 @@ describe("realtime backend (event bus + WS ticket store): fails closed in produc
     expect(config.realtime.redisUrl).toBe("redis://localhost:6379");
   });
 
-  it("defaults to memory outside production when unset", () => {
+  it("defaults to memory outside production when there is no database to carry events over", () => {
     const config = loadApiConfig({} as NodeJS.ProcessEnv);
     expect(config.realtime.backend).toBe("memory");
+  });
+
+  // Phase 7D.6. The old default was memory *always*, which meant the candles worker published
+  // into a bus the API could not hear: the chart never moved and nothing reported a problem
+  // (docs/phase-7d6/root-cause.md). Where a database exists, events go over it by default.
+  it("defaults to postgres when DATABASE_URL is set, so worker events reach the API", () => {
+    const config = loadApiConfig({ DATABASE_URL: "postgresql://u:p@localhost:5432/app" } as NodeJS.ProcessEnv);
+    expect(config.realtime.backend).toBe("postgres");
+    expect(config.realtime.databaseUrl).toBe("postgresql://u:p@localhost:5432/app");
+  });
+
+  it("an explicit memory backend still wins over the postgres default", () => {
+    const config = loadApiConfig({ DATABASE_URL: "postgresql://u:p@localhost:5432/app", REALTIME_BACKEND: "memory" } as NodeJS.ProcessEnv);
+    expect(config.realtime.backend).toBe("memory");
+  });
+
+  it("throws when REALTIME_BACKEND=postgres but DATABASE_URL is unset", () => {
+    expect(() => loadApiConfig({ REALTIME_BACKEND: "postgres" } as NodeJS.ProcessEnv)).toThrow(/DATABASE_URL/);
+  });
+
+  it("production accepts an explicit postgres backend", () => {
+    const config = loadApiConfig({
+      NODE_ENV: "production",
+      RATE_LIMIT_BACKEND: "memory",
+      REALTIME_BACKEND: "postgres",
+      DATABASE_URL: "postgresql://u:p@db:5432/app",
+    } as NodeJS.ProcessEnv);
+    expect(config.realtime.backend).toBe("postgres");
   });
 
   it("rejects an unrecognized backend value", () => {

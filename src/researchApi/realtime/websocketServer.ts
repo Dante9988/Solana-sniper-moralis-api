@@ -133,6 +133,36 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
     }
     const unsubscribe = await deps.eventBus.subscribe(key, (event) => sendJson(conn.socket, event));
     conn.subscriptions.set(key, unsubscribe);
+
+    // Phase 7D.6 — tell the candle worker this token is being looked at, so it refreshes on the
+    // fast loop instead of queueing behind first-time backfills of the whole discovered
+    // universe. Best-effort on purpose: a failure here costs freshness, never the subscription.
+    void deps.db.candleWatch
+      .upsert({
+        where: { chain_tokenAddress: { chain, tokenAddress } },
+        create: { chain, tokenAddress, lastSeenAt: new Date() },
+        update: { lastSeenAt: new Date() },
+      })
+      .catch(() => undefined);
+
+    // Phase 7D.6 — say whether this channel can actually deliver, instead of leaving the
+    // client to infer "live" from a socket that merely opened. With an in-memory bus the
+    // publisher lives in another process and nothing will ever arrive; the client is expected
+    // to fall back to polling rather than display a frozen LIVE chart
+    // (docs/phase-7d6/root-cause.md).
+    const delivery = deps.eventBus.describeDelivery?.() ?? { crossProcess: true, connected: true };
+    sendJson(conn.socket, {
+      type: "candles.subscribed",
+      chain,
+      tokenAddress,
+      resolution,
+      push: delivery.crossProcess && delivery.connected ? "live" : "unavailable",
+      reason: delivery.crossProcess
+        ? delivery.connected
+          ? null
+          : "The realtime transport is reconnecting."
+        : "This API is running an in-process event bus, which cannot receive updates from the candle worker.",
+    });
   }
 
   async function handleUnsubscribeCandles(conn: ConnectionState, chain: string, tokenAddress: string, resolution: string): Promise<void> {

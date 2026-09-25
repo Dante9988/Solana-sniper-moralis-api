@@ -11,11 +11,27 @@
 import type { Redis as RedisClient } from "ioredis";
 import { RealtimeConfig } from "../config";
 import { RealtimeEventEnvelope } from "./eventEnvelope";
+import { PostgresEventBus, type PgNotifyClient } from "./postgresEventBus";
 
 export type EventBusHandler = (event: RealtimeEventEnvelope) => void;
 
+/**
+ * Phase 7D.6 — what a bus can honestly promise a subscriber.
+ *
+ * `crossProcess` is false for the in-memory bus: publishers in other processes (the candles
+ * worker) can never reach it, so a subscriber must not be told its channel is live.
+ * `connected` is about right now — a Postgres LISTEN connection that has dropped is
+ * reconnecting, and until it is back, updates are genuinely not arriving.
+ */
+export interface DeliveryCapability {
+  readonly crossProcess: boolean;
+  readonly connected: boolean;
+}
+
 export interface EventBus {
   publish(channel: string, event: RealtimeEventEnvelope): Promise<void>;
+  /** Absent on buses that predate the capability; callers treat that as cross-process and connected. */
+  describeDelivery?(): DeliveryCapability;
   /** Returns an unsubscribe function. */
   subscribe(channel: string, handler: EventBusHandler): Promise<() => Promise<void>>;
   close(): Promise<void>;
@@ -23,6 +39,12 @@ export interface EventBus {
 
 export class InMemoryEventBus implements EventBus {
   private readonly handlers = new Map<string, Set<EventBusHandler>>();
+
+  describeDelivery(): DeliveryCapability {
+    // Connected, and unable to hear anyone outside this process. Both halves matter: a
+    // subscriber told "live" here would wait forever for a worker's event.
+    return { crossProcess: false, connected: true };
+  }
 
   async publish(channel: string, event: RealtimeEventEnvelope): Promise<void> {
     const subscribers = this.handlers.get(channel);
@@ -54,6 +76,12 @@ export class RedisEventBus implements EventBus {
   // ioredis pattern — see https://github.com/redis/ioredis#pubsub).
   private readonly channelHandlers = new Map<string, Set<EventBusHandler>>();
   private readonly subscribedChannels = new Set<string>();
+
+  describeDelivery(): DeliveryCapability {
+    // ioredis reports "ready" once the connection is usable; anything else means messages
+    // published right now are not reaching this process.
+    return { crossProcess: true, connected: this.subscriber.status === "ready" };
+  }
 
   constructor(private readonly publisher: RedisClient, private readonly subscriber: RedisClient) {
     this.subscriber.on("message", (channel: string, raw: string) => {
@@ -107,6 +135,21 @@ let sharedEventBus: EventBus | undefined;
 
 export function createEventBus(config: RealtimeConfig): EventBus {
   if (config.backend === "memory") return new InMemoryEventBus();
+
+  if (config.backend === "postgres") {
+    if (!sharedEventBus) {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { Client } = require("pg") as typeof import("pg");
+      const connectionString = config.databaseUrl;
+      const makeClient = () => new Client({ connectionString }) as unknown as PgNotifyClient;
+      const publisher = makeClient();
+      // The publisher is a plain query connection; connect it eagerly so the first NOTIFY
+      // does not pay for a handshake, and never leave a connect failure unlogged.
+      void publisher.connect().catch((err: Error) => console.error("[eventBus] Postgres publisher connect failed:", err.message));
+      sharedEventBus = new PostgresEventBus(publisher, makeClient);
+    }
+    return sharedEventBus;
+  }
 
   if (!sharedEventBus) {
     // eslint-disable-next-line @typescript-eslint/no-var-requires

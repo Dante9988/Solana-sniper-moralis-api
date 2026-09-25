@@ -43,6 +43,13 @@ import { recordCandleWorkerFailure, recordCandleWorkerRunState } from "../health
 const VENUE = "pons";
 const logger = ponsComponentLogger("candles:worker");
 
+/** How recently the API must have seen a subscriber for a token to count as watched. */
+const WATCH_FRESHNESS_MS = 5 * 60_000;
+/** The watched loop's cadence — fast, because it is meant to keep pace with an open chart. */
+const WATCHED_POLL_INTERVAL_MS = 2_000;
+/** A ceiling so an unusual number of simultaneous watchers cannot turn the fast loop into a second fleet tick. */
+const MAX_WATCHED_TOKENS_PER_TICK = 50;
+
 async function main(): Promise<void> {
   const chainConfig = loadRobinhoodChainConfig();
   const workerConfig = loadCandleWorkerConfig();
@@ -52,6 +59,19 @@ async function main(): Promise<void> {
   const usdRateProvider = new ChainlinkQuoteUsdRateProvider({ chainClient });
 
   const realtimeConfig = loadApiConfig().realtime;
+  // Phase 7D.6 — refuse to run as a separate process publishing into a process-local bus.
+  // That configuration is not "degraded", it is inert: every `token.candle.updated` this
+  // worker emits would be delivered to subscribers inside this same process, of which there
+  // are none, while the API kept telling browsers the chart was LIVE. It went unnoticed for a
+  // whole phase precisely because nothing failed (docs/phase-7d6/root-cause.md). If you really
+  // are embedding this worker in the API process, say so explicitly.
+  if (realtimeConfig.backend === "memory" && process.env.CANDLES_ALLOW_INERT_EVENT_BUS !== "true") {
+    throw new Error(
+      "REALTIME_BACKEND=memory cannot deliver candle events from this worker process to the API's WebSocket clients — " +
+        "every published update would be silently discarded. Use REALTIME_BACKEND=postgres (the default) or redis, " +
+        "or set CANDLES_ALLOW_INERT_EVENT_BUS=true if this worker genuinely runs inside the API process.",
+    );
+  }
   const eventBus = createEventBus(realtimeConfig);
 
   let stopping = false;
@@ -79,6 +99,46 @@ async function main(): Promise<void> {
     for (const err of summary.errors) logger.warn(err);
   };
 
+  /**
+   * Phase 7D.6 — the watched-token loop.
+   *
+   * The fleet tick is fair and slow: ~100 tokens a pass, 70–120s with first-time backfills in
+   * the queue. A token open in someone's terminal cannot wait for its turn in that queue, so
+   * this loop does forward progress for just the handful of tokens the API says are being
+   * watched right now. It is small by construction — the watched set is browsers, not the
+   * 137k-token universe — and it skips invalidation and finalisation, which are fleet-wide
+   * costs and not live news (docs/phase-7d6/root-cause.md).
+   */
+  const watchedTick = async () => {
+    const since = new Date(Date.now() - WATCH_FRESHNESS_MS);
+    const watched = await db.candleWatch.findMany({
+      where: { chain: ROBINHOOD_CHAIN, lastSeenAt: { gte: since } },
+      select: { tokenAddress: true },
+      take: MAX_WATCHED_TOKENS_PER_TICK,
+      orderBy: { lastSeenAt: "desc" },
+    });
+    if (watched.length === 0) return;
+    const summary = await runCandleAggregationTick({
+      db,
+      chainClient,
+      chain: ROBINHOOD_CHAIN,
+      venue: VENUE,
+      usdRateProvider,
+      maxInvalidationTokensPerTick: 0,
+      maxForwardTokensPerTick: MAX_WATCHED_TOKENS_PER_TICK,
+      tradePageCap: workerConfig.tradePageCap,
+      logger,
+      restrictToTokens: watched.map((w) => w.tokenAddress),
+      onCandleUpdated: async (event) => {
+        await publishCandleEvent(eventBus, event);
+      },
+    });
+    if (summary.candlesWritten > 0) {
+      logger.info(`watched tick: ${summary.tokensProcessed} watched token(s), ${summary.candlesWritten} candle(s) written in ${summary.durationMs}ms`);
+    }
+    for (const err of summary.errors) logger.warn(err);
+  };
+
   const loop = async () => {
     if (stopping) return;
     currentTick = (async () => {
@@ -94,7 +154,27 @@ async function main(): Promise<void> {
     if (!stopping) setTimeout(() => void loop(), workerConfig.pollIntervalMs);
   };
 
+  // Deliberately its own timer rather than a step inside `loop`: the whole point is not to be
+  // blocked by the fleet tick's duration. Overlap is prevented by the in-flight guard, not by
+  // serialising the two loops together.
+  let watchedInFlight = false;
+  const watchedLoop = async () => {
+    if (stopping) return;
+    if (!watchedInFlight) {
+      watchedInFlight = true;
+      try {
+        await watchedTick();
+      } catch (err) {
+        logger.warn(`watched tick failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        watchedInFlight = false;
+      }
+    }
+    if (!stopping) setTimeout(() => void watchedLoop(), WATCHED_POLL_INTERVAL_MS);
+  };
+
   void loop();
+  void watchedLoop();
   logger.info("candles:worker started");
 
   let shuttingDown = false;

@@ -935,17 +935,17 @@ model ChainTrade {
 ///   * actual on-chain delivery (`cryptoTransactionId`, `deliveredAmount`)
 /// A paid order that has not been delivered is not a completed purchase.
 model MoonPayOrder {
-  id                    String   @id @default(uuid())
+  id                    String    @id @default(uuid())
   userId                String
   /// Our id, sent as externalTransactionId so MoonPay's events map back to a user.
-  externalTransactionId String   @unique
+  externalTransactionId String    @unique
   /// MoonPay's id, unknown until their first event.
   providerTransactionId String?   @unique
   idempotencyKey        String?
   redirectUrl           String?
   providerUpdatedAt     DateTime?
   quotedAmount          String?
-  lastReconciledAt       DateTime?
+  lastReconciledAt      DateTime?
   reconciliationError   String?
   environment           String
   status                String
@@ -957,11 +957,11 @@ model MoonPayOrder {
   cryptoTransactionId   String?
   deliveredAmount       String?
   failureReason         String?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @default(now()) @updatedAt
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @default(now()) @updatedAt
 
-  @@index([userId, createdAt])
   @@unique([userId, environment, idempotencyKey])
+  @@index([userId, createdAt])
   @@index([status, lastReconciledAt])
 }
 
@@ -1546,4 +1546,31 @@ model TokenMarketSample {
 
   @@index([chain, tokenAddress, at])
   @@index([at])
+}
+
+/// Phase 7D.6 — single-use WebSocket connection tickets, for `REALTIME_BACKEND=postgres`.
+/// The in-memory store only works when the issuing API process is also the one that receives
+/// the upgrade; this row makes the same guarantee across instances without needing Redis.
+/// Consumed by `DELETE … RETURNING`, so two racing upgrades can never both win.
+model RealtimeTicket {
+  /// The ticket itself — random, single-use, and never a Supabase JWT.
+  id        String   @id
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+/// Phase 7D.6 — tokens a browser is currently watching, so the candle worker can refresh them
+/// on their own fast cadence instead of leaving them queued behind first-time backfills of the
+/// whole discovered universe. Written by the API on candle subscribe, read by the worker, and
+/// allowed to go stale: a row older than the freshness window simply stops being prioritised.
+model CandleWatch {
+  chain        String
+  tokenAddress String
+  lastSeenAt   DateTime @default(now())
+
+  @@id([chain, tokenAddress])
+  @@index([lastSeenAt])
 }
