@@ -102,6 +102,19 @@ export interface RealtimeConfig {
   readonly idleTimeoutMs: number;
 }
 
+/**
+ * Phase 7E.1 §20 — the real-money gate.
+ *
+ * Default false, everywhere, including production. Frontend visibility is not protection:
+ * with this off the backend refuses to prepare execution calldata at all, so a crafted
+ * request cannot reach a venue. Practice and quoting are unaffected by design — they spend
+ * nothing — and per-venue flags let one route be enabled without the other.
+ */
+export interface RealTradingConfig {
+  readonly enabled: boolean;
+  readonly venues: ReadonlySet<string>;
+}
+
 export interface ApiConfig {
   readonly port: number;
   readonly apiKeys: ReadonlySet<string>;
@@ -112,6 +125,7 @@ export interface ApiConfig {
   readonly cors: CorsConfig;
   readonly rateLimit: RateLimitConfig;
   readonly realtime: RealtimeConfig;
+  readonly realTrading: RealTradingConfig;
 }
 
 // 8080 is the only-pump-me Vite port (vite.config.ts); browsers treat localhost and 127.0.0.1 as
@@ -243,6 +257,27 @@ function loadRealtimeConfig(env: NodeJS.ProcessEnv): RealtimeConfig {
   });
 }
 
+const KNOWN_EXECUTION_VENUES = ["ROBINHOOD_PONS_CURVE", "ROBINHOOD_UNISWAP_V4"] as const;
+
+/**
+ * Turning real trading on is an explicit configuration change, never a default and never a
+ * side effect of a deploy. An unknown venue name is a hard error rather than a silent
+ * omission: a typo that quietly disabled a route would look exactly like a working config.
+ */
+function loadRealTradingConfig(env: NodeJS.ProcessEnv): RealTradingConfig {
+  const enabled = parseStrictBool(env, "REAL_TRADING_ENABLED", false);
+  const raw = env.REAL_TRADING_VENUES?.trim();
+  if (!raw) return Object.freeze({ enabled, venues: new Set<string>(enabled ? KNOWN_EXECUTION_VENUES : []) });
+
+  const venues = new Set(raw.split(",").map((entry) => entry.trim().toUpperCase()).filter(Boolean));
+  for (const venue of venues) {
+    if (!(KNOWN_EXECUTION_VENUES as readonly string[]).includes(venue)) {
+      throw new ApiConfigError(`REAL_TRADING_VENUES contains unknown venue ${JSON.stringify(venue)}; known venues are ${KNOWN_EXECUTION_VENUES.join(", ")}`);
+    }
+  }
+  return Object.freeze({ enabled, venues: enabled ? venues : new Set<string>() });
+}
+
 export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   return Object.freeze({
     port: parsePositiveInt(env, "API_PORT", 8787),
@@ -254,5 +289,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     cors: loadCorsConfig(env),
     rateLimit: loadRateLimitConfig(env),
     realtime: loadRealtimeConfig(env),
+    realTrading: loadRealTradingConfig(env),
   });
 }
