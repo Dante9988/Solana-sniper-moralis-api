@@ -1,3 +1,4 @@
+import { startHeadWakeup } from "../headWakeup";
 /**
  * Phase 7B.4 — `npm run pons:worker` entrypoint.
  *
@@ -128,6 +129,10 @@ async function main(): Promise<void> {
     }
   }
 
+  const stopHeadWakeup = startHeadWakeup(() => {
+    discoveryV2Listener?.wake(); tradeV2Listener?.wake(); curveTradeListener?.wake();
+  }, message => ponsLogger.info(message));
+
   // Phase 7D.4 §2 — optional, Alchemy-only metadata gap filler (outside generic RPC failover).
   const metadataLogger = ponsComponentLogger("pons:metadata-fallback");
   let metadataFillRunning = false;
@@ -173,6 +178,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     ponsLogger.info({ signal }, "received signal, stopping");
+    stopHeadWakeup();
     clearInterval(metadataTimer);
     snapshots.stop();
     clearInterval(trendingTimer);

@@ -13,23 +13,35 @@
  * URL for logging or metrics — only `label` (the env var name) and `host`.
  */
 
-/** Env var names, in priority order. `DEAFULT` is the real spelling in .env — do not "fix" it. */
 /**
+ * Env var names, in priority order. `DEAFULT` is the real spelling in .env — do not "fix" it.
+ *
  * Private provider keys first, in order, then the public default. Adding a key is how quota
  * exhaustion is absorbed: an exhausted key is cooled down for COOLDOWN_MS.QUOTA_EXHAUSTED and
  * traffic rotates to the next one without a restart.
+ *
+ * `…HTTPS3` leads deliberately. Measured 2026-09-25, one `eth_blockNumber` each: `…HTTPS` and
+ * `…HTTPS2` both answer `HTTP 429 Monthly capacity limit exceeded` (Alchemy keys on the same
+ * host, quota spent), while `…HTTPS3` and `DEAFULT_RPC_HTTPS` answer 200. Leading with a spent
+ * key means every cold request pays a 429 and a cooldown before rotating, and cooldowns are
+ * per-process, so each restart pays it again. Ordering is the fix; the spent keys stay in the
+ * list as failover, which is what they are good for until their quota renews.
+ *
+ * When a key's quota renews or a new one is added, reorder with `PONS_RPC_PRIORITY` rather than
+ * editing this list — see `orderedVars`.
  */
 export const HTTP_ENDPOINT_VARS = [
+  "ROBINHOOD_RPC_HTTPS3",
   "ROBINHOOD_RPC_HTTPS",
   "ROBINHOOD_RPC_HTTPS2",
-  "ROBINHOOD_RPC_HTTPS3",
   "DEAFULT_RPC_HTTPS",
 ] as const;
 
+/** Same reasoning, same provider, same spent keys — `…WSS3` pairs with the HTTPS key that works. */
 export const WS_ENDPOINT_VARS = [
+  "ROBINHOOD_RPC_WSS3",
   "ROBINHOOD_RPC_WSS",
   "ROBINHOOD_RPC_WSS2",
-  "ROBINHOOD_RPC_WSS3",
   "DEAFULT_RPC_WSS",
 ] as const;
 
@@ -98,6 +110,26 @@ function hostOf(url: string): string {
 }
 
 /**
+ * Apply `PONS_RPC_PRIORITY` — a comma-separated list of endpoint variable names to try first,
+ * in the order given. Anything not named keeps its default relative order behind them.
+ *
+ * This exists so a spent provider key is a config change, not a code change: quota exhaustion
+ * is routine here, and the cost of getting the order wrong is a 429 on every cold request. One
+ * setting covers both the HTTP and WebSocket lists, so a name belonging to the other list is
+ * simply skipped rather than treated as an error.
+ */
+export function orderedVars(vars: readonly string[], env: NodeJS.ProcessEnv): readonly string[] {
+  const raw = env.PONS_RPC_PRIORITY?.trim();
+  if (!raw) return vars;
+  const preferred = raw
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name) => vars.includes(name));
+  if (preferred.length === 0) return vars;
+  return [...new Set([...preferred, ...vars])];
+}
+
+/**
  * Build the ordered endpoint list.
  * Empty entries are skipped and duplicate URLs collapse to their highest priority, so a
  * copy-pasted value cannot silently consume a failover slot.
@@ -109,7 +141,7 @@ export function resolveEndpoints(
   const seen = new Set<string>();
   const endpoints: RpcEndpoint[] = [];
 
-  for (const label of vars) {
+  for (const label of orderedVars(vars, env)) {
     const raw = env[label]?.trim();
     if (!raw) continue;
     if (seen.has(raw)) continue;

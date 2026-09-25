@@ -7,8 +7,8 @@
  *   - Bonding curve trades are ingested from the first V2 launch this database knows, so a token's
  *     curve history is complete from its own launch up to the curve stream's confirmed time.
  *   - After graduation, trades are V4 swaps. That stream starts wherever it was first run, so
- *     post-graduation coverage has an unknown start and is PARTIAL; if the stream has never
- *     committed, coverage ends at the graduation block.
+ *     post-graduation coverage is PARTIAL unless verified backfill bridges its start;
+ *     if the stream has never committed, coverage ends at the graduation block.
  *
  * Never presents circulating market cap: circulating supply is not indexed. FDV is labelled as
  * total supply × last traded price.
@@ -104,7 +104,8 @@ export async function fetchTokenMarketData(deps: MarketDataDeps, tokenAddressInp
 
   // Coverage from ingestion checkpoints and this token's own launch/graduation block times.
   // Phase 7D.5 — coverage is measured against the live session's streams.
-  const store = new CheckpointStore(deps.db, await currentSessionPrefix(deps.db, ROBINHOOD_CHAIN));
+  const prefix = await currentSessionPrefix(deps.db, ROBINHOOD_CHAIN);
+  const store = new CheckpointStore(deps.db, prefix);
   const [curve, v4] = await Promise.all([store.getFinalityState(CURVE_TRADE_CHECKPOINT_SOURCE), store.getFinalityState(TRADE_V2_CHECKPOINT_SOURCE)]);
   const notes: string[] = [];
   const launchAt = await blockTime(deps.chainClient, token.sourceHeight);
@@ -118,7 +119,17 @@ export async function fetchTokenMarketData(deps: MarketDataDeps, tokenAddressInp
     notes.push("Uniswap V4 trades after graduation are not ingested yet; activity after graduation is not covered.");
   } else {
     coverage = { from: null, to: v4.lastHeightTimestamp };
-    notes.push("Post-graduation trade history has an unknown start, so windows are partial.");
+    // A completed token backfill can bridge the deliberately skipped history
+    // before this live session. Row counts alone cannot establish that bridge.
+    const [backfill, session] = await Promise.all([
+      deps.db.tokenTradeBackfill.findUnique({ where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: token.tokenAddress } } }),
+      prefix ? deps.db.ingestionSession.findUnique({ where: { id: prefix.split(":")[1] } }) : null,
+    ]);
+    if (!curve?.reorgUnresolvedAt && !v4.reorgUnresolvedAt && backfillBridgesLiveCoverage(backfill, token.sourceHeight, v4.lastHeight, session?.startBlock ?? null)) {
+      coverage.from = launchAt;
+    } else {
+      notes.push("Post-graduation trade history has an unknown start, so windows are partial.");
+    }
   }
   if (!launchAt) notes.push("Launch block time could not be read; coverage start is unknown.");
 
@@ -242,6 +253,18 @@ export async function fetchTokenMarketData(deps: MarketDataDeps, tokenAddressInp
       observedAt: now.toISOString(),
     },
   };
+}
+
+export function backfillBridgesLiveCoverage(
+  backfill: { status: string; fromBlock: bigint; toBlock: bigint; cursor: bigint | null; poolCursor: bigint | null } | null,
+  launchBlock: bigint,
+  indexedBlock: bigint,
+  sessionBoundary: bigint | null,
+): boolean {
+  return Boolean(backfill && backfill.status === "COMPLETE" && backfill.fromBlock <= launchBlock &&
+    backfill.cursor !== null && backfill.cursor >= backfill.toBlock &&
+    backfill.poolCursor !== null && backfill.poolCursor >= backfill.toBlock &&
+    (backfill.toBlock >= indexedBlock || (sessionBoundary !== null && backfill.toBlock >= sessionBoundary)));
 }
 
 const blockTimes = new Map<string, Date | null>();

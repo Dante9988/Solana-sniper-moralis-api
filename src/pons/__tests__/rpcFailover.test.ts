@@ -88,20 +88,56 @@ describe("resolveEndpoints", () => {
     ]);
   });
 
-  it("places the third private key after the second and before the public default", () => {
+  /**
+   * Phase 7D.6 — `…HTTPS3` leads. Probed 2026-09-25: `…HTTPS` and `…HTTPS2` both return
+   * HTTP 429 "Monthly capacity limit exceeded", `…HTTPS3` returns 200. Leading with a spent key
+   * costs a 429 plus a cooldown on every cold request, paid again after each restart because
+   * cooldowns are per-process.
+   */
+  it("leads with the third private key, keeping the spent ones as failover before the public default", () => {
     const endpoints = resolveHttpEndpoints({
       DEAFULT_RPC_HTTPS: "https://public.example/rpc",
       ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C",
       ROBINHOOD_RPC_HTTPS: "https://primary.example/v2/KEY_A",
       ROBINHOOD_RPC_HTTPS2: "https://secondary.example/v2/KEY_B",
     } as NodeJS.ProcessEnv);
-    expect(endpoints.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "ROBINHOOD_RPC_HTTPS3", "DEAFULT_RPC_HTTPS"]);
+    expect(endpoints.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_HTTPS3", "ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "DEAFULT_RPC_HTTPS"]);
     const ws = resolveWsEndpoints({
       DEAFULT_RPC_WSS: "wss://public.example",
       ROBINHOOD_RPC_WSS3: "wss://tertiary.example/v2/KEY_C",
       ROBINHOOD_RPC_WSS: "wss://primary.example/v2/KEY_A",
     } as NodeJS.ProcessEnv);
-    expect(ws.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_WSS", "ROBINHOOD_RPC_WSS3", "DEAFULT_RPC_WSS"]);
+    expect(ws.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_WSS3", "ROBINHOOD_RPC_WSS", "DEAFULT_RPC_WSS"]);
+  });
+
+  describe("PONS_RPC_PRIORITY", () => {
+    const ALL = {
+      DEAFULT_RPC_HTTPS: "https://public.example/rpc",
+      ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C",
+      ROBINHOOD_RPC_HTTPS: "https://primary.example/v2/KEY_A",
+      ROBINHOOD_RPC_HTTPS2: "https://secondary.example/v2/KEY_B",
+    };
+
+    it("promotes the named endpoints, in the order given", () => {
+      const endpoints = resolveHttpEndpoints({ ...ALL, PONS_RPC_PRIORITY: "DEAFULT_RPC_HTTPS,ROBINHOOD_RPC_HTTPS2" } as NodeJS.ProcessEnv);
+      expect(endpoints.map((e) => e.label)).toEqual(["DEAFULT_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "ROBINHOOD_RPC_HTTPS3", "ROBINHOOD_RPC_HTTPS"]);
+    });
+
+    it("keeps every endpoint exactly once — a promoted one is not also left in place", () => {
+      const endpoints = resolveHttpEndpoints({ ...ALL, PONS_RPC_PRIORITY: "ROBINHOOD_RPC_HTTPS" } as NodeJS.ProcessEnv);
+      expect(endpoints.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS3", "ROBINHOOD_RPC_HTTPS2", "DEAFULT_RPC_HTTPS"]);
+    });
+
+    it("tolerates whitespace and names from the other transport's list", () => {
+      // One setting covers both lists, so WS names appearing here are skipped, not an error.
+      const endpoints = resolveHttpEndpoints({ ...ALL, PONS_RPC_PRIORITY: " ROBINHOOD_RPC_WSS3 , DEAFULT_RPC_HTTPS " } as NodeJS.ProcessEnv);
+      expect(endpoints.map((e) => e.label)).toEqual(["DEAFULT_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS3", "ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2"]);
+    });
+
+    it("falls back to the default order when it names nothing recognisable", () => {
+      const endpoints = resolveHttpEndpoints({ ...ALL, PONS_RPC_PRIORITY: "TYPO_RPC" } as NodeJS.ProcessEnv);
+      expect(endpoints.map((e) => e.label)).toEqual(["ROBINHOOD_RPC_HTTPS3", "ROBINHOOD_RPC_HTTPS", "ROBINHOOD_RPC_HTTPS2", "DEAFULT_RPC_HTTPS"]);
+    });
   });
 
   it("skips empty and whitespace-only entries", () => {
@@ -267,7 +303,13 @@ describe("block-range limits", () => {
   });
 
   it("moves a wide log query past range-capped endpoints without cooling them down", async () => {
-    const env = { ...ENV, ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C" } as NodeJS.ProcessEnv;
+    // Pin the walk order: this test is about stepping *through* several endpoints, so it must
+    // not depend on which key happens to lead today (Phase 7D.6 put …HTTPS3 first).
+    const env = {
+      ...ENV,
+      ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C",
+      PONS_RPC_PRIORITY: "ROBINHOOD_RPC_HTTPS,ROBINHOOD_RPC_HTTPS2,ROBINHOOD_RPC_HTTPS3,DEAFULT_RPC_HTTPS",
+    } as NodeJS.ProcessEnv;
     const calls: string[] = [];
     const client = new FailoverChainClient({
       config: { chainId: 4663, rpcHttpUrl: "unused" } as never,
@@ -368,7 +410,12 @@ describe("FailoverChainClient", () => {
   });
 
   it("two exhausted keys rotate to the third key, and the exhausted ones stay cooled down", async () => {
-    const env = { ...ENV, ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C" } as NodeJS.ProcessEnv;
+    // Same reason: the scenario is "the first two keys are spent", so they have to be first.
+    const env = {
+      ...ENV,
+      ROBINHOOD_RPC_HTTPS3: "https://tertiary.example/v2/KEY_C",
+      PONS_RPC_PRIORITY: "ROBINHOOD_RPC_HTTPS,ROBINHOOD_RPC_HTTPS2,ROBINHOOD_RPC_HTTPS3,DEAFULT_RPC_HTTPS",
+    } as NodeJS.ProcessEnv;
     const { client, calls } = buildClient(
       {
         ROBINHOOD_RPC_HTTPS: async () => unavailable(ALCHEMY_QUOTA_MESSAGE),

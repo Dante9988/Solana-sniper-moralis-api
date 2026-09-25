@@ -1,3 +1,4 @@
+import { WakeableLoop } from "./wakeableLoop";
 /**
  * Phase 7D §6 — Pons V2 discovery + graduation listener.
  *
@@ -620,41 +621,27 @@ export class DiscoveryV2Listener {
     return { status: "PROCESSED", fromBlock, toBlock, tokensDiscovered: discovered.length, tokensPendingEnrichment, tokensGraduated, enrichmentRetried, enrichmentRetriedRecovered };
   }
 
+  private wakeable: WakeableLoop | null = null;
+  wake(): void { this.wakeable?.wake(); }
   start(): void {
-    if (this.timer) return;
+    if (this.wakeable) return;
     this.stopping = false;
-    const tick = async () => {
-      if (this.stopping) return;
+    this.wakeable = new WakeableLoop(async () => {
       let result: DiscoveryV2TickResult | undefined;
       this.currentTick = (async () => {
-        try {
-          result = await this.runOnce();
-        } catch (err) {
-          this.logger.error(`pons_v2 discovery listener tick threw unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        try { result = await this.runOnce(); }
+        catch (err) { this.logger.error(`pons_v2 discovery tick failed: ${err instanceof Error ? err.message : String(err)}`); }
       })();
       await this.currentTick;
-      if (!this.stopping) {
-        // A free-tier RPC's small eth_getLogs range cap (PONS_MAX_BLOCK_RANGE_PER_POLL)
-        // means one tick often can't reach the chain tip even when there's
-        // more backlog immediately behind it — waiting the full poll
-        // interval between every such tick regardless made catch-up
-        // strictly slower than new-block production on a fast chain
-        // (verified live: fell ~13,700 blocks behind). Only wait when this
-        // tick actually reached UP_TO_DATE (or hit a real error worth
-        // backing off from) — otherwise loop again immediately.
-        const delay = nextTickDelayMs({
-          processedWidth: processedWidth(result),
-          maxRangePerPoll: this.config.maxBlockRangePerPoll,
-          pollIntervalMs: this.config.pollIntervalMs,
-        });
-        this.timer = setTimeout(tick, delay);
-      }
-    };
-    this.timer = setTimeout(tick, 0);
+      return { delay: nextTickDelayMs({ processedWidth: processedWidth(result), maxRangePerPoll: this.config.maxBlockRangePerPoll, pollIntervalMs: this.config.pollIntervalMs }),
+        failed: !result || result.status === "UNAVAILABLE" };
+    });
+    this.wakeable.start();
   }
 
   stop(): void {
+    this.wakeable?.stop();
+    this.wakeable = null;
     this.stopping = true;
     if (this.timer) {
       clearTimeout(this.timer);

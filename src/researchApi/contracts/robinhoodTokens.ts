@@ -147,10 +147,13 @@ export const ChainTradeSchema = z
   })
   .openapi("ChainTrade");
 
+const usdFilter = () => z.string().regex(/^\d{1,24}(\.\d{1,6})?$/).optional();
+const countFilter = () => z.coerce.number().int().min(0).max(2_147_483_647).optional();
+
 export const RobinhoodTokenListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
   /** Opaque: pass back `nextCursor` unchanged. */
-  cursor: z.string().max(64).optional(),
+  cursor: z.string().max(128).optional(),
   /**
    * Phase 7D.4 — server-side filters, so counts and pages describe the filtered set.
    * `almost-bonded`: still bonding, some of the allocation sold, ordered by progress.
@@ -160,6 +163,10 @@ export const RobinhoodTokenListQuerySchema = z.object({
   /** Defaults: `new` (all/bonding/graduated), `progress` (almost-bonded), `trending` (trending). */
   sort: z.enum(["new", "marketCap", "liquidity", "progress", "change1h", "volume1h", "trending"]).optional(),
   q: z.string().trim().max(64).optional(),
+  fdvMin: usdFilter(), fdvMax: usdFilter(),
+  liquidityMin: usdFilter(), liquidityMax: usdFilter(),
+  volume5mMin: usdFilter(), volume1hMin: usdFilter(),
+  txns1hMin: countFilter(), buys1hMin: countFilter(), sells1hMin: countFilter(), traders1hMin: countFilter(),
 });
 
 export const RobinhoodTokenListResponseSchema = z

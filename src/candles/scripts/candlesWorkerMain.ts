@@ -27,6 +27,7 @@
  * (phase7b5b.txt §12) — only this worker does, and only for decimals.
  */
 
+import { listenForTradeCommits } from "../tradeWakeup";
 import { PrismaClient } from "@prisma/client";
 import { loadRobinhoodChainConfig } from "../../pons/config";
 import { FailoverChainClient } from "../../pons/failoverChainClient";
@@ -43,6 +44,13 @@ import { recordCandleWorkerFailure, recordCandleWorkerRunState } from "../health
 const VENUE = "pons";
 const logger = ponsComponentLogger("candles:worker");
 
+/** How recently the API must have seen a subscriber for a token to count as watched. */
+const WATCH_FRESHNESS_MS = 5 * 60_000;
+/** The watched loop's cadence — fast, because it is meant to keep pace with an open chart. */
+const WATCHED_POLL_INTERVAL_MS = 2_000;
+/** A ceiling so an unusual number of simultaneous watchers cannot turn the fast loop into a second fleet tick. */
+const MAX_WATCHED_TOKENS_PER_TICK = 50;
+
 async function main(): Promise<void> {
   const chainConfig = loadRobinhoodChainConfig();
   const workerConfig = loadCandleWorkerConfig();
@@ -52,6 +60,19 @@ async function main(): Promise<void> {
   const usdRateProvider = new ChainlinkQuoteUsdRateProvider({ chainClient });
 
   const realtimeConfig = loadApiConfig().realtime;
+  // Phase 7D.6 — refuse to run as a separate process publishing into a process-local bus.
+  // That configuration is not "degraded", it is inert: every `token.candle.updated` this
+  // worker emits would be delivered to subscribers inside this same process, of which there
+  // are none, while the API kept telling browsers the chart was LIVE. It went unnoticed for a
+  // whole phase precisely because nothing failed (docs/phase-7d6/root-cause.md). If you really
+  // are embedding this worker in the API process, say so explicitly.
+  if (realtimeConfig.backend === "memory" && process.env.CANDLES_ALLOW_INERT_EVENT_BUS !== "true") {
+    throw new Error(
+      "REALTIME_BACKEND=memory cannot deliver candle events from this worker process to the API's WebSocket clients — " +
+        "every published update would be silently discarded. Use REALTIME_BACKEND=postgres (the default) or redis, " +
+        "or set CANDLES_ALLOW_INERT_EVENT_BUS=true if this worker genuinely runs inside the API process.",
+    );
+  }
   const eventBus = createEventBus(realtimeConfig);
 
   let stopping = false;
@@ -79,6 +100,46 @@ async function main(): Promise<void> {
     for (const err of summary.errors) logger.warn(err);
   };
 
+  /**
+   * Phase 7D.6 — the watched-token loop.
+   *
+   * The fleet tick is fair and slow: ~100 tokens a pass, 70–120s with first-time backfills in
+   * the queue. A token open in someone's terminal cannot wait for its turn in that queue, so
+   * this loop does forward progress for just the handful of tokens the API says are being
+   * watched right now. It recovers at most one watched token's invalidation per
+   * pass, so a recent backfill cannot block its live tail behind fleet work.
+   * Fleet-wide finalisation stays in the slower reconciliation loop.
+   */
+  const watchedTick = async () => {
+    const since = new Date(Date.now() - WATCH_FRESHNESS_MS);
+    const watched = await db.candleWatch.findMany({
+      where: { chain: ROBINHOOD_CHAIN, lastSeenAt: { gte: since } },
+      select: { tokenAddress: true },
+      take: MAX_WATCHED_TOKENS_PER_TICK,
+      orderBy: { lastSeenAt: "desc" },
+    });
+    if (watched.length === 0) return;
+    const summary = await runCandleAggregationTick({
+      db,
+      chainClient,
+      chain: ROBINHOOD_CHAIN,
+      venue: VENUE,
+      usdRateProvider,
+      maxInvalidationTokensPerTick: 1,
+      maxForwardTokensPerTick: MAX_WATCHED_TOKENS_PER_TICK,
+      tradePageCap: workerConfig.tradePageCap,
+      logger,
+      restrictToTokens: watched.map((w) => w.tokenAddress),
+      onCandleUpdated: async (event) => {
+        await publishCandleEvent(eventBus, event);
+      },
+    });
+    if (summary.candlesWritten > 0) {
+      logger.info(`watched tick: ${summary.tokensProcessed} watched token(s), ${summary.candlesWritten} candle(s) written in ${summary.durationMs}ms`);
+    }
+    for (const err of summary.errors) logger.warn(err);
+  };
+
   const loop = async () => {
     if (stopping) return;
     currentTick = (async () => {
@@ -94,7 +155,30 @@ async function main(): Promise<void> {
     if (!stopping) setTimeout(() => void loop(), workerConfig.pollIntervalMs);
   };
 
+  // Notifications arriving during a pass coalesce into one follow-up. No
+  // parallel recomputes or unbounded event queue; a 2s sweep repairs missed hints.
+  let watchedPromise: Promise<void> = Promise.resolve();
+  let watchedRunning = false;
+  let watchedPending = false;
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  const wake = () => {
+    if (stopping) return;
+    watchedPending = true;
+    if (watchedRunning || wakeTimer) return;
+    wakeTimer = setTimeout(() => {
+      wakeTimer = null;
+      watchedPending = false;
+      watchedRunning = true;
+      watchedPromise = watchedTick().catch(err => logger.warn(`watched tick failed: ${err instanceof Error ? err.message : String(err)}`))
+        .finally(() => { watchedRunning = false; if (watchedPending) wake(); });
+    }, 100);
+  };
+  const reconciliationTimer = setInterval(wake, WATCHED_POLL_INTERVAL_MS);
+  const stopWakeup = process.env.DATABASE_URL
+    ? listenForTradeCommits(process.env.DATABASE_URL, wake, message => logger.warn(message))
+    : async () => undefined;
   void loop();
+  wake();
   logger.info("candles:worker started");
 
   let shuttingDown = false;
@@ -103,7 +187,10 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info(`received ${signal}, stopping`);
     stopping = true;
-    await currentTick;
+    clearInterval(reconciliationTimer);
+    if (wakeTimer) clearTimeout(wakeTimer);
+    await stopWakeup();
+    await Promise.all([currentTick, watchedPromise]);
     await eventBus.close().catch(() => undefined);
     await db.$disconnect();
     process.exit(0);

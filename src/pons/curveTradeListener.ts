@@ -1,3 +1,4 @@
+import { WakeableLoop } from "./wakeableLoop";
 /**
  * Phase 7D.4 §3 — Pons V2 bonding-curve trades (pre-graduation).
  *
@@ -385,30 +386,27 @@ export class CurveTradeListener {
     return new Map(rows.map((r) => [r.curveAddress.toLowerCase(), { tokenAddress: r.tokenAddress, quoteAddress: r.quoteAddress }]));
   }
 
+  private wakeable: WakeableLoop | null = null;
+  wake(): void { this.wakeable?.wake(); }
   start(): void {
-    if (this.timer) return;
+    if (this.wakeable) return;
     this.stopping = false;
-    const tick = async () => {
-      if (this.stopping) return;
+    this.wakeable = new WakeableLoop(async () => {
       let result: CurveTradeTickResult | undefined;
       this.currentTick = (async () => {
-        try {
-          result = await this.runOnce();
-        } catch (err) {
-          this.logger.error(`pons_v2 curve trade tick threw unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        try { result = await this.runOnce(); }
+        catch (err) { this.logger.error(`pons_v2 curve trade tick failed: ${err instanceof Error ? err.message : String(err)}`); }
       })();
       await this.currentTick;
-      if (!this.stopping)
-        this.timer = setTimeout(
-          tick,
-          nextTickDelayMs({ processedWidth: processedWidth(result), maxRangePerPoll: Number(this.range), pollIntervalMs: this.config.pollIntervalMs })
-        );
-    };
-    this.timer = setTimeout(tick, 0);
+      return { delay: nextTickDelayMs({ processedWidth: processedWidth(result), maxRangePerPoll: Number(this.range), pollIntervalMs: this.config.pollIntervalMs }),
+        failed: !result || result.status === "UNAVAILABLE" };
+    });
+    this.wakeable.start();
   }
 
   stop(): void {
+    this.wakeable?.stop();
+    this.wakeable = null;
     this.stopping = true;
     if (this.timer) {
       clearTimeout(this.timer);

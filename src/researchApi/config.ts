@@ -82,12 +82,19 @@ export interface RateLimitConfig {
   readonly redisUrl?: string;
 }
 
-export type RealtimeBackend = "memory" | "redis";
+/**
+ * `postgres` (Phase 7D.6) carries events over `LISTEN`/`NOTIFY` on the database every process
+ * already connects to — the default now, because `memory` silently cannot deliver from the
+ * candles worker to the API's WebSocket clients (docs/phase-7d6/root-cause.md).
+ */
+export type RealtimeBackend = "memory" | "redis" | "postgres";
 
 export interface RealtimeConfig {
   /** Backs both the event bus (job lifecycle pub/sub) and the WebSocket ticket store — both need to work across API/worker processes, so they share one backend choice. */
   readonly backend: RealtimeBackend;
   readonly redisUrl?: string;
+  /** Present when `backend === "postgres"` — its own `pg` connections, separate from Prisma's pool (a LISTEN connection can issue no other query). */
+  readonly databaseUrl?: string;
   readonly ticketTtlMs: number;
   readonly maxMessageBytes: number;
   readonly maxSubscriptionsPerConnection: number;
@@ -197,23 +204,37 @@ function loadRealtimeConfig(env: NodeJS.ProcessEnv): RealtimeConfig {
     // within one process; production must say so explicitly rather than
     // silently losing events/tickets across instances.
     throw new ApiConfigError(
-      'REALTIME_BACKEND must be explicitly set to "memory" or "redis" in production (NODE_ENV=production) — the event bus and WebSocket ticket store both need to work across processes, which an in-memory default cannot do.'
+      'REALTIME_BACKEND must be explicitly set to "memory", "postgres" or "redis" in production (NODE_ENV=production) — the event bus and WebSocket ticket store both need to work across processes, which an in-memory default cannot do.'
     );
   }
 
-  const backend: RealtimeBackend = raw === "redis" ? "redis" : "memory";
-  if (raw !== undefined && raw !== "memory" && raw !== "redis") {
-    throw new ApiConfigError(`REALTIME_BACKEND must be "memory" or "redis", got ${JSON.stringify(env.REALTIME_BACKEND)}`);
+  if (raw !== undefined && raw !== "memory" && raw !== "redis" && raw !== "postgres") {
+    throw new ApiConfigError(`REALTIME_BACKEND must be "memory", "postgres" or "redis", got ${JSON.stringify(env.REALTIME_BACKEND)}`);
   }
+  // Phase 7D.6: when a database is configured, the default is `postgres`, not `memory`.
+  // `memory` cannot carry an event from the candles worker's process to the API's WebSocket
+  // clients, and the way that failed was invisible — the socket connected, the badge said LIVE,
+  // and no update ever arrived (docs/phase-7d6/root-cause.md). Postgres is already required by
+  // every process that matters, so the default now works wherever the app actually runs.
+  //
+  // Without `DATABASE_URL` there is nothing to carry events over, so this stays `memory` —
+  // tests and single-process tooling keep working. That is no longer a silent trap: a worker
+  // that would publish into an inert bus refuses to start (`candlesWorkerMain.ts`).
+  const hasDatabase = Boolean(env.DATABASE_URL?.trim());
+  const backend: RealtimeBackend = (raw as RealtimeBackend | undefined) ?? (hasDatabase ? "postgres" : "memory");
 
   const redisUrl = env.REDIS_URL?.trim() || undefined;
   if (backend === "redis" && !redisUrl) {
     throw new ApiConfigError("REALTIME_BACKEND=redis requires REDIS_URL to be set — refusing to start without it.");
   }
+  if (backend === "postgres" && !env.DATABASE_URL?.trim()) {
+    throw new ApiConfigError("REALTIME_BACKEND=postgres requires DATABASE_URL to be set — refusing to start without it.");
+  }
 
   return Object.freeze({
     backend,
     redisUrl,
+    databaseUrl: backend === "postgres" ? env.DATABASE_URL!.trim() : undefined,
     ticketTtlMs: parsePositiveInt(env, "WS_TICKET_TTL_MS", 45_000),
     maxMessageBytes: parsePositiveInt(env, "WS_MAX_MESSAGE_BYTES", 8_192),
     maxSubscriptionsPerConnection: parsePositiveInt(env, "WS_MAX_SUBSCRIPTIONS_PER_CONNECTION", 20),

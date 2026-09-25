@@ -56,7 +56,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   const app = express();
   const deps: AuthenticateDeps = { supabaseVerifier: buildSupabaseVerifier(config, overrides.supabaseVerifierOverrides) };
   const eventBus = createEventBus(config.realtime);
-  const ticketStore = createTicketStore(config.realtime);
+  const ticketStore = createTicketStore(config.realtime, db);
   (app.locals as RealtimeLocals).eventBus = eventBus;
   (app.locals as RealtimeLocals).ticketStore = ticketStore;
 

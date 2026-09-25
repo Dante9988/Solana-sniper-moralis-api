@@ -14,6 +14,7 @@ export const CandleResolutionSchema = z.enum(CANDLE_RESOLUTIONS as [string, ...s
 
 export const CandleQuerySchema = z.object({
   resolution: CandleResolutionSchema,
+  direction: z.enum(["forward", "backward"]).optional().default("forward"),
   /** Unix seconds, inclusive lower bound on bucketStart. */
   from: z.coerce.number().int().nonnegative().optional(),
   /** Unix seconds, exclusive upper bound on bucketStart. */

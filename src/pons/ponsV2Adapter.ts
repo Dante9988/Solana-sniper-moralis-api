@@ -264,10 +264,9 @@ export const ponsV2Adapter = {
 
   /**
    * Phase 7D §2 (transaction history) — decodes a real Uniswap V4
-   * PoolManager Swap log. Same signed-amount convention as V3 (verified
-   * live against the identical field semantics — see abi.ts's
-   * UNISWAP_V3_POOL_ABI comment): negative = flowed OUT of the pool
-   * (received by the trader, i.e. a buy), positive = flowed IN (a sell).
+   * PoolManager Swap log: positive token delta is output to the caller (buy),
+   * negative is input (sell). Verified against receipt 64164797 and Pool.swap;
+   * see docs/phase-7d6/sources-7d6.4.md. V3 uses the opposite convention.
    */
   /**
    * Phase 7D.4 §3 — a PonsV2BondingCurve CurveBuy/CurveSell log. The caller must already have
@@ -345,7 +344,7 @@ export const ponsV2Adapter = {
     const quoteAmountSigned = raw.isToken0 ? args.amount1 : args.amount0;
     if (tokenAmountSigned === 0n) return null;
 
-    const side: "buy" | "sell" = tokenAmountSigned < 0n ? "buy" : "sell";
+    const side: "buy" | "sell" = tokenAmountSigned > 0n ? "buy" : "sell";
     const tokenAmount = tokenAmountSigned < 0n ? -tokenAmountSigned : tokenAmountSigned;
     const quoteAmount = quoteAmountSigned < 0n ? -quoteAmountSigned : quoteAmountSigned;
 

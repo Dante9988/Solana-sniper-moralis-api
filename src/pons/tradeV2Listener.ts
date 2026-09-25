@@ -1,3 +1,4 @@
+import { WakeableLoop } from "./wakeableLoop";
 /**
  * Phase 7D §2 — Pons V2 transaction history: real trades on graduated
  * tokens' Uniswap V4 pools.
@@ -209,9 +210,13 @@ export class TradeV2Listener {
     if (freshStart) {
       this.logger.warn(`No pons_v2 trade checkpoint found — starting fresh at height ${fromBlock}.`);
     }
-    const poolIdChunks = chunk(poolIds, this.config.tradePoolChunkSize);
+    // At the live head a narrow range over this one known PoolManager is
+    // cheaper than ~38 separate pool-topic requests. Unknown pools are still
+    // discarded below. Wide catch-up retains the established bounded chunks.
+    const narrowLiveRange = toBlock - fromBlock < 1000n;
+    const poolIdChunks = narrowLiveRange ? [poolIds] : chunk(poolIds, this.config.tradePoolChunkSize);
     const chunkOutcomes = await mapWithConcurrency(poolIdChunks, this.config.tradeQueryConcurrency, (ids) =>
-      this.chainClient.getLogs({ address: poolManager, event: swapEvent, args: { id: ids }, fromBlock, toBlock })
+      this.chainClient.getLogs({ address: poolManager, event: swapEvent, args: narrowLiveRange ? undefined : { id: ids }, fromBlock, toBlock })
     );
 
     const allLogs: RawEvmLog[] = [];
@@ -266,6 +271,7 @@ export class TradeV2Listener {
               poolAddress: null,
               poolId: trade.poolId,
               side: trade.side,
+              normalizationVersion: 2,
               tokenAmount: trade.tokenAmount,
               quoteAmount: trade.quoteAmount,
               quoteAddress: trade.quoteAddress.toLowerCase(),
@@ -278,7 +284,7 @@ export class TradeV2Listener {
               observedAt: new Date(trade.observedAt),
               sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null,
             },
-            update: { canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null },
+            update: { side: trade.side, normalizationVersion: 2, canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null },
           });
         }
         const checkpointStoreTx = new CheckpointStore(tx, this.sessionPrefix);
@@ -292,33 +298,27 @@ export class TradeV2Listener {
     return { status: "PROCESSED", fromBlock, toBlock, tradesRecorded: trades.length, poolsQueried: poolIds.length, rpcLogCalls: poolIdChunks.length };
   }
 
+  private wakeable: WakeableLoop | null = null;
+  wake(): void { this.wakeable?.wake(); }
   start(): void {
-    if (this.timer) return;
+    if (this.wakeable) return;
     this.stopping = false;
-    const tick = async () => {
-      if (this.stopping) return;
+    this.wakeable = new WakeableLoop(async () => {
       let result: TradeV2TickResult | undefined;
       this.currentTick = (async () => {
-        try {
-          result = await this.runOnce();
-        } catch (err) {
-          this.logger.error(`pons_v2 trade listener tick threw unexpectedly: ${err instanceof Error ? err.message : String(err)}`);
-        }
+        try { result = await this.runOnce(); }
+        catch (err) { this.logger.error(`pons_v2 trade tick failed: ${err instanceof Error ? err.message : String(err)}`); }
       })();
       await this.currentTick;
-      if (!this.stopping) {
-        const delay = nextTickDelayMs({
-          processedWidth: processedWidth(result),
-          maxRangePerPoll: this.config.maxBlockRangePerPoll,
-          pollIntervalMs: this.config.pollIntervalMs,
-        });
-        this.timer = setTimeout(tick, delay);
-      }
-    };
-    this.timer = setTimeout(tick, 0);
+      return { delay: nextTickDelayMs({ processedWidth: processedWidth(result), maxRangePerPoll: this.config.maxBlockRangePerPoll, pollIntervalMs: this.config.pollIntervalMs }),
+        failed: !result || result.status === "UNAVAILABLE" };
+    });
+    this.wakeable.start();
   }
 
   stop(): void {
+    this.wakeable?.stop();
+    this.wakeable = null;
     this.stopping = true;
     if (this.timer) {
       clearTimeout(this.timer);

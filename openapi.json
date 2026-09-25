@@ -5517,7 +5517,7 @@
           {
             "schema": {
               "type": "string",
-              "maxLength": 64
+              "maxLength": 128
             },
             "required": false,
             "name": "cursor",
@@ -5563,6 +5563,112 @@
             },
             "required": false,
             "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,24}(\\.\\d{1,6})?$"
+            },
+            "required": false,
+            "name": "fdvMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,24}(\\.\\d{1,6})?$"
+            },
+            "required": false,
+            "name": "fdvMax",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,24}(\\.\\d{1,6})?$"
+            },
+            "required": false,
+            "name": "liquidityMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,24}(\\.\\d{1,6})?$"
+            },
+            "required": false,
+            "name": "liquidityMax",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,24}(\\.\\d{1,6})?$"
+            },
+            "required": false,
+            "name": "volume5mMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,24}(\\.\\d{1,6})?$"
+            },
+            "required": false,
+            "name": "volume1hMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "required": false,
+            "name": "txns1hMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "required": false,
+            "name": "buys1hMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "required": false,
+            "name": "sells1hMin",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "maximum": 2147483647
+            },
+            "required": false,
+            "name": "traders1hMin",
             "in": "query"
           }
         ],
@@ -6050,6 +6156,74 @@
             "required": true,
             "name": "tokenAddress",
             "in": "path"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/CandleResolution"
+            },
+            "required": true,
+            "name": "resolution",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "forward",
+                "backward"
+              ],
+              "default": "forward"
+            },
+            "required": false,
+            "name": "direction",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "required": false,
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "required": false,
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 500
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "required": false,
+            "name": "cursor",
+            "in": "query"
           }
         ],
         "responses": {

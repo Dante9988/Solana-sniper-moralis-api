@@ -54,7 +54,7 @@ function deps(
       }),
     },
     candleInvalidation: { create: vi.fn(async () => ({})) },
-    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<void>) => fn({ chainTrade: { upsert: vi.fn(async () => ({})) } })),
+    $transaction: vi.fn(async (fn: (tx: unknown) => Promise<void>) => fn({ chainTrade: { findMany: vi.fn(async () => []), upsert: vi.fn(async () => ({})) }, candleInvalidation: { create: vi.fn(async () => ({})) } })),
   };
 
   const getLogs = vi.fn(async () => ({ status: "AVAILABLE", data: [] as never[], source: "t", fetchedAt: new Date(), attempts: 1 }));
@@ -70,6 +70,32 @@ function deps(
 }
 
 describe("per-token trade backfill", () => {
+  it("resumes a failed run without discarding its committed curve cursor", async () => {
+    const d = deps({ existing: { status: "FAILED", cursor: 1_200_000n, tradesWritten: 42, logsScanned: 99 } });
+    await backfillTokenTrades(d.base, TOKEN);
+    expect(calls(d.getLogsByEvents)[0]!.fromBlock).toBe(1_200_001n);
+  });
+
+  it("resumes the pool independently when the curve is already at the target", async () => {
+    const target = 1_400_000n - BigInt(TEST_CONFIG.confirmationLagBlocks);
+    const d = deps({ graduated: true, poolId: "0xpool", isToken0: true, graduationSourceHeight: 1_100_000n,
+      existing: { status: "PARTIAL", cursor: target, poolCursor: 1_250_000n, tradesWritten: 42, logsScanned: 99 } });
+    const result = await backfillTokenTrades(d.base, TOKEN);
+    expect(d.getLogsByEvents).not.toHaveBeenCalled();
+    expect(calls(d.getLogs)[0]!.fromBlock).toBe(1_250_001n);
+    expect(d.backfillRows.get(TOKEN)?.poolCursor).toBe(target);
+    expect(result.status).toBe("COMPLETE");
+  });
+
+  it("never marks incomplete pool history COMPLETE", async () => {
+    const d = deps({ graduated: true, poolId: "0xpool", isToken0: true });
+    d.getLogs.mockResolvedValue({ status: "UNAVAILABLE", reason: "rate limit", code: "RPC_ERROR" } as never);
+    const result = await backfillTokenTrades(d.base, TOKEN);
+    expect(result.status).toBe("PARTIAL");
+    expect(result.uncoveredVenues).toEqual(["UNISWAP_V4_POOL"]);
+    expect(d.backfillRows.get(TOKEN)?.status).toBe("PARTIAL");
+  });
+
   it("asks only for THIS token's curve address — the whole point", async () => {
     const d = deps();
     await backfillTokenTrades(d.base, TOKEN);
