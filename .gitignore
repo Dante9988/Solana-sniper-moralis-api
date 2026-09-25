@@ -49,3 +49,6 @@ myConfig.ts
 
 # Supervised dev-stack runtime state (scripts/dev-stack.sh)
 .run/
+
+# Claude Code agent scratch (worktrees, local agent config)
+.claude/
