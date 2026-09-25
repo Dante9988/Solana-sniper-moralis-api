@@ -476,6 +476,23 @@ export function createRobinhoodTokensRouter(
         return;
       }
 
+      /**
+       * Phase 7D.6.3 — asking for a token's candles is watching it.
+       *
+       * The watched-token loop refreshes these every couple of seconds; everything else waits
+       * for the fleet pass, which measured 40s median and 83s at worst. Registering the watch
+       * on the WebSocket subscribe alone left signed-out visitors polling a token nobody was
+       * refreshing — fresh requests for stale rows. Best-effort on purpose: a failure here
+       * costs freshness, never the response.
+       */
+      void db.candleWatch
+        .upsert({
+          where: { chain_tokenAddress: { chain: "robinhood", tokenAddress } },
+          create: { chain: "robinhood", tokenAddress, lastSeenAt: new Date() },
+          update: { lastSeenAt: new Date() },
+        })
+        .catch(() => undefined);
+
       const resolutionDb = resolutionIdToDb(resolution as CandleResolutionId);
       const effectiveFrom = cursor !== undefined ? Math.max(cursor, from ?? 0) : from;
 
