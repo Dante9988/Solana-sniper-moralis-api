@@ -16,12 +16,13 @@
  * fetch transport sends none.
  */
 
-import { createPublicClient, defineChain, http, type Hex, type PublicClient } from "viem";
+import { createPublicClient, defineChain, http, TransactionReceiptNotFoundError, type Hex, type PublicClient } from "viem";
 
 import { RPC_USER_AGENT, type ChainClientResult } from "../chainClient";
 import type { RobinhoodChainConfig } from "../config";
 import { redactRpcUrls, resolveHttpEndpoints } from "../rpcEndpoints";
-import type { WalletProbe } from "./venue";
+import type { ReceiptReader } from "./reconciliationWorker";
+import type { ReceiptFacts, WalletProbe } from "./venue";
 
 const SOURCE = "robinhood-chain-rpc";
 
@@ -34,7 +35,7 @@ function available<T>(data: T): ChainClientResult<T> {
   return { status: "AVAILABLE", data, source: SOURCE, fetchedAt: new Date(), attempts: 1 };
 }
 
-export interface WalletProbeOptions {
+export interface ChainAccessOptions {
   config: RobinhoodChainConfig;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
@@ -48,11 +49,10 @@ export interface WalletProbeOptions {
  * No failover: a probe that cannot answer degrades to "not checked", so cascading through
  * every endpoint would spend the scarce RPC budget on a read whose absence costs nothing.
  */
-export function createWalletProbe(options: WalletProbeOptions): WalletProbe {
+function publicClientFor(options: ChainAccessOptions): PublicClient {
   const endpoints = resolveHttpEndpoints(options.env ?? process.env);
   const url = endpoints[0]?.url ?? options.config.rpcHttpUrl;
-
-  const client =
+  return (
     options.client ??
     (createPublicClient({
       chain: defineChain({
@@ -62,8 +62,12 @@ export function createWalletProbe(options: WalletProbeOptions): WalletProbe {
         rpcUrls: { default: { http: [url] } },
       }),
       transport: http(url, { timeout: options.timeoutMs ?? 6_000, fetchOptions: { headers: { "User-Agent": RPC_USER_AGENT } } }),
-    }) as PublicClient);
+    }) as PublicClient)
+  );
+}
 
+export function createWalletProbe(options: ChainAccessOptions): WalletProbe {
+  const client = publicClientFor(options);
   return {
     async getBalance(address) {
       try {
@@ -85,6 +89,37 @@ export function createWalletProbe(options: WalletProbeOptions): WalletProbe {
         // Expected whenever an approval has not been signed yet, which is most of the time
         // at build. Not an error worth logging loudly.
         return unavailable<bigint>((error as Error).message);
+      }
+    },
+  };
+}
+
+/**
+ * Receipts for reconciliation.
+ *
+ * "Not found" is a value, not an error: a transaction broadcast a moment ago legitimately
+ * has no receipt yet, and conflating that with an RPC failure would let a provider outage
+ * march healthy trades towards DROPPED. viem throws TransactionReceiptNotFoundError for
+ * the former, so it is caught and mapped to a successful `null`.
+ */
+export function createReceiptReader(options: ChainAccessOptions): ReceiptReader {
+  const client = publicClientFor(options);
+  return {
+    async getReceipt(hash) {
+      try {
+        const receipt = await client.getTransactionReceipt({ hash: hash as Hex });
+        const facts: ReceiptFacts = {
+          status: receipt.status === "success" ? "success" : "reverted",
+          blockNumber: receipt.blockNumber,
+          blockHash: receipt.blockHash,
+          gasUsed: receipt.gasUsed,
+          effectiveGasPrice: receipt.effectiveGasPrice ?? null,
+          logs: receipt.logs.map((log) => ({ address: log.address, topics: [...log.topics], data: log.data })),
+        };
+        return available<ReceiptFacts | null>(facts);
+      } catch (error) {
+        if (error instanceof TransactionReceiptNotFoundError) return available<ReceiptFacts | null>(null);
+        return unavailable<ReceiptFacts | null>((error as Error).message);
       }
     },
   };

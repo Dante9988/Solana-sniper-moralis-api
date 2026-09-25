@@ -35,6 +35,9 @@ import { createVanityRouter } from "./routes/vanity";
 import { createMarketsRouter } from "./routes/markets";
 import { createMediaRouter } from "./routes/media";
 import { startTokenImageWorker } from "../media/tokenImageCache";
+import { startReconciliationWorker } from "../pons/execution/reconciliationWorker";
+import { createReceiptReader } from "../pons/execution/walletProbe";
+import { loadRobinhoodChainConfig } from "../pons/config";
 import { createTokensRouter } from "./routes/tokens";
 import { createWalletsRouter } from "./routes/wallets";
 import { logger } from "./lib/logger";
@@ -143,6 +146,29 @@ function main(): void {
   const stopMoonPayRecovery = startMoonPayRecovery(db);
   const stopImageWorker = startTokenImageWorker(db, (msg, meta) => logger.info(meta ?? {}, msg));
 
+  /**
+   * Phase 7E.1 §15 — a signed trade's final state cannot depend on the browser staying
+   * open, so receipts are reconciled on a loop here. Started only when real trading is
+   * enabled AND chain access is configured: with the flag off there is nothing that could
+   * have been submitted, and a misconfigured deployment should fail to start a worker
+   * rather than log an error every few seconds.
+   */
+  let stopReconciliation: () => void = () => {};
+  if (config.realTrading.enabled) {
+    try {
+      const reader = createReceiptReader({ config: loadRobinhoodChainConfig() });
+      const handle = startReconciliationWorker({
+        db,
+        reader,
+        logger: { info: (msg, fields) => logger.info(fields ?? {}, msg), warn: (msg, fields) => logger.warn(fields ?? {}, msg) },
+      });
+      stopReconciliation = () => handle.stop();
+      logger.info({}, "[api] execution reconciliation started");
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err) }, "[api] real trading is enabled but chain access is not configured; reconciliation is NOT running");
+    }
+  }
+
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
@@ -150,6 +176,7 @@ function main(): void {
     logger.info({ signal }, "[api] received signal, shutting down gracefully");
     stopMoonPayRecovery();
     stopImageWorker();
+    stopReconciliation();
     realtime
       .close()
       .catch((err) => logger.error({ err: err instanceof Error ? err.message : String(err) }, "[api] realtime shutdown error"))
