@@ -131,9 +131,9 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
   // Stay behind the confirmation lag: the live listener owns the unconfirmed tip.
   const target = head.data - BigInt(deps.config.confirmationLagBlocks);
 
-  const fromBlock = existing && existing.status !== "FAILED" ? existing.cursor + 1n : token.sourceHeight;
-  if (fromBlock > target) {
-    return complete(address, token.sourceHeight, target, target, existing?.tradesWritten ?? 0, existing?.logsScanned ?? 0, 0, startedAt, now, token.graduated);
+  const fromBlock = existing ? existing.cursor + 1n : token.sourceHeight;
+  if (fromBlock > target && (!token.graduated || (existing?.poolCursor != null && existing.poolCursor >= target))) {
+    return complete(address, token.sourceHeight, target, target, existing?.tradesWritten ?? 0, existing?.logsScanned ?? 0, 0, startedAt, now, token.graduated, token.graduated);
   }
 
   await deps.db.tokenTradeBackfill.upsert({
@@ -151,7 +151,6 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
   let tradesWritten = existing?.tradesWritten ?? 0;
   let logsScanned = existing?.logsScanned ?? 0;
   let requests = 0;
-  let earliestTimestamp: Date | null = null;
   let stoppedReason: string | null = null;
 
   while (cursor < target) {
@@ -164,6 +163,7 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
       break;
     }
 
+    await new Promise(resolve => setTimeout(resolve, 100));
     const windowFrom = cursor + 1n;
     const windowTo = windowFrom + range - 1n > target ? target : windowFrom + range - 1n;
     const logs = await deps.chainClient.getLogsByEvents({ events: PONS_V2_CURVE_ABI, fromBlock: windowFrom, toBlock: windowTo, address: token.curveAddress });
@@ -191,7 +191,6 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
       }
       const rows = trades.map((trade) => {
         const ts = timestamps.get(trade.provenance.sourceHeight) ?? null;
-        if (ts && (earliestTimestamp === null || ts < earliestTimestamp)) earliestTimestamp = ts;
         return {
           chain: trade.chain,
           venue: VENUE,
@@ -212,8 +211,7 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
           sourceTimestamp: ts,
         };
       });
-      await writeTradesChunked(deps.db, rows as never);
-      tradesWritten += trades.length;
+      tradesWritten += await writeTradesChunked(deps.db, rows as never);
     }
 
     cursor = windowTo;
@@ -240,10 +238,9 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
           { ...token, poolId: token.poolId, isToken0: token.isToken0 },
           target,
           range,
-          (ts) => {
-            if (earliestTimestamp === null || ts < earliestTimestamp) earliestTimestamp = ts;
-          },
-          tally
+          tally,
+          existing?.poolCursor ?? null,
+          { startedAt, deadlineMs, maxBlocks, now }
         )
       : false;
   // Totals must cover both venues, or a graduated token reports only its curve trades —
@@ -252,17 +249,7 @@ export async function backfillTokenTrades(deps: BackfillDeps, tokenAddress: stri
   logsScanned = tally.logs;
   requests = tally.requests;
 
-  /**
-   * Candles are rebuilt by the existing recompute engine rather than by a second
-   * aggregation path here: one invalidation from the earliest backfilled trade makes the
-   * worker recompute those buckets from the trades table, which now contains the history.
-   */
-  if (earliestTimestamp !== null) {
-    await deps.db.candleInvalidation.create({
-      data: { chain: ROBINHOOD_CHAIN, tokenAddress: address, invalidatedFromTimestamp: earliestTimestamp },
-    });
-  }
-
+  if (token.graduated && !poolCovered && stoppedReason === null) stoppedReason = "graduated pool coverage incomplete; resume from its stored cursor";
   const done = cursor >= target && stoppedReason === null;
   await markStopped(deps.db, address, cursor, tradesWritten, logsScanned, requests, done ? "COMPLETE" : "PARTIAL", null, stoppedReason);
   logger.info(
@@ -289,12 +276,20 @@ const WRITE_TIMEOUT_MS = 60_000;
 async function writeTradesChunked(
   db: PrismaClient,
   rows: readonly Parameters<PrismaClient["chainTrade"]["create"]>[0]["data"][]
-): Promise<void> {
+): Promise<number> {
+  let written = 0;
   for (let i = 0; i < rows.length; i += WRITE_CHUNK) {
     const slice = rows.slice(i, i + WRITE_CHUNK);
     await db.$transaction(
       async (tx) => {
+        const existing = await tx.chainTrade.findMany({ where: {
+          chain: ROBINHOOD_CHAIN, sourceTxHash: { in: slice.map(row => String(row.sourceTxHash)) },
+        }, select: { sourceTxHash: true, sourceIndex: true, canonicalStatus: true, normalizationVersion: true } });
+        const byKey = new Map(existing.map(row => [`${row.sourceTxHash}:${row.sourceIndex}`, row]));
+        const changedTimestamps: number[] = [];
         for (const data of slice) {
+          const prior = byKey.get(`${data.sourceTxHash}:${data.sourceIndex}`);
+          if (prior?.canonicalStatus === "CANONICAL" && (!data.poolId || prior.normalizationVersion >= 2)) continue;
           await tx.chainTrade.upsert({
             where: {
               chain_sourceTxHash_sourceIndex: {
@@ -304,14 +299,23 @@ async function writeTradesChunked(
               },
             },
             create: data,
-            // A live tick may have written this same trade already; leave it alone.
-            update: {},
+            // Repair only the versioned side semantics on replay; preserve provenance.
+            update: { side: data.side, ...(data.poolId ? { normalizationVersion: 2 } : {}),
+              canonicalStatus: "CANONICAL", orphanedAt: null, sourceHash: data.sourceHash,
+              sourceHeight: data.sourceHeight, sourceTimestamp: data.sourceTimestamp },
           });
+          written++;
+          if (prior?.canonicalStatus !== "CANONICAL" && data.sourceTimestamp instanceof Date) changedTimestamps.push(data.sourceTimestamp.getTime());
         }
+        if (changedTimestamps.length) await tx.candleInvalidation.create({ data: {
+          chain: ROBINHOOD_CHAIN, tokenAddress: String(slice[0].tokenAddress),
+          invalidatedFromTimestamp: new Date(Math.min(...changedTimestamps)),
+        } });
       },
       { timeout: WRITE_TIMEOUT_MS }
     );
   }
+  return written;
 }
 
 /**
@@ -326,9 +330,10 @@ async function backfillPoolSwaps(
   token: { tokenAddress: string; quoteAddress: string; poolId: string; isToken0: boolean; graduationSourceHeight: bigint | null; sourceHeight: bigint },
   target: bigint,
   maxRange: bigint,
-  noteTimestamp: (ts: Date) => void,
   /** Counters are shared with the curve leg so the reported totals cover both venues. */
-  tally: { trades: number; logs: number; requests: number }
+  tally: { trades: number; logs: number; requests: number },
+  poolCursor: bigint | null,
+  budget: { startedAt: number; deadlineMs: number; maxBlocks: bigint; now: () => number }
 ): Promise<boolean> {
   const logger = deps.logger ?? noopLogger;
   if (!deps.v2FactoryAddress) {
@@ -349,10 +354,14 @@ async function backfillPoolSwaps(
 
   const swapEvent = getAbiItem({ abi: UNISWAP_V4_POOL_MANAGER_ABI, name: "Swap" });
   // The pool did not exist before graduation, so there is nothing to find below it.
-  let cursor = (token.graduationSourceHeight ?? token.sourceHeight) - 1n;
+  let cursor = poolCursor ?? (token.graduationSourceHeight ?? token.sourceHeight) - 1n;
+  const initialCursor = cursor;
   let range = maxRange;
 
   while (cursor < target) {
+    if (budget.now() - budget.startedAt >= budget.deadlineMs || cursor - initialCursor >= budget.maxBlocks) return false;
+    // Yield between bounded windows so on-demand history cannot monopolize live RPC.
+    await new Promise(resolve => setTimeout(resolve, 100));
     const from = cursor + 1n;
     const to = from + range - 1n > target ? target : from + range - 1n;
     const logs = await deps.chainClient.getLogs({ address: poolManager.data, event: swapEvent, args: { id: [token.poolId] }, fromBlock: from, toBlock: to });
@@ -376,7 +385,6 @@ async function backfillPoolSwaps(
       if (timestamps === null) return false;
       const rows = trades.map((trade) => {
         const ts = timestamps.get(trade.provenance.sourceHeight) ?? null;
-        if (ts) noteTimestamp(ts);
         return {
           chain: trade.chain,
           venue: trade.venue,
@@ -384,6 +392,7 @@ async function backfillPoolSwaps(
           poolAddress: null,
           poolId: token.poolId.toLowerCase(),
           side: trade.side,
+          normalizationVersion: 2,
           tokenAmount: trade.tokenAmount,
           quoteAmount: trade.quoteAmount,
           quoteAddress: trade.quoteAddress.toLowerCase(),
@@ -397,10 +406,13 @@ async function backfillPoolSwaps(
           sourceTimestamp: ts,
         };
       });
-      await writeTradesChunked(deps.db, rows as never);
-      tally.trades += trades.length;
+      tally.trades += await writeTradesChunked(deps.db, rows as never);
     }
     cursor = to;
+    await deps.db.tokenTradeBackfill.update({
+      where: { chain_tokenAddress: { chain: ROBINHOOD_CHAIN, tokenAddress: token.tokenAddress } },
+      data: { poolCursor: cursor, tradesWritten: tally.trades, logsScanned: tally.logs, requests: tally.requests },
+    });
   }
   return true;
 }
@@ -498,7 +510,8 @@ export type BackfillRunner = (tokenAddress: string) => Promise<BackfillResult>;
  */
 export function createBackfillRunner(db: PrismaClient): BackfillRunner {
   let deps: BackfillDeps | null = null;
-  return async (tokenAddress: string) => {
+  const inFlight = new Map<string, Promise<BackfillResult>>();
+  const run = async (tokenAddress: string) => {
     if (deps === null) {
       const { FailoverChainClient } = await import("../failoverChainClient");
       const { loadRobinhoodChainConfig, loadPonsV2Config } = await import("../config");
@@ -516,5 +529,15 @@ export function createBackfillRunner(db: PrismaClient): BackfillRunner {
       deps = { db, chainClient: new FailoverChainClient({ config }), config, v2FactoryAddress, logger: ponsComponentLogger("pons:backfill") };
     }
     return backfillTokenTrades(deps, tokenAddress);
+  };
+  return (tokenAddress: string) => {
+    const address = tokenAddress.toLowerCase();
+    const current = inFlight.get(address);
+    if (current) return current;
+    // One API process, at most two bounded history runs and no waiting queue.
+    if (inFlight.size >= 2) return Promise.resolve(fail(address, "History service is busy; retry shortly.", Date.now(), Date.now));
+    const pending = run(address).finally(() => inFlight.delete(address));
+    inFlight.set(address, pending);
+    return pending;
   };
 }

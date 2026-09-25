@@ -2,7 +2,7 @@ import { createServer, Server as HttpServer } from "node:http";
 import { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";
-import { attachRealtimeServer, REALTIME_PATH, RealtimeServerHandle } from "../realtime/websocketServer";
+import { attachRealtimeServer, REALTIME_PATH, PUBLIC_MARKET_PATH, RealtimeServerHandle } from "../realtime/websocketServer";
 import { InMemoryEventBus } from "../realtime/eventBus";
 import { MemoryTicketStore } from "../realtime/ticketStore";
 import { CorsConfig, RealtimeConfig } from "../config";
@@ -24,6 +24,7 @@ import { publishJobEvent } from "../realtime/eventPublisher";
 
 function fakeConfig(overrides: { realtime?: Partial<RealtimeConfig>; cors?: Partial<CorsConfig> } = {}) {
   return {
+    publicReads: true,
     cors: {
       allowedOrigins: new Set<string>(["https://app.onlypump.me"]),
       devOrigins: new Set<string>(["http://localhost:5173"]),
@@ -45,6 +46,8 @@ function fakeConfig(overrides: { realtime?: Partial<RealtimeConfig>; cors?: Part
 
 function fakeDb(ownedJobKeys: Set<string>) {
   return {
+    candleWatch: { upsert: vi.fn(async () => ({})) },
+    discoveredToken: { findUnique: vi.fn(async () => ({ canonicalStatus: "CANONICAL" })) },
     userScanRequest: {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       findUnique: vi.fn(async ({ where }: any) => (ownedJobKeys.has(where.userId_jobKey.jobKey) ? { id: "x" } : null)),
@@ -342,4 +345,39 @@ describe("authenticated WebSocket server (phase7b2.txt §4)", () => {
     await handle.close();
     await closed;
   });
+  it("public market sockets have no user identity and cannot subscribe to private jobs", async () => {
+    await start();
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${PUBLIC_MARKET_PATH}`);
+    const messages = new MessageQueue(ws);
+    expect(await waitForOpenOrFail(ws)).toBe("open");
+    expect(await messages.next()).toMatchObject({ data: { access: "public-market" } });
+    ws.send(JSON.stringify({ type: "subscribe", jobKey: "secret-job" }));
+    expect(await messages.next()).toMatchObject({ code: "AUTH_REQUIRED" });
+    ws.close();
+  });
+
+  it("validates public chain/address/resolution and enforces limits even for simultaneous subscriptions", async () => {
+    await start(fakeConfig({ realtime: { maxSubscriptionsPerConnection: 1 } }));
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${PUBLIC_MARKET_PATH}`);
+    const messages = new MessageQueue(ws);
+    await waitForOpenOrFail(ws); await messages.next();
+    const base = { type: "subscribeCandles", chain: "robinhood", tokenAddress: "0x" + "a".repeat(40), resolution: "1s" };
+    for (const bad of [{ chain: "other" }, { tokenAddress: "0xabc" }, { resolution: "2s" }]) {
+      ws.send(JSON.stringify({ ...base, ...bad }));
+      expect(await messages.next()).toMatchObject({ code: "INVALID_MESSAGE" });
+    }
+    ws.send(JSON.stringify(base));
+    ws.send(JSON.stringify({ ...base, resolution: "5s" }));
+    expect(await messages.next()).toMatchObject({ type: "candles.subscribed", push: "unavailable" });
+    expect(await messages.next()).toMatchObject({ code: "SUBSCRIPTION_LIMIT" });
+    ws.close();
+  });
+
+  it("disables public upgrades when public REST reads are disabled", async () => {
+    const config = fakeConfig(); config.publicReads = false;
+    await start(config);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${PUBLIC_MARKET_PATH}`);
+    expect(await waitForOpenOrFail(ws)).toBe("failed");
+  });
+
 });

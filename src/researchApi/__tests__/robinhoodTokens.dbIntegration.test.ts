@@ -100,6 +100,24 @@ describe.skipIf(!RUN_DB_TESTS)("GET /api/v1/tokens/robinhood — real Postgres +
     expect(found.graduated).toBe(false);
   });
 
+  it("does not advertise a graduated history as complete without its pool checkpoint", async () => {
+    await prisma.discoveredToken.update({where:{chain_tokenAddress:{chain:CHAIN,tokenAddress:TOKEN_ADDRESS}},data:{graduated:true}});
+    await prisma.tokenTradeBackfill.create({data:{chain:CHAIN,tokenAddress:TOKEN_ADDRESS,status:"COMPLETE",fromBlock:1n,toBlock:10n,cursor:10n}});
+    try {
+      const app = buildApp(prisma);
+      const incomplete = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN_ADDRESS}/history`);
+      expect(incomplete.body.status).toBe("PARTIAL");
+      expect(incomplete.body.uncoveredVenues).toEqual(["UNISWAP_V4_POOL"]);
+      await prisma.tokenTradeBackfill.update({where:{chain_tokenAddress:{chain:CHAIN,tokenAddress:TOKEN_ADDRESS}},data:{poolCursor:10n}});
+      const complete = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN_ADDRESS}/history`);
+      expect(complete.body.status).toBe("COMPLETE");
+      expect(complete.body.coveredVenues).toEqual(["PONS_V2_BONDING_CURVE","UNISWAP_V4_POOL"]);
+    } finally {
+      await prisma.tokenTradeBackfill.deleteMany({where:{chain:CHAIN,tokenAddress:TOKEN_ADDRESS}});
+      await prisma.discoveredToken.update({where:{chain_tokenAddress:{chain:CHAIN,tokenAddress:TOKEN_ADDRESS}},data:{graduated:false}});
+    }
+  });
+
   it("returns the real token detail with its real trade via a real HTTP GET", async () => {
     const app = buildApp(prisma);
     const res = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN_ADDRESS}`);
@@ -353,7 +371,7 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bon
   const snap = (tokenAddress: string, over: Record<string, unknown>) =>
     prisma.tokenMarketSnapshot.create({
       data: {
-        chain: CHAIN, tokenAddress, status: "OK", venue: "PONS_V2_BONDING_CURVE", blockNumber: 63_000_000n, blockTimestamp: new Date("2026-09-15T14:00:00Z"),
+        chain: CHAIN, tokenAddress, status: "OK", venue: "PONS_V2_BONDING_CURVE", blockNumber: 63_000_000n, blockTimestamp: new Date(), trendingComputedAt: new Date(),
         quoteAddress: "0x0000000000000000000000000000000000000000", quoteDecimals: 18, tokenDecimals: 18, totalSupply: "1000000000000000000000000000",
         priceQuoteX36: "1811025900000000000000000000", marketCapQuote: "1811025900000000000", liquidityQuote: "64286899831547514", usdRateSource: "chainlink:ETH / USD",
         ...over,
@@ -371,8 +389,8 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bon
     await token(C, 3, true);
     await token(D, 4);
     await snap(A, { bondingProgressBps: 8000, marketCapUsd: "1000", liquidityUsd: "300", priceUsd: "0.000001", marketCapChange1hUsd: "-5", marketCapChange1hPct: "-0.5" });
-    await snap(B, { bondingProgressBps: 2000, marketCapUsd: "90000", liquidityUsd: "50", priceUsd: "0.00009", marketCapChange1hUsd: "40000", marketCapChange1hPct: "80", volume1hUsd: "6000", volumeSurge: "30", trades1h: 12, traders1h: 12, trendingScore: "180000" });
-    await snap(C, { venue: "UNISWAP_V4_POOL", graduated: true, bondingProgressBps: 10000, marketCapUsd: "5000", liquidityUsd: "9000", priceUsd: "0.000005", marketCapChange1hUsd: "10", marketCapChange1hPct: "0.2", volume1hUsd: "900", volumeSurge: "2", trades1h: 30, traders1h: 9, trendingScore: "1800" });
+    await snap(B, { bondingProgressBps: 2000, marketCapUsd: "90000", liquidityUsd: "50", priceUsd: "0.00009", marketCapChange1hUsd: "40000", marketCapChange1hPct: "80", volume5mUsd: "600", buys1h: 8, sells1h: 4, volume1hUsd: "6000", volumeSurge: "30", trades1h: 12, traders1h: 12, trendingScore: "180000" });
+    await snap(C, { venue: "UNISWAP_V4_POOL", graduated: true, bondingProgressBps: 10000, marketCapUsd: "5000", liquidityUsd: "9000", priceUsd: "0.000005", marketCapChange1hUsd: "10", marketCapChange1hPct: "0.2", volume5mUsd: "200", buys1h: 20, sells1h: 10, volume1hUsd: "900", volumeSurge: "2", trades1h: 30, traders1h: 9, trendingScore: "1800" });
   });
   afterAll(async () => {
     await cleanup();
@@ -399,10 +417,10 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bon
     expect(almost.body.total).toBe(2);
     expect(almost.body.trending).toBeUndefined();
     const trending = await list("lifecycle=trending");
-    expect(addrs(trending)).toEqual([B, C]);
+    expect(addrs(trending)).toEqual([C]); // B has only $50 liquidity and is ineligible.
     expect(trending.body.trending).toMatchObject({ basis: "TRADE_VOLUME" });
     const b = trending.body.tokens[0].market;
-    expect(b).toMatchObject({ volume1hUsd: "6000", volumeSurge: "30", trades1h: 12, traders1h: 12, trendingScore: "180000" });
+    expect(b).toMatchObject({ volume1hUsd: "900", volumeSurge: "2", trades1h: 30, traders1h: 9, trendingScore: "1800" });
     expect(addrs(await list("sort=volume1h"))).toEqual([B, C, D, A]); // no volume: newest first
   });
 
@@ -418,4 +436,45 @@ describe.skipIf(!RUN_DB_TESTS)("Phase 7D.4 — live market snapshots, Almost bon
     expect(addrs(await list(`limit=2&cursor=${encodeURIComponent(newest.body.nextCursor)}`))).toEqual([B, A]);
     expect((await list("sort=marketCap&cursor=bogus")).status).toBe(400);
   });
+  it("filters all numeric bounds before sorting and paginating, with a filtered total", async () => {
+    const filtered = await list("fdvMin=5000&fdvMax=100000&liquidityMin=1000&liquidityMax=10000&volume5mMin=100&volume1hMin=800&txns1hMin=25&buys1hMin=10&sells1hMin=5&traders1hMin=5&sort=marketCap&limit=1");
+    expect(filtered.status).toBe(200);
+    expect(addrs(filtered)).toEqual([C]);
+    expect(filtered.body.total).toBe(1);
+    const first = await list("fdvMax=5000&sort=marketCap&limit=1");
+    expect(addrs(first)).toEqual([C]);
+    expect(first.body.total).toBe(2);
+    expect(addrs(await list(`fdvMax=5000&sort=marketCap&limit=1&cursor=${first.body.nextCursor}`))).toEqual([A]);
+  });
+
+  it("excludes unavailable values even for a zero minimum", async () => {
+    expect(addrs(await list("fdvMin=0&sort=marketCap"))).toEqual([B,C,A]);
+    expect(addrs(await list("volume1hMin=0&sort=volume1h"))).toEqual([B,C]);
+  });
+
+  it("rejects inverted, negative, nonfinite and fractional-count filters", async () => {
+    for (const query of ["fdvMin=10&fdvMax=9", "liquidityMin=2&liquidityMax=1", "fdvMin=-1", "volume1hMin=NaN", "txns1hMin=1.5", "fdvMax=1e30"]) {
+      expect((await list(query)).status, query).toBe(400);
+    }
+  });
+
+  it("does not qualify stale market or activity values for filters or Trending", async () => {
+    await prisma.tokenMarketSnapshot.update({where:{chain_tokenAddress:{chain:CHAIN,tokenAddress:C}},data:{blockTimestamp:new Date(0),trendingComputedAt:new Date(0)}});
+    try {
+      expect(addrs(await list("liquidityMin=1000"))).toEqual([]);
+      expect(addrs(await list("txns1hMin=20"))).toEqual([]);
+      expect(addrs(await list("lifecycle=trending"))).toEqual([]);
+    } finally {
+      await prisma.tokenMarketSnapshot.update({where:{chain_tokenAddress:{chain:CHAIN,tokenAddress:C}},data:{blockTimestamp:new Date(),trendingComputedAt:new Date()}});
+    }
+  });
+
+  it("keeps rows sharing a discovery timestamp across cursor pages", async () => {
+    const timestamp = new Date("2026-09-15T00:03:00Z");
+    await prisma.discoveredToken.update({where:{chain_tokenAddress:{chain:CHAIN,tokenAddress:D}},data:{observedAt:timestamp}});
+    const first = await list("limit=1");
+    expect(addrs(first)).toEqual([D]);
+    expect(addrs(await list(`limit=1&cursor=${encodeURIComponent(first.body.nextCursor)}`))).toEqual([C]);
+  });
+
 });

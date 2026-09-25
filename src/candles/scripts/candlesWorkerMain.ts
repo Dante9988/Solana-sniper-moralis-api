@@ -27,6 +27,7 @@
  * (phase7b5b.txt §12) — only this worker does, and only for decimals.
  */
 
+import { listenForTradeCommits } from "../tradeWakeup";
 import { PrismaClient } from "@prisma/client";
 import { loadRobinhoodChainConfig } from "../../pons/config";
 import { FailoverChainClient } from "../../pons/failoverChainClient";
@@ -105,9 +106,9 @@ async function main(): Promise<void> {
    * The fleet tick is fair and slow: ~100 tokens a pass, 70–120s with first-time backfills in
    * the queue. A token open in someone's terminal cannot wait for its turn in that queue, so
    * this loop does forward progress for just the handful of tokens the API says are being
-   * watched right now. It is small by construction — the watched set is browsers, not the
-   * 137k-token universe — and it skips invalidation and finalisation, which are fleet-wide
-   * costs and not live news (docs/phase-7d6/root-cause.md).
+   * watched right now. It recovers at most one watched token's invalidation per
+   * pass, so a recent backfill cannot block its live tail behind fleet work.
+   * Fleet-wide finalisation stays in the slower reconciliation loop.
    */
   const watchedTick = async () => {
     const since = new Date(Date.now() - WATCH_FRESHNESS_MS);
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
       chain: ROBINHOOD_CHAIN,
       venue: VENUE,
       usdRateProvider,
-      maxInvalidationTokensPerTick: 0,
+      maxInvalidationTokensPerTick: 1,
       maxForwardTokensPerTick: MAX_WATCHED_TOKENS_PER_TICK,
       tradePageCap: workerConfig.tradePageCap,
       logger,
@@ -154,27 +155,30 @@ async function main(): Promise<void> {
     if (!stopping) setTimeout(() => void loop(), workerConfig.pollIntervalMs);
   };
 
-  // Deliberately its own timer rather than a step inside `loop`: the whole point is not to be
-  // blocked by the fleet tick's duration. Overlap is prevented by the in-flight guard, not by
-  // serialising the two loops together.
-  let watchedInFlight = false;
-  const watchedLoop = async () => {
+  // Notifications arriving during a pass coalesce into one follow-up. No
+  // parallel recomputes or unbounded event queue; a 2s sweep repairs missed hints.
+  let watchedPromise: Promise<void> = Promise.resolve();
+  let watchedRunning = false;
+  let watchedPending = false;
+  let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+  const wake = () => {
     if (stopping) return;
-    if (!watchedInFlight) {
-      watchedInFlight = true;
-      try {
-        await watchedTick();
-      } catch (err) {
-        logger.warn(`watched tick failed: ${err instanceof Error ? err.message : String(err)}`);
-      } finally {
-        watchedInFlight = false;
-      }
-    }
-    if (!stopping) setTimeout(() => void watchedLoop(), WATCHED_POLL_INTERVAL_MS);
+    watchedPending = true;
+    if (watchedRunning || wakeTimer) return;
+    wakeTimer = setTimeout(() => {
+      wakeTimer = null;
+      watchedPending = false;
+      watchedRunning = true;
+      watchedPromise = watchedTick().catch(err => logger.warn(`watched tick failed: ${err instanceof Error ? err.message : String(err)}`))
+        .finally(() => { watchedRunning = false; if (watchedPending) wake(); });
+    }, 100);
   };
-
+  const reconciliationTimer = setInterval(wake, WATCHED_POLL_INTERVAL_MS);
+  const stopWakeup = process.env.DATABASE_URL
+    ? listenForTradeCommits(process.env.DATABASE_URL, wake, message => logger.warn(message))
+    : async () => undefined;
   void loop();
-  void watchedLoop();
+  wake();
   logger.info("candles:worker started");
 
   let shuttingDown = false;
@@ -183,7 +187,10 @@ async function main(): Promise<void> {
     shuttingDown = true;
     logger.info(`received ${signal}, stopping`);
     stopping = true;
-    await currentTick;
+    clearInterval(reconciliationTimer);
+    if (wakeTimer) clearTimeout(wakeTimer);
+    await stopWakeup();
+    await Promise.all([currentTick, watchedPromise]);
     await eventBus.close().catch(() => undefined);
     await db.$disconnect();
     process.exit(0);

@@ -25,8 +25,8 @@ import type { ChainReader } from "../pons/chainClient";
 import { loadCandleTradeInputs } from "../pons/candleFeed";
 import type { QuoteUsdRateProvider } from "./usdPricing";
 import { aggregateTrades } from "./aggregate";
-import { deleteCandlesFrom, persistCandleBuckets, PersistedCandleChange } from "./persistCandles";
-import { COARSEST_RESOLUTION_SECONDS, CANDLE_RESOLUTIONS } from "./resolutions";
+import { persistCandleBuckets, PersistedCandleChange } from "./persistCandles";
+import { COARSEST_RESOLUTION_SECONDS, CANDLE_RESOLUTIONS, resolutionIdToDb } from "./resolutions";
 import type { FinalityInputs } from "./finality";
 
 export interface RecomputeParams {
@@ -49,6 +49,7 @@ export type RecomputeResult =
       bucketsRecomputed: number;
       tradesProcessed: number;
       truncated: boolean;
+      resumeFromTimestamp: Date | null;
       changes: PersistedCandleChange[];
       /** The (sourceHeight, sourceIndex) of the last trade actually processed, if any — the caller advances CandleAggregationCheckpoint to this on the ordinary forward path. */
       lastProcessed: { sourceHeight: bigint; sourceIndex: number } | null;
@@ -64,7 +65,7 @@ export async function recomputeCandlesFromTimestamp(params: RecomputeParams): Pr
   const alignedStartSeconds = alignToCoarsestBucket(params.fromTimestamp);
   const alignedStart = new Date(alignedStartSeconds * 1000);
 
-  const feed = await loadCandleTradeInputs({
+  let feed = await loadCandleTradeInputs({
     db: params.db,
     chainClient: params.chainClient,
     chain: params.chain,
@@ -79,14 +80,21 @@ export async function recomputeCandlesFromTimestamp(params: RecomputeParams): Pr
     return { status: "DECIMALS_UNAVAILABLE", reason: feed.reason };
   }
 
-  // Clean slate for the whole aligned window, then reinsert only buckets
-  // still supported by canonical trades — a bucket that lost every trade
-  // to orphaning is genuinely removed (§5's "no-trade interval = no
-  // candle" invariant applies to recompute too), never left stale.
-  await deleteCandlesFrom(params.db, params.chain, params.tokenAddress, alignedStartSeconds);
-
-  if (feed.trades.length === 0) {
-    return { status: "OK", bucketsRecomputed: 0, tradesProcessed: 0, truncated: feed.truncated, changes: [], lastProcessed: null };
+  // A page ending halfway through an hour cannot produce exact H1 OHLCV or
+  // advance past that hour on the next pass. Complete its final hour, with a
+  // hard memory ceiling; never persist partial buckets when that ceiling is hit.
+  let coveredUntil: Date | null = null;
+  if (feed.truncated) {
+    const last = feed.trades[feed.trades.length - 1];
+    coveredUntil = new Date((alignToCoarsestBucket(last.sourceTimestamp) + COARSEST_RESOLUTION_SECONDS) * 1000);
+    feed = await loadCandleTradeInputs({
+      db: params.db, chainClient: params.chainClient, chain: params.chain,
+      tokenAddress: params.tokenAddress, quoteAddress: params.quoteAddress,
+      fromTimestamp: alignedStart, toTimestamp: coveredUntil,
+      cap: Math.max(params.cap, 100_000), usdRateProvider: params.usdRateProvider,
+    });
+    if (feed.status === "DECIMALS_UNAVAILABLE") return { status: feed.status, reason: feed.reason };
+    if (feed.truncated) throw new Error("Candle recompute exceeds 100,000-trade window budget; existing candles and checkpoint retained");
   }
 
   const buckets = aggregateTrades(feed.trades, CANDLE_RESOLUTIONS);
@@ -100,6 +108,18 @@ export async function recomputeCandlesFromTimestamp(params: RecomputeParams): Pr
     finality: params.finality,
   });
 
+  // Remove only unsupported buckets inside the fully covered window, after
+  // upserting valid ones. Unchanged rows retain identity, revision and updatedAt.
+  // Never erase the unprocessed tail when the history page was bounded.
+  for (const resolution of CANDLE_RESOLUTIONS) {
+    await params.db.marketCandle.deleteMany({ where: {
+      chain: params.chain, tokenAddress: params.tokenAddress,
+      resolution: resolutionIdToDb(resolution),
+      bucketStart: { gte: alignedStart, ...(coveredUntil ? { lt: coveredUntil } : {}),
+        notIn: (buckets.get(resolution) ?? []).map(b => new Date(b.bucketStart * 1000)) },
+    } });
+  }
+
   const last = feed.trades[feed.trades.length - 1];
   const totalBuckets = [...buckets.values()].reduce((sum, arr) => sum + arr.length, 0);
 
@@ -107,8 +127,9 @@ export async function recomputeCandlesFromTimestamp(params: RecomputeParams): Pr
     status: "OK",
     bucketsRecomputed: totalBuckets,
     tradesProcessed: feed.trades.length,
-    truncated: feed.truncated,
+    truncated: coveredUntil !== null,
+    resumeFromTimestamp: coveredUntil,
     changes: persistResult.changes,
-    lastProcessed: { sourceHeight: last.sourceHeight, sourceIndex: last.sourceIndex },
+    lastProcessed: last ? { sourceHeight: last.sourceHeight, sourceIndex: last.sourceIndex } : null,
   };
 }

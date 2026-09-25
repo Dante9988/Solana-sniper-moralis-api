@@ -22,7 +22,7 @@ import { RobinhoodTokenListQuerySchema, DiscoveryChainsResponseSchema,
   MoonPayOrderSchema,
   MoonPayOrderListResponseSchema,
 } from "./robinhoodTokens";
-import { CandleHistoryResponseSchema } from "./candles";
+import { CandleHistoryResponseSchema, CandleQuerySchema } from "./candles";
 import { CalloutListResponseSchema } from "./callouts";
 import { PoolEvidenceResponseSchema } from "./poolEvidence";
 import {
@@ -252,7 +252,7 @@ registry.registerPath({
   summary: "Materialized OHLCV candle history for a Robinhood/Pons token (Phase 7B.5B) — reads PostgreSQL only, never Robinhood RPC inline.",
   tags: ["robinhood-chain", "candles"],
   security: [{ [bearerAuth.name]: [] }],
-  request: { params: RobinhoodTokenAddressParamSchema },
+  request: { params: RobinhoodTokenAddressParamSchema, query: CandleQuerySchema },
   responses: {
     200: { description: "Candle history", content: { "application/json": { schema: CandleHistoryResponseSchema } } },
     400: errorResponse,

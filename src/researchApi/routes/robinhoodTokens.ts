@@ -266,7 +266,13 @@ export function createRobinhoodTokensRouter(
         sendError(res, "BAD_REQUEST", "invalid query parameters", req.requestId);
         return;
       }
-      const { limit, cursor, lifecycle, q } = parsed.data;
+      const filters = parsed.data;
+      const { limit, cursor, lifecycle, q } = filters;
+      for (const [min, max] of [[filters.fdvMin, filters.fdvMax], [filters.liquidityMin, filters.liquidityMax]]) {
+        if (min !== undefined && max !== undefined && new Prisma.Decimal(min).gt(max)) {
+          return sendError(res, "BAD_REQUEST", "minimum must not exceed maximum", req.requestId);
+        }
+      }
       const sort = parsed.data.sort ?? (lifecycle === "almost-bonded" ? "progress" : lifecycle === "trending" ? "trending" : "new");
 
       // Phase 7D.4 — filters and orderings over the token and its live snapshot, in one query.
@@ -274,7 +280,25 @@ export function createRobinhoodTokensRouter(
       if (lifecycle === "graduated") conds.push(Prisma.sql`d.graduated = true`);
       if (lifecycle === "bonding") conds.push(Prisma.sql`d.graduated = false`);
       if (lifecycle === "almost-bonded") conds.push(Prisma.sql`d.graduated = false AND s.status = 'OK' AND s.graduated = false AND s."bondingProgressBps" > 0`);
-      if (lifecycle === "trending") conds.push(Prisma.sql`s."trendingScore" > 0`);
+      const marketFreshAfter = new Date(Date.now() - 5 * 60_000);
+      const activityFreshAfter = new Date(Date.now() - 2 * 60_000);
+      if (lifecycle === "trending" || sort === "trending") conds.push(Prisma.sql`
+        s."trendingScore" > 0 AND s.status = 'OK' AND s."liquidityUsd" >= 1000
+        AND s."blockTimestamp" >= ${marketFreshAfter} AND s."trendingComputedAt" >= ${activityFreshAfter}`);
+      const marketFiltered = [filters.fdvMin, filters.fdvMax, filters.liquidityMin, filters.liquidityMax].some(v => v !== undefined);
+      const activityFiltered = [filters.volume5mMin, filters.volume1hMin, filters.txns1hMin, filters.buys1hMin, filters.sells1hMin, filters.traders1hMin].some(v => v !== undefined);
+      if (marketFiltered) conds.push(Prisma.sql`s.status = 'OK' AND s."blockTimestamp" >= ${marketFreshAfter}`);
+      if (activityFiltered) conds.push(Prisma.sql`s."trendingComputedAt" >= ${activityFreshAfter}`);
+      const numericFilters: Array<[string | number | undefined, Prisma.Sql, "min" | "max"]> = [
+        [filters.fdvMin, Prisma.sql`s."marketCapUsd"`, "min"], [filters.fdvMax, Prisma.sql`s."marketCapUsd"`, "max"],
+        [filters.liquidityMin, Prisma.sql`s."liquidityUsd"`, "min"], [filters.liquidityMax, Prisma.sql`s."liquidityUsd"`, "max"],
+        [filters.volume5mMin, Prisma.sql`s."volume5mUsd"`, "min"], [filters.volume1hMin, Prisma.sql`s."volume1hUsd"`, "min"],
+        [filters.txns1hMin, Prisma.sql`s."trades1h"`, "min"], [filters.buys1hMin, Prisma.sql`s."buys1h"`, "min"],
+        [filters.sells1hMin, Prisma.sql`s."sells1h"`, "min"], [filters.traders1hMin, Prisma.sql`s."traders1h"`, "min"],
+      ];
+      for (const [value, column, bound] of numericFilters) if (value !== undefined) {
+        conds.push(bound === "min" ? Prisma.sql`${column} >= ${String(value)}::numeric` : Prisma.sql`${column} <= ${String(value)}::numeric`);
+      }
       if (q) {
         if (/^0x[0-9a-fA-F]{2,40}$/.test(q)) conds.push(Prisma.sql`d."tokenAddress" LIKE ${q.toLowerCase() + "%"}`);
         else conds.push(Prisma.sql`(d.name ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"} OR d.symbol ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"})`);
@@ -282,20 +306,21 @@ export function createRobinhoodTokensRouter(
       const where = Prisma.join(conds, " AND ");
       const order = {
         new: Prisma.sql`d."observedAt" DESC, d."tokenAddress" DESC`,
-        marketCap: Prisma.sql`s."marketCapUsd" DESC NULLS LAST, d."observedAt" DESC`,
-        liquidity: Prisma.sql`s."liquidityUsd" DESC NULLS LAST, d."observedAt" DESC`,
-        progress: Prisma.sql`s."bondingProgressBps" DESC NULLS LAST, s."quoteRaised" DESC NULLS LAST, d."observedAt" DESC`,
-        change1h: Prisma.sql`s."marketCapChange1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
-        volume1h: Prisma.sql`s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
-        trending: Prisma.sql`s."trendingScore" DESC NULLS LAST, s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC`,
+        marketCap: Prisma.sql`s."marketCapUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
+        liquidity: Prisma.sql`s."liquidityUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
+        progress: Prisma.sql`s."bondingProgressBps" DESC NULLS LAST, s."quoteRaised" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
+        change1h: Prisma.sql`s."marketCapChange1hUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
+        volume1h: Prisma.sql`s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
+        trending: Prisma.sql`s."trendingScore" DESC NULLS LAST, s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
       }[sort];
       // "new" pages by time so rows discovered meanwhile don't shift pages; other orders page by offset.
       let offset = 0;
       if (cursor) {
         if (sort === "new") {
-          const at = cursor.startsWith("t:") ? cursor.slice(2) : cursor;
-          if (Number.isNaN(Date.parse(at))) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
-          conds.push(Prisma.sql`d."observedAt" < ${new Date(at)}`);
+          const [at, address] = (cursor.startsWith("t:") ? cursor.slice(2) : cursor).split("|");
+          if (Number.isNaN(Date.parse(at)) || (address !== undefined && !/^0x[0-9a-f]{40}$/.test(address))) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
+          conds.push(address === undefined ? Prisma.sql`d."observedAt" < ${new Date(at)}`
+            : Prisma.sql`(d."observedAt", d."tokenAddress") < (${new Date(at)}, ${address})`);
         } else {
           const m = /^o:(\d{1,6})$/.exec(cursor);
           if (!m) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
@@ -313,7 +338,7 @@ export function createRobinhoodTokensRouter(
       const rows = ids.map((r) => byAddress.get(r.tokenAddress)).filter((r): r is DiscoveredToken => Boolean(r));
 
       const last = ids[ids.length - 1];
-      const nextCursor = ids.length < limit || !last ? null : sort === "new" ? `t:${last.observedAt.toISOString()}` : `o:${offset + ids.length}`;
+      const nextCursor = ids.length < limit || !last ? null : sort === "new" ? `t:${last.observedAt.toISOString()}|${last.tokenAddress}` : `o:${offset + ids.length}`;
       const [statuses, snapshots, trending] = await Promise.all([
         logoStatusesSafely(db, rows),
         snapshotsFor(db, rows.map((r) => r.tokenAddress)),
@@ -437,9 +462,17 @@ export function createRobinhoodTokensRouter(
         });
         return;
       }
+      const token = await db.discoveredToken.findUnique({
+        where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: row.tokenAddress } }, select: { graduated: true },
+      });
+      const curveCovered = row.cursor >= row.toBlock;
+      const poolCovered = row.poolCursor !== null && row.poolCursor >= row.toBlock;
+      const coveredVenues = [...(curveCovered ? ["PONS_V2_BONDING_CURVE"] : []), ...(token?.graduated && poolCovered ? ["UNISWAP_V4_POOL"] : [])];
+      const uncoveredVenues = [...(!curveCovered ? ["PONS_V2_BONDING_CURVE"] : []), ...(token?.graduated && !poolCovered ? ["UNISWAP_V4_POOL"] : [])];
+      const unverified = row.status === "COMPLETE" && uncoveredVenues.length > 0;
       res.json({
         tokenAddress: row.tokenAddress,
-        status: row.status,
+        status: unverified ? "PARTIAL" : row.status,
         fromBlock: row.fromBlock.toString(),
         toBlock: row.toBlock.toString(),
         cursor: row.cursor.toString(),
@@ -447,9 +480,9 @@ export function createRobinhoodTokensRouter(
         logsScanned: row.logsScanned,
         requests: row.requests,
         elapsedMs: null,
-        stoppedReason: row.stoppedReason ?? row.lastError,
-        coveredVenues: ["PONS_V2_BONDING_CURVE"],
-        uncoveredVenues: [],
+        stoppedReason: row.stoppedReason ?? row.lastError ?? (unverified ? "Historical pool coverage has no persisted checkpoint; resume to verify." : null),
+        coveredVenues,
+        uncoveredVenues,
       });
     } catch (err) {
       next(err);
@@ -463,7 +496,7 @@ export function createRobinhoodTokensRouter(
         sendError(res, "BAD_REQUEST", "invalid query parameters", req.requestId);
         return;
       }
-      const { resolution, from, to, limit, cursor } = parsed.data;
+      const { resolution, from, to, limit, cursor, direction } = parsed.data;
       if (from !== undefined && to !== undefined && from > to) {
         sendError(res, "BAD_REQUEST", "'from' must not be after 'to'", req.requestId);
         return;
@@ -494,7 +527,9 @@ export function createRobinhoodTokensRouter(
         .catch(() => undefined);
 
       const resolutionDb = resolutionIdToDb(resolution as CandleResolutionId);
-      const effectiveFrom = cursor !== undefined ? Math.max(cursor, from ?? 0) : from;
+      const effectiveFrom = cursor !== undefined && direction === "forward" ? Math.max(cursor, from ?? 0) : from;
+      const effectiveTo = cursor !== undefined && direction === "backward" ? Math.min(cursor, to ?? Infinity) : to;
+      const snapshotStartedAt = new Date().toISOString();
 
       const rows = await db.marketCandle.findMany({
         where: {
@@ -503,20 +538,23 @@ export function createRobinhoodTokensRouter(
           resolution: resolutionDb,
           bucketStart: {
             ...(effectiveFrom !== undefined ? { gte: new Date(effectiveFrom * 1000) } : {}),
-            ...(to !== undefined ? { lt: new Date(to * 1000) } : {}),
+            ...(effectiveTo !== undefined ? { lt: new Date(effectiveTo * 1000) } : {}),
           },
         },
         // Ascending by bucketStart — a documented, deterministic order
         // suitable for chart rendering and cursor-forward backfill merging
         // (phase7b5b.txt §12: "Return chart history in a documented order
         // suitable for deterministic merging/backfill").
-        orderBy: { bucketStart: "asc" },
+        orderBy: { bucketStart: direction === "backward" ? "desc" : "asc" },
         take: limit + 1,
       });
 
       const truncated = rows.length > limit;
-      const page = truncated ? rows.slice(0, limit) : rows;
-      const nextCursor = truncated ? Math.floor(page[page.length - 1].bucketStart.getTime() / 1000) + 1 : null;
+      const selected = truncated ? rows.slice(0, limit) : rows;
+      const page = direction === "backward" ? selected.reverse() : selected;
+      const nextCursor = truncated ? direction === "backward"
+        ? Math.floor(page[0].bucketStart.getTime() / 1000)
+        : Math.floor(page[page.length - 1].bucketStart.getTime() / 1000) + 1 : null;
 
       const [candleHealth, sourceHealth] = await Promise.all([
         computeCandleHealth(db, "robinhood", candleHealthThresholds),
@@ -544,7 +582,7 @@ export function createRobinhoodTokensRouter(
           updatedAt: c.updatedAt.toISOString(),
         })),
         nextCursor,
-        observedAt: new Date().toISOString(),
+        observedAt: snapshotStartedAt,
         freshness: toFreshness(candleHealth.status, sourceHealth.status),
         pricingBasis: PRICING_BASIS,
         uniqueTraderSemantics: UNIQUE_TRADER_SEMANTICS,

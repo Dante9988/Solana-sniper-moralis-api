@@ -49,6 +49,9 @@ export async function publishCandleEvent(bus: EventBus, input: CandleUpdatedEven
     quoteAddress: input.quoteAddress,
     resolution: input.resolution,
     sequence: input.candle.revision,
+    candleCommittedAt: input.candle.committedAt ?? input.candle.updatedAt,
+    firstSourceHeight: input.candle.candle.firstSourceHeight.toString(),
+    lastSourceHeight: input.candle.candle.lastSourceHeight.toString(),
     candle: {
       startTime: input.candle.bucketStart,
       open: input.candle.candle.open,
@@ -61,7 +64,7 @@ export async function publishCandleEvent(bus: EventBus, input: CandleUpdatedEven
       trades: input.candle.candle.tradeCount,
       uniqueTraders: input.candle.candle.uniqueTraders,
       status: input.candle.status === "FINAL" ? "final" : "provisional",
-      updatedAt: new Date().toISOString(),
+      updatedAt: input.candle.updatedAt ?? new Date().toISOString(),
     },
   };
   const event = createRealtimeEvent(RealtimeEventType.TOKEN_CANDLE_UPDATED, data);

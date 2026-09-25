@@ -183,8 +183,8 @@ describe("ponsV2Adapter.decodeTrade (Uniswap V4 PoolManager Swap)", () => {
     };
   }
 
-  it("decodes a buy (token flowed OUT of the pool to the trader — negative signed amount on the token's side)", () => {
-    const log = makeV4SwapLog({ amount0: -7_000_000_000_000_000_000n, amount1: 10_000_000_000_000_000n });
+  it("decodes a buy (positive token delta is output to the caller)", () => {
+    const log = makeV4SwapLog({ amount0: 7_000_000_000_000_000_000n, amount1: -10_000_000_000_000_000n });
     const raw: RawPonsV2Swap = { log, tokenAddress: TOKEN, quoteAddress: QUOTE, isToken0: true };
 
     const result = ponsV2Adapter.decodeTrade(raw);
@@ -203,8 +203,8 @@ describe("ponsV2Adapter.decodeTrade (Uniswap V4 PoolManager Swap)", () => {
     expect(result?.priceUsd).toBeNull();
   });
 
-  it("decodes a sell (token flowed IN to the pool — positive signed amount on the token's side)", () => {
-    const log = makeV4SwapLog({ amount0: 5_000_000_000_000_000_000n, amount1: -6_000_000_000_000_000n });
+  it("decodes a sell (negative token delta is input from the caller)", () => {
+    const log = makeV4SwapLog({ amount0: -5_000_000_000_000_000_000n, amount1: 6_000_000_000_000_000n });
     const raw: RawPonsV2Swap = { log, tokenAddress: TOKEN, quoteAddress: QUOTE, isToken0: true };
 
     const result = ponsV2Adapter.decodeTrade(raw);
@@ -222,5 +222,19 @@ describe("ponsV2Adapter.decodeTrade (Uniswap V4 PoolManager Swap)", () => {
     };
 
     expect(ponsV2Adapter.decodeTrade(raw)).toBeNull();
+  });
+});
+
+
+describe("V4 sign convention — real Robinhood receipt", () => {
+  it("positive token delta is a buy, matching the PoolManager's outgoing token transfers", () => {
+    const f = JSON.parse(fs.readFileSync(path.join(FIXTURES_DIR, "rbd_v4_buy_64164797.json"), "utf8"));
+    const log = f.receipt.logs.find((l: { logIndex: number }) => l.logIndex === 107);
+    const result = ponsV2Adapter.decodeTrade({
+      log: { ...log, blockNumber: BigInt(log.blockNumber) },
+      tokenAddress: f.token, quoteAddress: "0x0000000000000000000000000000000000000000",
+      isToken0: f.isToken0,
+    });
+    expect(result).toMatchObject({ side: f.expectedSide, tokenAmount: f.expectedTokenAmount, quoteAmount: f.expectedQuoteAmount });
   });
 });

@@ -1,5 +1,7 @@
 /**
- * Phase 7B.2 — the authenticated WebSocket endpoint, `/api/v1/realtime`
+ * Authenticated jobs/market data use `/api/v1/realtime`; public market-only
+ * subscriptions use `/api/v1/realtime/market` (Phase 7D.6.4).
+ * The original authenticated endpoint
  * (phase7b2.txt §4). Wired onto the same HTTP server Express listens on
  * (`noServer: true` + a manual `upgrade` handler), the same pattern already
  * used by the legacy trading API's WebSocket support (src/api/index.ts).
@@ -24,18 +26,16 @@ import { TicketStore } from "./ticketStore";
 import { CANDLE_RESOLUTIONS } from "../../candles/resolutions";
 
 export const REALTIME_PATH = "/api/v1/realtime";
+export const PUBLIC_MARKET_PATH = "/api/v1/realtime/market";
 
 const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("subscribe"), jobKey: z.string().min(1).max(512) }),
   z.object({ type: z.literal("unsubscribe"), jobKey: z.string().min(1).max(512) }),
-  // Phase 7B.5B §14 — candle subscriptions are public market data, not
-  // user-owned (unlike job subscriptions above): no userOwnsJob-style
-  // ownership check, only schema validation. The WebSocket connection
-  // itself is already authenticated (a ticket only issues to an
-  // authenticated REST caller — realtimeTickets.ts) — that is the same
-  // read-access boundary the REST candle route enforces, never weaker.
-  z.object({ type: z.literal("subscribeCandles"), chain: z.string().min(1).max(64), tokenAddress: z.string().min(1).max(128), resolution: z.enum(CANDLE_RESOLUTIONS as [string, ...string[]]) }),
-  z.object({ type: z.literal("unsubscribeCandles"), chain: z.string().min(1).max(64), tokenAddress: z.string().min(1).max(128), resolution: z.enum(CANDLE_RESOLUTIONS as [string, ...string[]]) }),
+  // Candles are public market data. Both transports validate chain, canonical
+  // token identity and resolution; private job subscriptions require a ticket
+  // and the existing user ownership check.
+  z.object({ type: z.literal("subscribeCandles"), chain: z.literal("robinhood"), tokenAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform(a => a.toLowerCase()), resolution: z.enum(CANDLE_RESOLUTIONS as [string, ...string[]]) }),
+  z.object({ type: z.literal("unsubscribeCandles"), chain: z.literal("robinhood"), tokenAddress: z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform(a => a.toLowerCase()), resolution: z.enum(CANDLE_RESOLUTIONS as [string, ...string[]]) }),
 ]);
 
 function isAllowedOrigin(origin: string | undefined, config: ApiConfig): boolean {
@@ -51,6 +51,9 @@ function isAllowedOrigin(origin: string | undefined, config: ApiConfig): boolean
 
 interface ConnectionState {
   userId: string;
+  publicMarket: boolean;
+  closed: boolean;
+  candleWatches: Map<string, { chain: string; tokenAddress: string }>;
   socket: WebSocket;
   isAlive: boolean;
   subscriptions: Map<string, () => Promise<void>>; // jobKey -> unsubscribe
@@ -70,19 +73,35 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
   const wss = new WebSocketServer({ noServer: true, maxPayload: config.realtime.maxMessageBytes });
   const connectionsByUser = new Map<string, Set<ConnectionState>>();
   const allConnections = new Set<ConnectionState>();
+  const maxPublicConnections = 500;
+  const maxPublicConnectionsPerIp = 8;
+  const refreshWatch = (chain: string, tokenAddress: string) => deps.db.candleWatch.upsert({
+    where: { chain_tokenAddress: { chain, tokenAddress } },
+    create: { chain, tokenAddress, lastSeenAt: new Date() }, update: { lastSeenAt: new Date() },
+  }).catch(() => undefined);
+  let lastWatchRefresh = 0;
 
   const heartbeatInterval = setInterval(() => {
+    const refresh = Date.now() - lastWatchRefresh >= 60_000;
+    if (refresh) lastWatchRefresh = Date.now();
+    const watches = new Map<string, { chain: string; tokenAddress: string }>();
     for (const conn of allConnections) {
       if (!conn.isAlive) {
         conn.socket.terminate(); // did not answer the previous ping — treat as dead/idle
         continue;
       }
+      if (refresh) for (const [key, watch] of conn.candleWatches) watches.set(key, watch);
+      const delivery = deps.eventBus.describeDelivery?.();
+      if (delivery && (!delivery.crossProcess || !delivery.connected)) conn.socket.close(1013, "market transport unavailable");
       conn.isAlive = false;
       conn.socket.ping();
     }
+    for (const watch of watches.values()) void refreshWatch(watch.chain, watch.tokenAddress);
   }, Math.max(Math.floor(config.realtime.idleTimeoutMs / 2), 5_000));
 
   async function cleanupConnection(conn: ConnectionState): Promise<void> {
+    conn.closed = true;
+    conn.candleWatches.clear();
     allConnections.delete(conn);
     const userConns = connectionsByUser.get(conn.userId);
     userConns?.delete(conn);
@@ -93,6 +112,7 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
 
   function sendJson(ws: WebSocket, payload: unknown): void {
     if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.bufferedAmount > 1_048_576) { ws.terminate(); return; }
     ws.send(JSON.stringify(payload));
   }
 
@@ -101,6 +121,7 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
   }
 
   async function handleSubscribe(conn: ConnectionState, jobKey: string): Promise<void> {
+    if (conn.publicMarket) { sendError(conn.socket, "AUTH_REQUIRED", "Private channels require an authenticated connection."); return; }
     if (conn.subscriptions.has(jobKey)) return; // idempotent
     if (conn.subscriptions.size >= config.realtime.maxSubscriptionsPerConnection) {
       sendError(conn.socket, "SUBSCRIPTION_LIMIT", "Too many active subscriptions on this connection.");
@@ -114,6 +135,7 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
       return;
     }
     const unsubscribe = await deps.eventBus.subscribe(jobChannel(jobKey), (event) => sendJson(conn.socket, event));
+    if (conn.closed) { await unsubscribe(); return; }
     conn.subscriptions.set(jobKey, unsubscribe);
   }
 
@@ -131,19 +153,19 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
       sendError(conn.socket, "SUBSCRIPTION_LIMIT", "Too many active subscriptions on this connection.");
       return;
     }
-    const unsubscribe = await deps.eventBus.subscribe(key, (event) => sendJson(conn.socket, event));
+    const token = await deps.db.discoveredToken.findUnique({
+      where: { chain_tokenAddress: { chain, tokenAddress } }, select: { canonicalStatus: true },
+    });
+    if (!token || token.canonicalStatus !== "CANONICAL") { sendError(conn.socket, "NOT_FOUND", "unknown token"); return; }
+    if (conn.closed) return;
+    const unsubscribe = await deps.eventBus.subscribe(key, event => {
+      // Public sockets can receive only this candle channel's public payloads.
+      if (event.type === "token.candle.updated") sendJson(conn.socket, event);
+    });
+    if (conn.closed) { await unsubscribe(); return; }
     conn.subscriptions.set(key, unsubscribe);
-
-    // Phase 7D.6 — tell the candle worker this token is being looked at, so it refreshes on the
-    // fast loop instead of queueing behind first-time backfills of the whole discovered
-    // universe. Best-effort on purpose: a failure here costs freshness, never the subscription.
-    void deps.db.candleWatch
-      .upsert({
-        where: { chain_tokenAddress: { chain, tokenAddress } },
-        create: { chain, tokenAddress, lastSeenAt: new Date() },
-        update: { lastSeenAt: new Date() },
-      })
-      .catch(() => undefined);
+    conn.candleWatches.set(key, { chain, tokenAddress });
+    void refreshWatch(chain, tokenAddress);
 
     // Phase 7D.6 — say whether this channel can actually deliver, instead of leaving the
     // client to infer "live" from a socket that merely opened. With an in-memory bus the
@@ -170,11 +192,12 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
     const unsubscribe = conn.subscriptions.get(key);
     if (!unsubscribe) return;
     conn.subscriptions.delete(key);
+    conn.candleWatches.delete(key);
     await unsubscribe();
   }
 
-  wss.on("connection", (socket: WebSocket, _req: IncomingMessage, userId: string) => {
-    const conn: ConnectionState = { userId, socket, isAlive: true, subscriptions: new Map() };
+  wss.on("connection", (socket: WebSocket, _req: IncomingMessage, userId: string, publicMarket = false) => {
+    const conn: ConnectionState = { userId, publicMarket, closed: false, candleWatches: new Map(), socket, isAlive: true, subscriptions: new Map() };
     allConnections.add(conn);
     let userConns = connectionsByUser.get(userId);
     if (!userConns) {
@@ -187,7 +210,13 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
       conn.isAlive = true;
     });
 
+    let queue = Promise.resolve();
+    let pending = 0;
+    let messageWindow = Date.now();
+    let messageCount = 0;
     socket.on("message", (raw: Buffer) => {
+      if (Date.now() - messageWindow > 60_000) { messageWindow = Date.now(); messageCount = 0; }
+      if (++messageCount > 120 || pending >= 20) { socket.close(1008, "message limit"); return; }
       let parsed: unknown;
       try {
         parsed = JSON.parse(raw.toString("utf8"));
@@ -200,15 +229,18 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
         sendError(socket, "INVALID_MESSAGE", "message failed schema validation");
         return;
       }
-      if (result.data.type === "subscribe") {
-        void handleSubscribe(conn, result.data.jobKey);
-      } else if (result.data.type === "unsubscribe") {
-        void handleUnsubscribe(conn, result.data.jobKey);
-      } else if (result.data.type === "subscribeCandles") {
-        void handleSubscribeCandles(conn, result.data.chain, result.data.tokenAddress, result.data.resolution);
-      } else {
-        void handleUnsubscribeCandles(conn, result.data.chain, result.data.tokenAddress, result.data.resolution);
-      }
+      pending++;
+      // Serialize async subscribe/unsubscribe so concurrent frames cannot bypass
+      // limits, resurrect closed subscriptions, or overwrite an unsubscribe handle.
+      queue = queue.then(async () => {
+        if (conn.closed) return;
+        const data = result.data;
+        if (data.type === "subscribe") await handleSubscribe(conn, data.jobKey);
+        else if (data.type === "unsubscribe") await handleUnsubscribe(conn, data.jobKey);
+        else if (data.type === "subscribeCandles") await handleSubscribeCandles(conn, data.chain, data.tokenAddress, data.resolution);
+        else await handleUnsubscribeCandles(conn, data.chain, data.tokenAddress, data.resolution);
+      }).catch(() => sendError(socket, "SUBSCRIPTION_FAILED", "Subscription unavailable; retry later."))
+        .finally(() => { pending--; });
     });
 
     socket.on("close", () => {
@@ -218,7 +250,7 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
       void cleanupConnection(conn);
     });
 
-    sendJson(socket, createRealtimeEvent("connection.ready", { userId }));
+    sendJson(socket, createRealtimeEvent("connection.ready", publicMarket ? { access: "public-market" } : { userId }));
   });
 
   httpServer.on("upgrade", (req, socket, head) => {
@@ -229,11 +261,23 @@ export function attachRealtimeServer(httpServer: HttpServer, config: ApiConfig, 
       socket.destroy();
       return;
     }
-    if (url.pathname !== REALTIME_PATH) return; // not ours — leave the socket alone for any other upgrade handler
+    if (url.pathname !== REALTIME_PATH && url.pathname !== PUBLIC_MARKET_PATH) return; // not ours — leave the socket alone for any other upgrade handler
 
     if (!isAllowedOrigin(req.headers.origin, config)) {
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
+      return;
+    }
+
+    if (url.pathname === PUBLIC_MARKET_PATH) {
+      if (!config.publicReads) { socket.write("HTTP/1.1 403 Forbidden\r\n\r\n"); socket.destroy(); return; }
+      // Use the transport peer, never an untrusted X-Forwarded-For header. A
+      // reverse proxy must enforce its own edge quotas in addition to these caps.
+      const key = `public:${req.socket.remoteAddress ?? "unknown"}`;
+      if (allConnections.size >= maxPublicConnections || (connectionsByUser.get(key)?.size ?? 0) >= maxPublicConnectionsPerIp) {
+        socket.write("HTTP/1.1 429 Too Many Requests\r\n\r\n"); socket.destroy(); return;
+      }
+      wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req, key, true));
       return;
     }
 

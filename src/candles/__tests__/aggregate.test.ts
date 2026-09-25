@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { RESOLUTION_SECONDS } from "../resolutions";
 import { aggregateTrades } from "../aggregate";
 import type { CandleTradeInput } from "../types";
 
@@ -154,4 +155,30 @@ describe("aggregateTrades", () => {
     expect(bucket.low).toBe("0.000000000000000001");
     expect(bucket.high).toBe("123456789.123456789012345678"); // truncated to 18 fractional digits, exact — not rounded/floated
   });
+  it.each(["1s", "5s", "15s", "1m", "5m", "15m"] as const)("exact OHLCV and open-bar revision at %s", resolution => {
+    const width = RESOLUTION_SECONDS[resolution] * 1000;
+    const prices = ["10", "12", "9", "11", "13"];
+    const fractions = [0.01, 0.12, 0.25, 0.48, 0.55];
+    const inputs = prices.map((price, i) => trade({
+      sourceHeight: BigInt(i + 1), sourceIndex: i,
+      sourceTimestamp: new Date(T0.getTime() + Math.floor(width * fractions[i])),
+      price, tokenAmount: String(i + 1), quoteAmount: String(Number(price) * (i + 1)),
+      side: i % 2 ? "sell" : "buy",
+    }));
+    expect(aggregateTrades(inputs.slice(0, 4), [resolution]).get(resolution)).toMatchObject([
+      { open: "10", high: "12", low: "9", close: "11", volumeToken: "10", volumeQuote: "105", tradeCount: 4 },
+    ]);
+    expect(aggregateTrades(inputs.reverse(), [resolution]).get(resolution)).toMatchObject([
+      { open: "10", high: "13", low: "9", close: "13", volumeToken: "15", volumeQuote: "170", tradeCount: 5 },
+    ]);
+  });
+
+  it("same-price decimal trades at a timestamp collision change volume but not OHLC", () => {
+    const inputs = [trade({ sourceHeight: 1n, sourceIndex: 1, sourceTimestamp: T0, price: "0.125", tokenAmount: "0.8", quoteAmount: "0.1" }),
+      trade({ sourceHeight: 1n, sourceIndex: 2, sourceTimestamp: T0, side: "sell", price: "0.125", tokenAmount: "2.4", quoteAmount: "0.3" })];
+    expect(aggregateTrades(inputs, ["1s"]).get("1s")).toMatchObject([
+      { open: "0.125", high: "0.125", low: "0.125", close: "0.125", volumeToken: "3.2", volumeQuote: "0.4", tradeCount: 2 },
+    ]);
+  });
+
 });

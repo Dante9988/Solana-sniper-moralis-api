@@ -861,6 +861,7 @@ model ChainTrade {
   /// of poolAddress; V1/other venues leave it null.
   poolId          String?
   side            String // buy | sell
+  normalizationVersion Int @default(1)
   tokenAmount     Decimal         @db.Decimal(78, 0)
   quoteAmount     Decimal         @db.Decimal(78, 0)
   quoteAddress    String
@@ -988,6 +989,8 @@ model TokenTradeBackfill {
   toBlock       BigInt
   /// Highest block written so far; a resumed run continues from here.
   cursor        BigInt
+  /// Separate confirmed cursor for the graduated pool; null means not yet covered.
+  poolCursor    BigInt?
   tradesWritten Int       @default(0)
   logsScanned   Int       @default(0)
   requests      Int       @default(0)

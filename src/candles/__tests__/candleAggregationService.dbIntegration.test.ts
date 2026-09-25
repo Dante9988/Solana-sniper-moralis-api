@@ -267,4 +267,75 @@ describe.skipIf(!RUN_DB_TESTS)("candleAggregationService — real Postgres integ
     const count = await prisma.marketCandle.count({ where: { chain: CHAIN, tokenAddress: TOKEN } });
     expect(count).toBe(0);
   });
+  it("revises a bucket without deleting its identity, and preserves revisions on replay", async () => {
+    await seedToken();
+    const fake = new CandleFakeChainReader(new FakeChainReader(1n));
+    await seedTrade({ sourceHeight: 1n, sourceIndex: 0, tokenAmount: "1000000000000000000", quoteAmount: "10000000000000000000", sourceTimestamp: BASE_TS });
+    await runCandleAggregationTick(newDeps(fake));
+    const first = await prisma.marketCandle.findFirstOrThrow({ where: { tokenAddress: TOKEN, resolution: "M1" } });
+    await seedTrade({ sourceHeight: 2n, sourceIndex: 0, tokenAmount: "2000000000000000000", quoteAmount: "26000000000000000000", sourceTimestamp: new Date(BASE_TS.getTime() + 55_000) });
+    await runCandleAggregationTick(newDeps(fake));
+    const revised = await prisma.marketCandle.findFirstOrThrow({ where: { tokenAddress: TOKEN, resolution: "M1" } });
+    expect(revised.id).toBe(first.id);
+    expect(revised.revision).toBe(2);
+    expect(revised.open.toFixed()).toBe("10");
+    expect(revised.close.toFixed()).toBe("13");
+    expect(revised.volumeToken.toFixed()).toBe("3");
+    expect(revised.volumeQuote.toFixed()).toBe("36");
+    await prisma.candleAggregationCheckpoint.deleteMany({ where: { tokenAddress: TOKEN } });
+    await runCandleAggregationTick(newDeps(fake));
+    const replay = await prisma.marketCandle.findFirstOrThrow({ where: { tokenAddress: TOKEN, resolution: "M1" } });
+    expect(replay.revision).toBe(2);
+    expect(replay.updatedAt).toEqual(revised.updatedAt);
+  });
+
+  it("finishes a dense hour across the page cap and advances to later hours without deleting them", async () => {
+    await seedToken();
+    const fake = new CandleFakeChainReader(new FakeChainReader(1n));
+    for (let i = 0; i < 7; i++) {
+      await seedTrade({ sourceHeight: BigInt(i + 1), sourceIndex: 0, tokenAmount: "1000000000000000000", quoteAmount: "2000000000000000000", sourceTimestamp: new Date(BASE_TS.getTime() + i * 1000) });
+    }
+    await seedTrade({ sourceHeight: 8n, sourceIndex: 0, tokenAmount: "1000000000000000000", quoteAmount: "3000000000000000000", sourceTimestamp: new Date(BASE_TS.getTime() + 3600_000) });
+    await runCandleAggregationTick(newDeps(fake, { tradePageCap: 3 }));
+    const hour = await prisma.marketCandle.findFirstOrThrow({ where: { tokenAddress: TOKEN, resolution: "H1" }, orderBy: { bucketStart: "asc" } });
+    expect(hour.tradeCount).toBe(7); // never publish an incomplete coarse bucket
+    await runCandleAggregationTick(newDeps(fake, { tradePageCap: 3 }));
+    const cp = await prisma.candleAggregationCheckpoint.findFirstOrThrow({ where: { tokenAddress: TOKEN } });
+    expect(cp.lastSourceHeight).toBe(8n);
+    expect(await prisma.marketCandle.count({ where: { tokenAddress: TOKEN, resolution: "H1" } })).toBe(2);
+  });
+
+  it("USD storage precision does not rewrite unchanged buckets on replay", async () => {
+    await seedToken();
+    const fake = new CandleFakeChainReader(new FakeChainReader(1n));
+    await seedTrade({ sourceHeight: 1n, sourceIndex: 0, tokenAmount: "1000000000000000000", quoteAmount: "1000000000000000000", sourceTimestamp: BASE_TS });
+    const deps = newDeps(fake, { usdRateProvider: { name: "test-exact", getHistoricalRate: async () => ({ status: "AVAILABLE", rate: { rateUsdPerQuote: "1.123456789123456789", observedAt: BASE_TS, source: "test" } }) } });
+    await runCandleAggregationTick(deps);
+    await prisma.candleAggregationCheckpoint.deleteMany({ where: { tokenAddress: TOKEN } });
+    const replay = await runCandleAggregationTick(deps);
+    expect(replay.candlesWritten).toBe(0);
+    const c = await prisma.marketCandle.findFirstOrThrow({ where: { tokenAddress: TOKEN } });
+    expect(c.volumeUsd!.toFixed()).toBe("1.12345679");
+    expect(c.revision).toBe(1);
+  });
+
+  it("recovers and publishes a watched token's invalidated tail without waiting for the fleet", async () => {
+    await seedToken();
+    const client = new CandleFakeChainReader(new FakeChainReader(1n));
+    client.decimalsByAddress.set(TOKEN, 18); client.decimalsByAddress.set(QUOTE, 18);
+    await seedTrade({ sourceHeight: 100n, sourceIndex: 0, tokenAmount: "1000000000000000000", quoteAmount: "1000000000000000000", sourceTimestamp: BASE_TS });
+    await runCandleAggregationTick(newDeps(client));
+    await seedTrade({ sourceHeight: 101n, sourceIndex: 0, tokenAmount: "1000000000000000000", quoteAmount: "2000000000000000000", sourceTimestamp: new Date(BASE_TS.getTime() + 10_000) });
+    await prisma.candleInvalidation.createMany({data:Array.from({length:16}, () => ({chain:CHAIN,tokenAddress:TOKEN,invalidatedFromTimestamp:BASE_TS}))});
+    const published: string[] = [];
+    const result = await runCandleAggregationTick(newDeps(client, { restrictToTokens:[TOKEN], maxInvalidationTokensPerTick:1,
+      onCandleUpdated: async event => { published.push(event.resolution); } }));
+    expect(result.invalidationsProcessed).toBe(1);
+    expect(await prisma.candleInvalidation.count({where:{chain:CHAIN,tokenAddress:TOKEN,processedAt:null}})).toBe(0);
+    expect(published).toContain("1m");
+    const candle = await prisma.marketCandle.findFirstOrThrow({where:{chain:CHAIN,tokenAddress:TOKEN,resolution:"M1"}});
+    expect(candle.tradeCount).toBe(2);
+    expect(candle.close.toFixed()).toBe("2");
+  });
+
 });

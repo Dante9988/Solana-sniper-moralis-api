@@ -179,6 +179,12 @@ describe.skipIf(!RUN_DB_TESTS)("GET /api/v1/tokens/robinhood/:tokenAddress/candl
     expect(secondPage.body.candles).toHaveLength(1);
     expect(secondPage.body.candles[0].startTime).toBeGreaterThan(firstPage.body.candles[0].startTime);
 
+    const latest = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN_ADDRESS}/candles?resolution=1h&limit=1&direction=backward`);
+    expect(latest.body.candles[0].startTime).toBe(secondPage.body.candles[0].startTime);
+    const older = await request(app).get(`/api/v1/tokens/robinhood/${TOKEN_ADDRESS}/candles?resolution=1h&limit=1&direction=backward&cursor=${latest.body.nextCursor}`);
+    expect(older.body.candles[0].startTime).toBe(firstPage.body.candles[0].startTime);
+    expect(older.body.nextCursor).toBeNull();
+
     await prisma.marketCandle.deleteMany({ where: { chain: CHAIN, tokenAddress: TOKEN_ADDRESS, bucketStart: new Date("2026-01-01T01:00:00.000Z") } });
   });
 

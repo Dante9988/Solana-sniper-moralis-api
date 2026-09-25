@@ -43,7 +43,7 @@ export interface CandleAggregationServiceDeps {
   /** Realtime optimization only (§14) — called only for genuine steady-state forward progress, never during bulk backfill/reorg recompute. */
   onCandleUpdated?: (event: { chain: string; tokenAddress: string; quoteAddress: string; resolution: CandleResolutionId; candle: PersistedCandleChange }) => Promise<void>;
   /**
-   * Phase 7D.6 — restrict this tick to these token addresses, and skip the invalidation pass.
+   * Phase 7D.6 — restrict this tick, including bounded invalidation recovery, to these token addresses.
    *
    * The fleet tick is fair but slow: it takes ~100 tokens at a time and, with first-time
    * backfills in the queue, a pass costs 70–120s. A token someone has open in the terminal must
@@ -72,6 +72,11 @@ export const TRADE_SOURCES_BY_VENUE: Record<string, readonly string[]> = {
   pons_v2: [TRADE_V2_CHECKPOINT_SOURCE, CURVE_TRADE_CHECKPOINT_SOURCE],
 };
 const DISCOVERY_SOURCES = [DISCOVERY_CHECKPOINT_SOURCE, DISCOVERY_V2_CHECKPOINT_SOURCE];
+
+// The worker is single-replica, but its fleet and watched loops run concurrently.
+// Claim before the first await and release after checkpoint/publish, not just writes.
+const busyTokens = new Set<string>();
+
 
 /**
  * Fails closed: finality is the *least* advanced confirmed time across every required stream, and
@@ -105,8 +110,9 @@ export async function loadFinality(db: PrismaClient, chain = "robinhood"): Promi
 }
 
 async function processInvalidations(deps: CandleAggregationServiceDeps, finality: FinalityInputs, errors: string[]): Promise<{ processed: number; bucketsRecomputed: number; candlesWritten: number }> {
+  if (deps.maxInvalidationTokensPerTick <= 0 || deps.restrictToTokens?.length === 0) return { processed: 0, bucketsRecomputed: 0, candlesWritten: 0 };
   const pending = await deps.db.candleInvalidation.findMany({
-    where: { chain: deps.chain, processedAt: null },
+    where: { chain: deps.chain, processedAt: null, ...(deps.restrictToTokens ? { tokenAddress: { in: [...deps.restrictToTokens] } } : {}) },
     orderBy: { createdAt: "asc" },
     take: deps.maxInvalidationTokensPerTick * 8, // several rows can share one token; cap tokens, not raw rows
   });
@@ -123,59 +129,91 @@ async function processInvalidations(deps: CandleAggregationServiceDeps, finality
     if (byToken.size >= deps.maxInvalidationTokensPerTick) break;
   }
 
+  // Coalesce the selected tokens' pending chunk invalidations in one bounded
+  // snapshot. Processing just eight rows repeatedly rebuilt the same long
+  // backfill while newer invalidations kept restarting it from the beginning.
+  const selectedTokens = [...byToken.keys()];
+  const coalesced = await deps.db.candleInvalidation.findMany({
+    where: { chain: deps.chain, processedAt: null, tokenAddress: { in: selectedTokens } },
+    select: { id: true, tokenAddress: true, invalidatedFromTimestamp: true },
+    orderBy: { createdAt: "asc" }, take: 5000,
+  });
+  byToken.clear();
+  for (const row of coalesced) {
+    const group = byToken.get(row.tokenAddress);
+    if (!group) byToken.set(row.tokenAddress, { minTimestamp: row.invalidatedFromTimestamp, ids: [row.id] });
+    else { group.ids.push(row.id); if (row.invalidatedFromTimestamp < group.minTimestamp) group.minTimestamp = row.invalidatedFromTimestamp; }
+  }
+
   let processed = 0;
   let bucketsRecomputed = 0;
   let candlesWritten = 0;
 
   for (const [tokenAddress, { minTimestamp, ids }] of byToken) {
-    const token = await deps.db.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: deps.chain, tokenAddress } }, select: { quoteAddress: true, venue: true } });
-    if (!token) {
-      deps.logger.warn("candle invalidation references an unknown token — leaving unprocessed", { tokenAddress });
-      continue;
-    }
+    const lockKey = `${deps.chain}:${tokenAddress}`;
+    if (busyTokens.has(lockKey)) continue;
+    busyTokens.add(lockKey);
+    try {
+      const token = await deps.db.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: deps.chain, tokenAddress } }, select: { quoteAddress: true, venue: true } });
+      if (!token) {
+        deps.logger.warn("candle invalidation references an unknown token — leaving unprocessed", { tokenAddress });
+        continue;
+      }
 
-    const result = await recomputeCandlesFromTimestamp({
-      db: deps.db,
-      chainClient: deps.chainClient,
-      chain: deps.chain,
-      venue: token.venue,
-      tokenAddress,
-      quoteAddress: token.quoteAddress,
-      fromTimestamp: minTimestamp,
-      usdRateProvider: deps.usdRateProvider,
-      finality,
-      cap: deps.tradePageCap,
-    });
-
-    if (result.status === "DECIMALS_UNAVAILABLE") {
-      errors.push(`invalidation recompute for ${tokenAddress}: ${result.reason}`);
-      continue; // leave CandleInvalidation rows unprocessed — retried next tick
-    }
-
-    if (result.lastProcessed) {
-      await deps.db.candleAggregationCheckpoint.upsert({
-        where: { chain_tokenAddress: { chain: deps.chain, tokenAddress } },
-        create: { chain: deps.chain, tokenAddress, lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
-        update: { lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
+      const result = await recomputeCandlesFromTimestamp({
+        db: deps.db,
+        chainClient: deps.chainClient,
+        chain: deps.chain,
+        venue: token.venue,
+        tokenAddress,
+        quoteAddress: token.quoteAddress,
+        fromTimestamp: minTimestamp,
+        usdRateProvider: deps.usdRateProvider,
+        finality,
+        cap: deps.tradePageCap,
       });
-    } else {
-      // Every canonical trade in the recomputed window is gone (fully
-      // orphaned, nothing replayed yet) — the old checkpoint may now
-      // reference orphaned history. Reset it so the next forward tick
-      // re-derives progress from whatever is genuinely canonical, rather
-      // than silently trusting a checkpoint a reorg has invalidated.
-      await deps.db.candleAggregationCheckpoint.deleteMany({ where: { chain: deps.chain, tokenAddress } });
-    }
 
-    if (result.truncated) {
-      deps.logger.warn("invalidation recompute window truncated by the bounded trade-page cap — will continue converging on later ticks", { tokenAddress, cap: deps.tradePageCap });
-    }
+      if (result.status === "DECIMALS_UNAVAILABLE") {
+        errors.push(`invalidation recompute for ${tokenAddress}: ${result.reason}`);
+        continue; // leave CandleInvalidation rows unprocessed — retried next tick
+      }
 
-    await deps.db.candleInvalidation.updateMany({ where: { id: { in: ids } }, data: { processedAt: new Date() } });
+      if (result.lastProcessed) {
+        await deps.db.candleAggregationCheckpoint.upsert({
+          where: { chain_tokenAddress: { chain: deps.chain, tokenAddress } },
+          create: { chain: deps.chain, tokenAddress, lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
+          update: { lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
+        });
+      } else {
+        // Every canonical trade in the recomputed window is gone (fully
+        // orphaned, nothing replayed yet) — the old checkpoint may now
+        // reference orphaned history. Reset it so the next forward tick
+        // re-derives progress from whatever is genuinely canonical, rather
+        // than silently trusting a checkpoint a reorg has invalidated.
+        await deps.db.candleAggregationCheckpoint.deleteMany({ where: { chain: deps.chain, tokenAddress } });
+      }
 
-    processed += 1;
-    bucketsRecomputed += result.bucketsRecomputed;
-    candlesWritten += result.changes.length;
+      if (result.truncated) {
+        deps.logger.warn("invalidation recompute window truncated by the bounded trade-page cap — will continue converging on later ticks", { tokenAddress, cap: deps.tradePageCap });
+      }
+
+      await deps.db.candleInvalidation.updateMany({ where: { id: { in: ids } }, data:
+        result.resumeFromTimestamp ? { invalidatedFromTimestamp: result.resumeFromTimestamp } : { processedAt: new Date() } });
+
+      // A watched token must receive the recovered tail immediately, even if
+      // the invalidation also advanced its forward checkpoint. Bound publication
+      // to one bucket per resolution; REST reconciles the historical window.
+      if (deps.restrictToTokens && deps.onCandleUpdated) {
+        const latest = new Map<string, PersistedCandleChange>();
+        for (const change of result.changes) {
+          if (!latest.has(change.resolution) || latest.get(change.resolution)!.bucketStart < change.bucketStart) latest.set(change.resolution, change);
+        }
+        for (const candle of latest.values()) await deps.onCandleUpdated({ chain: deps.chain, tokenAddress, quoteAddress: token.quoteAddress, resolution: candle.resolution as CandleResolutionId, candle });
+      }
+      processed += 1;
+      bucketsRecomputed += result.bucketsRecomputed;
+      candlesWritten += result.changes.length;
+    } finally { busyTokens.delete(lockKey); }
   }
 
   return { processed, bucketsRecomputed, candlesWritten };
@@ -190,7 +228,21 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
   if (deps.restrictToTokens?.length === 0) return { tokensProcessed: 0, bucketsRecomputed: 0, candlesWritten: 0 };
   const restricted = deps.restrictToTokens ? deps.restrictToTokens.map((a) => a.toLowerCase()) : null;
 
-  const tokens = await deps.db.$queryRaw<Array<{ tokenAddress: string; quoteAddress: string; venue: string }>>`
+  type Token = { tokenAddress: string; quoteAddress: string; venue: string };
+  const tokens = restricted ? await deps.db.$queryRaw<Token[]>`
+    SELECT d."tokenAddress", d."quoteAddress", d.venue
+    FROM "DiscoveredToken" d
+    JOIN LATERAL (
+      SELECT "sourceHeight", "sourceIndex" FROM "ChainTrade" t
+      WHERE t.chain = d.chain AND t."tokenAddress" = lower(d."tokenAddress")
+        AND t."canonicalStatus" = 'CANONICAL' AND t."sourceTimestamp" IS NOT NULL
+      ORDER BY "sourceHeight" DESC, "sourceIndex" DESC LIMIT 1
+    ) latest ON true
+    LEFT JOIN "CandleAggregationCheckpoint" c ON c.chain=d.chain AND c."tokenAddress"=d."tokenAddress"
+    WHERE d.chain=${deps.chain} AND d."tokenAddress"=ANY(${restricted}::text[])
+      AND d."canonicalStatus"='CANONICAL'
+      AND (c."tokenAddress" IS NULL OR (latest."sourceHeight", latest."sourceIndex") > (c."lastSourceHeight", c."lastSourceIndex"))
+    LIMIT ${deps.maxForwardTokensPerTick}` : await deps.db.$queryRaw<Token[]>`
     SELECT d."tokenAddress", d."quoteAddress", d.venue
     FROM (
       SELECT DISTINCT ON ("tokenAddress") "tokenAddress", "sourceHeight", "sourceIndex"
@@ -212,76 +264,80 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
   let candlesWritten = 0;
 
   for (const token of tokens) {
-    const checkpoint = await deps.db.candleAggregationCheckpoint.findUnique({ where: { chain_tokenAddress: { chain: deps.chain, tokenAddress: token.tokenAddress } } });
+    const lockKey = `${deps.chain}:${token.tokenAddress}`;
+    if (busyTokens.has(lockKey)) continue;
+    busyTokens.add(lockKey);
+    try {
+      // A late backfill/reorg must converge before ordinary forward progress.
+      if (await deps.db.candleInvalidation.findFirst({ where: { chain: deps.chain, tokenAddress: token.tokenAddress, processedAt: null } })) continue;
+      const checkpoint = await deps.db.candleAggregationCheckpoint.findUnique({ where: { chain_tokenAddress: { chain: deps.chain, tokenAddress: token.tokenAddress } } });
 
-    let fromTimestamp: Date;
-    const isFirstRun = !checkpoint;
-    if (checkpoint) {
-      const nextTrade = await deps.db.chainTrade.findFirst({
-        where: {
-          chain: deps.chain,
-          tokenAddress: token.tokenAddress,
-          canonicalStatus: "CANONICAL",
-          sourceTimestamp: { not: null },
-          OR: [{ sourceHeight: { gt: checkpoint.lastSourceHeight } }, { sourceHeight: checkpoint.lastSourceHeight, sourceIndex: { gt: checkpoint.lastSourceIndex } }],
-        },
-        orderBy: [{ sourceHeight: "asc" }, { sourceIndex: "asc" }],
-        select: { sourceTimestamp: true },
-      });
-      if (!nextTrade) continue; // steady state — nothing new for this token
-      fromTimestamp = nextTrade.sourceTimestamp as Date;
-    } else {
-      fromTimestamp = new Date(0); // first-ever run — doubles as historical backfill (§11), bounded/paginated by `cap`
-    }
-
-    const result = await recomputeCandlesFromTimestamp({
-      db: deps.db,
-      chainClient: deps.chainClient,
-      chain: deps.chain,
-      venue: token.venue,
-      tokenAddress: token.tokenAddress,
-      quoteAddress: token.quoteAddress,
-      fromTimestamp,
-      usdRateProvider: deps.usdRateProvider,
-      finality,
-      cap: deps.tradePageCap,
-    });
-
-    if (result.status === "DECIMALS_UNAVAILABLE") {
-      errors.push(`forward recompute for ${token.tokenAddress}: ${result.reason}`);
-      continue;
-    }
-
-    tokensProcessed += 1;
-    bucketsRecomputed += result.bucketsRecomputed;
-    candlesWritten += result.changes.length;
-
-    if (result.lastProcessed) {
-      await deps.db.candleAggregationCheckpoint.upsert({
-        where: { chain_tokenAddress: { chain: deps.chain, tokenAddress: token.tokenAddress } },
-        create: { chain: deps.chain, tokenAddress: token.tokenAddress, lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
-        update: { lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
-      });
-    }
-
-    if (result.truncated) {
-      deps.logger.warn("forward recompute window truncated by the bounded trade-page cap — will continue converging on later ticks", { tokenAddress: token.tokenAddress, cap: deps.tradePageCap });
-    }
-
-    // Realtime (§14) — steady-state forward progress only, never a
-    // first-time backfill (indistinguishable from bulk history) and never
-    // the invalidation path (handled separately, deliberately silent —
-    // reorg recompute of historical buckets is not "live" news).
-    if (!isFirstRun && deps.onCandleUpdated && result.changes.length > 0) {
-      const latestPerResolution = new Map<string, PersistedCandleChange>();
-      for (const change of result.changes) {
-        const current = latestPerResolution.get(change.resolution);
-        if (!current || change.bucketStart > current.bucketStart) latestPerResolution.set(change.resolution, change);
+      let fromTimestamp: Date;
+      const isFirstRun = !checkpoint;
+      if (checkpoint) {
+        const nextTrade = await deps.db.chainTrade.findFirst({
+          where: {
+            chain: deps.chain,
+            tokenAddress: token.tokenAddress,
+            canonicalStatus: "CANONICAL",
+            sourceTimestamp: { not: null },
+            OR: [{ sourceHeight: { gt: checkpoint.lastSourceHeight } }, { sourceHeight: checkpoint.lastSourceHeight, sourceIndex: { gt: checkpoint.lastSourceIndex } }],
+          },
+          orderBy: [{ sourceHeight: "asc" }, { sourceIndex: "asc" }],
+          select: { sourceTimestamp: true },
+        });
+        if (!nextTrade) continue; // steady state — nothing new for this token
+        fromTimestamp = nextTrade.sourceTimestamp as Date;
+      } else {
+        fromTimestamp = new Date(0); // first-ever run — doubles as historical backfill (§11), bounded/paginated by `cap`
       }
-      for (const change of latestPerResolution.values()) {
-        await deps.onCandleUpdated({ chain: deps.chain, tokenAddress: token.tokenAddress, quoteAddress: token.quoteAddress, resolution: change.resolution as CandleResolutionId, candle: change });
+
+      const result = await recomputeCandlesFromTimestamp({
+        db: deps.db,
+        chainClient: deps.chainClient,
+        chain: deps.chain,
+        venue: token.venue,
+        tokenAddress: token.tokenAddress,
+        quoteAddress: token.quoteAddress,
+        fromTimestamp,
+        usdRateProvider: deps.usdRateProvider,
+        finality,
+        cap: deps.tradePageCap,
+      });
+
+      if (result.status === "DECIMALS_UNAVAILABLE") {
+        errors.push(`forward recompute for ${token.tokenAddress}: ${result.reason}`);
+        continue;
       }
-    }
+
+      tokensProcessed += 1;
+      bucketsRecomputed += result.bucketsRecomputed;
+      candlesWritten += result.changes.length;
+
+      if (result.lastProcessed) {
+        await deps.db.candleAggregationCheckpoint.upsert({
+          where: { chain_tokenAddress: { chain: deps.chain, tokenAddress: token.tokenAddress } },
+          create: { chain: deps.chain, tokenAddress: token.tokenAddress, lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
+          update: { lastSourceHeight: result.lastProcessed.sourceHeight, lastSourceIndex: result.lastProcessed.sourceIndex },
+        });
+      }
+
+      if (result.truncated) {
+        deps.logger.warn("forward recompute window truncated by the bounded trade-page cap — will continue converging on later ticks", { tokenAddress: token.tokenAddress, cap: deps.tradePageCap });
+      }
+
+      // Realtime (§14) — steady-state forward progress only, never a
+      // first-time backfill (indistinguishable from bulk history) and never
+      // the invalidation path (handled separately, deliberately silent —
+      // reorg recompute of historical buckets is not "live" news).
+      if (!isFirstRun && deps.onCandleUpdated && result.changes.length > 0) {
+        // Every changed bucket is necessary on short intervals. Sending only the
+        // newest drops genuine intervening bars when ingestion arrives in batches.
+        for (const change of result.changes) {
+          await deps.onCandleUpdated({ chain: deps.chain, tokenAddress: token.tokenAddress, quoteAddress: token.quoteAddress, resolution: change.resolution as CandleResolutionId, candle: change });
+        }
+      }
+    } finally { busyTokens.delete(lockKey); }
   }
 
   return { tokensProcessed, bucketsRecomputed, candlesWritten };
@@ -325,14 +381,10 @@ export async function runCandleAggregationTick(deps: CandleAggregationServiceDep
 
   const finality = await loadFinality(deps.db, deps.chain);
 
-  // The watched-token loop does forward progress only. Invalidation recompute and the
-  // finalisation sweep are fleet-wide work with fleet-wide cost — running them every few
-  // seconds would rebuild the very backlog this loop exists to skip, and neither is "live"
-  // news for the token someone is looking at.
+  // Recover watched tokens within their own bounded budget; otherwise a
+  // backfill/reorg invalidation blocks their live tail behind the fleet queue.
   const restricted = deps.restrictToTokens !== undefined;
-  const invalidationResult = restricted
-    ? { processed: 0, bucketsRecomputed: 0, candlesWritten: 0 }
-    : await processInvalidations(deps, finality, errors);
+  const invalidationResult = await processInvalidations(deps, finality, errors);
   const forwardResult = await processForward(deps, finality, errors);
   if (!restricted) await promoteFinalizedCandles(deps, finality);
 

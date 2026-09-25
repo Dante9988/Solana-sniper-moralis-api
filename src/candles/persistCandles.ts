@@ -14,7 +14,7 @@
  * lets a realtime consumer (§14) tell a real update from a redundant one.
  */
 
-import type { CandleStatus as DbCandleStatus, Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type CandleStatus as DbCandleStatus, type PrismaClient } from "@prisma/client";
 import { resolutionIdToDb, CandleResolutionId } from "./resolutions";
 import { determineCandleStatus, FinalityInputs } from "./finality";
 import type { CandleBucket } from "./types";
@@ -38,6 +38,8 @@ export interface PersistedCandleChange {
   readonly status: DbCandleStatus;
   readonly revision: number;
   readonly isNew: boolean;
+  readonly updatedAt?: string;
+  readonly committedAt?: string;
 }
 
 export interface PersistCandlesResult {
@@ -83,15 +85,25 @@ export async function persistCandleBuckets(params: PersistCandlesParams): Promis
   }
 
   for (const group of chunk(flat, CHUNK_SIZE)) {
+    const firstChange = changes.length;
     await params.db.$transaction(async (tx) => {
-      for (const { resolutionId, bucket } of group) {
+      // A recompute usually changes only the open buckets. One bounded read
+      // avoids hundreds of serial round trips for the unchanged history.
+      const rows = await tx.marketCandle.findMany({ where: {
+        chain: params.chain, tokenAddress: params.tokenAddress,
+        OR: group.map(({ bucket }) => ({ resolution: resolutionIdToDb(bucket.resolution), bucketStart: new Date(bucket.bucketStart * 1000) })),
+      } });
+      const existingByKey = new Map(rows.map(row => [`${row.resolution}:${row.bucketStart.getTime()}`, row]));
+      for (const { resolutionId, bucket: rawBucket } of group) {
+        // MarketCandle.volumeUsd is NUMERIC(38,8). Compare and publish the
+        // persisted precision, otherwise every 18-decimal sum looks changed.
+        const bucket = { ...rawBucket, volumeUsd: rawBucket.volumeUsd === null ? null
+          : new Prisma.Decimal(rawBucket.volumeUsd).toDecimalPlaces(8).toFixed() };
         const resolutionDb = resolutionIdToDb(bucket.resolution);
         const bucketStartDate = new Date(bucket.bucketStart * 1000);
         const status: DbCandleStatus = determineCandleStatus(bucket.bucketStart, bucket.resolution, params.finality) === "final" ? "FINAL" : "PROVISIONAL";
 
-        const existing = await tx.marketCandle.findUnique({
-          where: { chain_tokenAddress_resolution_bucketStart: { chain: params.chain, tokenAddress: params.tokenAddress, resolution: resolutionDb, bucketStart: bucketStartDate } },
-        });
+        const existing = existingByKey.get(`${resolutionDb}:${bucketStartDate.getTime()}`);
 
         if (existing && candleValuesEqual(existing, bucket, status)) {
           unchanged += 1;
@@ -115,7 +127,7 @@ export async function persistCandleBuckets(params: PersistCandlesParams): Promis
 
         const revision = (existing?.revision ?? 0) + 1;
 
-        await tx.marketCandle.upsert({
+        const persisted = await tx.marketCandle.upsert({
           where: { chain_tokenAddress_resolution_bucketStart: { chain: params.chain, tokenAddress: params.tokenAddress, resolution: resolutionDb, bucketStart: bucketStartDate } },
           create: { chain: params.chain, venue: params.venue, tokenAddress: params.tokenAddress, quoteAddress: params.quoteAddress, resolution: resolutionDb, bucketStart: bucketStartDate, revision: 1, ...data },
           update: { ...data, revision },
@@ -123,9 +135,11 @@ export async function persistCandleBuckets(params: PersistCandlesParams): Promis
 
         if (existing) updated += 1;
         else inserted += 1;
-        changes.push({ resolution: resolutionId, bucketStart: bucket.bucketStart, candle: bucket, status, revision, isNew: !existing });
+        changes.push({ resolution: resolutionId, bucketStart: bucket.bucketStart, candle: bucket, status, revision, isNew: !existing, updatedAt: persisted.updatedAt.toISOString() });
       }
     });
+    const committedAt = new Date().toISOString();
+    for (let i = firstChange; i < changes.length; i++) changes[i] = { ...changes[i], committedAt };
   }
 
   return { inserted, updated, unchanged, changes };

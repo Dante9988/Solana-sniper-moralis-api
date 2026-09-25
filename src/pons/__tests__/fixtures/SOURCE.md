@@ -59,3 +59,14 @@ Public on-chain data only. No private keys, no PII.
 | `pool_initialized_v2_52687031.json` | Real `Initialize` log from the verified `PoolManager` (`0x8366a39CC670B4001A1121B8F6A443A643e40951`), same tx/block as `pool_graduated_v2_52687031.json` — `currency0` = native ETH (`0x0`), `currency1` = the token, `hooks` = the known `PonsV2MemeHook` address (cross-confirms this is the right Initialize log). | Proves `decodePoolInitialized` recovers the real PoolId without ever hand-computing `keccak256(PoolKey)`. |
 
 No real post-graduation `Swap` log was available yet this session (this token graduated in the same tx it launched — no separate V4 trade has happened against it, and Blockscout's log-listing endpoint was too unstable this session to pull a different pool's real Swap). `decodeTrade`'s tests instead build a log the same way `testSupport.ts`'s pre-existing `makeSwapLog`/`makeTokenLaunchedLog` helpers already do for V1: the real, verified `UNISWAP_V4_POOL_MANAGER_ABI` fragment (Blockscout-verified — see abiV2.ts) encoding synthetic amounts via viem's own encoder, never hand-typed hex.
+
+
+## Phase 7D.6.4: verified V4 BUY receipt
+
+`rbd_v4_buy_64164797.json` supersedes the earlier statement above that no real V4
+Swap receipt was available. It records Robinhood Chain block 64164797, transaction
+`0x052544602f462918b25f0d0b6c3d49fe78df10faa55fd247c7800485ac4ca52d`.
+Token currency1 leaves PoolManager; its positive V4 delta is a BUY. The negative
+currency0 amount is the quote input. This fixture exercises the decoder and the
+real-PostgreSQL idempotent backfill test. See `docs/phase-7d6/sources-7d6.4.md`
+for the official Uniswap implementation references and price-continuity evidence.
