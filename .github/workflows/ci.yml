@@ -123,6 +123,18 @@ jobs:
         env:
           PONS_RUN_ANVIL_REORG_TEST: "true"
 
+      # Phase 7E.1 §22 — real BUY and SELL on both venues against a real fork of
+      # Robinhood Chain, driven by the calldata the execution service actually
+      # emits. Runs after the anvil install above. Needs an archive-capable RPC;
+      # skipped rather than failed when the secret is absent, because a fork of a
+      # live chain cannot be reproduced without one.
+      - name: Run execution fork proof (real contracts, production calldata)
+        if: ${{ env.EXECUTION_FORK_RPC != '' }}
+        run: npx vitest run src/pons/execution/__tests__/execution.anvilFork.test.ts
+        env:
+          PONS_RUN_EXECUTION_FORK_TEST: "true"
+          EXECUTION_FORK_RPC: ${{ secrets.ROBINHOOD_ARCHIVE_RPC }}
+
       - name: Build
         run: npm run build
 
