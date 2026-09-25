@@ -100,6 +100,11 @@ jobs:
           CANDLES_RUN_DB_TESTS: "true"
           # Phase 7D.3.2 — paper positions, evidence snapshots, logo cache.
           PAPER_RUN_DB_TESTS: "true"
+          # Phase 7E.1 — real execution: idempotency under concurrency, one hash
+          # per execution, reload restoration and receipt reconciliation. These
+          # need a real PostgreSQL because the guarantees are unique indexes, not
+          # service-layer checks.
+          EXECUTIONS_RUN_DB_TESTS: "true"
 
       # Phase 7B.5A follow-up — reorgRecovery.dbIntegration.test.ts proves
       # the recovery algorithm against a scripted fake chain reader; this
