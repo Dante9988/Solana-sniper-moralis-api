@@ -744,6 +744,44 @@
           "trades": {
             "$ref": "#/components/schemas/SourceHealthDetail"
           },
+          "streams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceHealthDetail"
+            }
+          },
+          "session": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string"
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "startBlock": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "startTimestamp": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "mode",
+              "id",
+              "startBlock",
+              "startTimestamp"
+            ]
+          },
           "observedAt": {
             "type": "string"
           }
@@ -752,6 +790,8 @@
           "status",
           "discovery",
           "trades",
+          "streams",
+          "session",
           "observedAt"
         ]
       },
@@ -941,6 +981,331 @@
           "sourceTxHash",
           "sourceIndex",
           "observedAt"
+        ]
+      },
+      "MoonPayConfigResponse": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "environment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "sandbox",
+              "production",
+              null
+            ]
+          },
+          "publishableKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sandbox": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "configured",
+          "environment",
+          "publishableKey",
+          "sandbox"
+        ]
+      },
+      "MoonPayCheckoutResponse": {
+        "type": "object",
+        "properties": {
+          "orderId": {
+            "type": "string"
+          },
+          "externalTransactionId": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "sandbox": {
+            "type": "boolean"
+          },
+          "reused": {
+            "type": "boolean"
+          },
+          "sandboxNotice": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "orderId",
+          "externalTransactionId",
+          "environment",
+          "sandbox",
+          "reused"
+        ]
+      },
+      "MoonPayCheckoutRequest": {
+        "type": "object",
+        "properties": {
+          "baseCurrencyCode": {
+            "type": "string"
+          },
+          "baseCurrencyAmount": {
+            "type": "string"
+          },
+          "currencyCode": {
+            "type": "string"
+          },
+          "walletAddress": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "redirectUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "baseCurrencyCode",
+          "baseCurrencyAmount",
+          "currencyCode",
+          "walletAddress",
+          "network",
+          "idempotencyKey"
+        ]
+      },
+      "MoonPayOrderListResponse": {
+        "type": "object",
+        "properties": {
+          "orders": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MoonPayOrder"
+            }
+          }
+        },
+        "required": [
+          "orders"
+        ]
+      },
+      "MoonPayOrder": {
+        "type": "object",
+        "properties": {
+          "orderId": {
+            "type": "string"
+          },
+          "externalTransactionId": {
+            "type": "string"
+          },
+          "providerTransactionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "type": "string"
+          },
+          "sandbox": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "SUBMITTED",
+              "COMPLETED",
+              "FAILED",
+              "CANCELLED",
+              "UNCERTAIN"
+            ]
+          },
+          "providerStatus": {
+            "type": "string"
+          },
+          "baseCurrencyCode": {
+            "type": "string"
+          },
+          "baseCurrencyAmount": {
+            "type": "string"
+          },
+          "currencyCode": {
+            "type": "string"
+          },
+          "walletAddress": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "quotedAmount": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reconciliationError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery": {
+            "type": "object",
+            "properties": {
+              "transactionId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "amount": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "delivered": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "transactionId",
+              "amount",
+              "delivered"
+            ]
+          },
+          "failureReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "orderId",
+          "externalTransactionId",
+          "providerTransactionId",
+          "environment",
+          "sandbox",
+          "status",
+          "providerStatus",
+          "baseCurrencyCode",
+          "baseCurrencyAmount",
+          "currencyCode",
+          "walletAddress",
+          "network",
+          "quotedAmount",
+          "reconciliationError",
+          "delivery",
+          "failureReason",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "TokenHistoryBackfill": {
+        "type": "object",
+        "properties": {
+          "tokenAddress": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL",
+              "FAILED",
+              "NOT_STARTED",
+              "RUNNING"
+            ]
+          },
+          "fromBlock": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toBlock": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tradesWritten": {
+            "type": "integer"
+          },
+          "logsScanned": {
+            "type": "integer"
+          },
+          "requests": {
+            "type": "integer"
+          },
+          "elapsedMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "stoppedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "coveredVenues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uncoveredVenues": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "tokenAddress",
+          "status",
+          "fromBlock",
+          "toBlock",
+          "cursor",
+          "tradesWritten",
+          "logsScanned",
+          "requests",
+          "elapsedMs",
+          "stoppedReason",
+          "coveredVenues",
+          "uncoveredVenues"
         ]
       },
       "CandleHistoryResponse": {
@@ -5325,6 +5690,332 @@
             }
           },
           "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/moonpay/config": {
+      "get": {
+        "summary": "Phase 7D.5.1 — whether card/bank buying is available and in which environment. Returns the publishable key only; the secret and webhook keys never leave the server.",
+        "tags": [
+          "buying"
+        ],
+        "responses": {
+          "200": {
+            "description": "MoonPay availability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoonPayConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/moonpay/checkouts": {
+      "post": {
+        "summary": "Phase 7D.5.1 — create a MoonPay hosted checkout for the signed-in user. The returned URL is signed server-side so the destination wallet cannot be tampered with. A repeated idempotencyKey reuses the pending order rather than opening a second one.",
+        "tags": [
+          "buying"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoonPayCheckoutRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing pending checkout reused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoonPayCheckoutResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Checkout created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoonPayCheckoutResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/moonpay/orders": {
+      "get": {
+        "summary": "Phase 7D.5.1 — the signed-in user's MoonPay orders. Never another user's.",
+        "tags": [
+          "buying"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Orders",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoonPayOrderListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/moonpay/orders/{orderId}": {
+      "get": {
+        "summary": "Phase 7D.5.1 — one order, owned by the caller. A miss is 404 rather than 403 so another user's order id cannot be confirmed by probing.",
+        "tags": [
+          "buying"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "orderId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoonPayOrder"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/robinhood/{tokenAddress}/history": {
+      "post": {
+        "summary": "Phase 7D.5 — fetch this token's trade history on demand. An address-filtered log query the node answers from an index, not the chain-wide indexer scan: measured 2026-09-20, a token with 5.1M blocks of history returned all 9,784 trades in 11 requests. Idempotent, resumable and bounded.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Backfill outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenHistoryBackfill"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Phase 7D.5 — what has been backfilled for this token, including which venues the history does NOT cover.",
+        "tags": [
+          "robinhood-chain"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{40}$",
+              "example": "0x055650555Be80649397084Cd3f8a09b4350e8612"
+            },
+            "required": true,
+            "name": "tokenAddress",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Backfill state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenHistoryBackfill"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

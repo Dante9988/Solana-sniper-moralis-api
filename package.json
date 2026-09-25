@@ -41,7 +41,8 @@
     "openapi:generate": "ts-node src/researchApi/scripts/generateOpenApiDocument.ts",
     "test:api-v1": "vitest run src/researchApi",
     "test:candles": "vitest run src/candles src/discovery",
-    "openapi:check": "node scripts/check-openapi-drift.mjs"
+    "openapi:check": "node scripts/check-openapi-drift.mjs",
+    "session:start": "ts-node src/pons/scripts/sessionStartMain.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",
@@ -107,6 +108,7 @@
     "jose": "^6.2.10",
     "json-web-token": "^3.2.0",
     "jsonwebtoken": "^9.0.2",
+    "lossless-json": "^4.3.0",
     "luxon": "^3.5.0",
     "mongoose": "^8.5.3",
     "pino": "^8.18.0",

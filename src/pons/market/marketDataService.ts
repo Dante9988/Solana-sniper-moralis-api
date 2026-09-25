@@ -15,6 +15,8 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { currentSessionPrefix } from "../ingestionSession";
+import { ROBINHOOD_CHAIN } from "../discoveryListener";
 
 import type { QuoteUsdRateProvider } from "../../candles/usdPricing";
 import { resolveTokenDecimals } from "../../candles/decimalsResolver";
@@ -101,7 +103,8 @@ export async function fetchTokenMarketData(deps: MarketDataDeps, tokenAddressInp
   }
 
   // Coverage from ingestion checkpoints and this token's own launch/graduation block times.
-  const store = new CheckpointStore(deps.db);
+  // Phase 7D.5 — coverage is measured against the live session's streams.
+  const store = new CheckpointStore(deps.db, await currentSessionPrefix(deps.db, ROBINHOOD_CHAIN));
   const [curve, v4] = await Promise.all([store.getFinalityState(CURVE_TRADE_CHECKPOINT_SOURCE), store.getFinalityState(TRADE_V2_CHECKPOINT_SOURCE)]);
   const notes: string[] = [];
   const launchAt = await blockTime(deps.chainClient, token.sourceHeight);

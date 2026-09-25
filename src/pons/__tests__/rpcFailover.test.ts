@@ -163,9 +163,45 @@ describe("classifyRpcFailure", () => {
     expect(classifyRpcFailure({ status: 403, message: "Forbidden" })).toBe("QUOTA_EXHAUSTED");
   });
 
+  /**
+   * Phase 7D.5 — a client-side response-size refusal is a range problem, not a sick
+   * endpoint. Measured: a topic-only getLogs over 10,000 blocks of curve trades returns
+   * ~10.5 MB; classified as CONNECTION it cooled down the only wide-range provider.
+   */
+  it("classifies a response-size refusal as a range limit, so the endpoint is not cooled down", () => {
+    const message = "HTTP response body exceeded the size limit.\n\nMax: 10485760 bytes\nReceived: 10502144 bytes";
+    expect(classifyRpcFailure({ message })).toBe("RANGE_LIMIT");
+    expect(COOLDOWN_MS.RANGE_LIMIT).toBe(0);
+  });
+
   it("classifies transport failures", () => {
     expect(classifyRpcFailure({ code: "ETIMEDOUT", message: "timed out" })).toBe("TIMEOUT");
     expect(classifyRpcFailure({ code: "ECONNRESET", message: "socket hang up" })).toBe("CONNECTION");
+  });
+
+  /**
+   * Phase 7D.5. Cloudflare in front of the one endpoint that serves wide `eth_getLogs`
+   * ranges answered `403 / error code: 1010` to requests with no `User-Agent`. Filed as
+   * QUOTA_EXHAUSTED, that parked a perfectly healthy endpoint for 30 minutes and made a
+   * missing header look like a provider-capacity blocker.
+   */
+  it.each([
+    ["Cloudflare 1010", "error code: 1010"],
+    ["Cloudflare 1020", "error code: 1020"],
+    ["interstitial", "Just a moment..."],
+    ["block page", "Attention Required! | Cloudflare"],
+  ])("classifies a bot shield (%s) as BOT_CHALLENGE, not a dead key", (_label, message) => {
+    expect(classifyRpcFailure({ status: 403, message })).toBe("BOT_CHALLENGE");
+  });
+
+  it("still treats a plain 403 as quota-like — only a shield fingerprint changes the class", () => {
+    expect(classifyRpcFailure({ status: 403, message: "Forbidden" })).toBe("QUOTA_EXHAUSTED");
+  });
+
+  it("fails over on a bot challenge, and parks the endpoint for a minute, not half an hour", () => {
+    expect(shouldFailover("BOT_CHALLENGE")).toBe(true);
+    expect(COOLDOWN_MS.BOT_CHALLENGE).toBeGreaterThan(0);
+    expect(COOLDOWN_MS.BOT_CHALLENGE).toBeLessThan(COOLDOWN_MS.QUOTA_EXHAUSTED / 10);
   });
 });
 
@@ -258,6 +294,48 @@ describe("block-range limits", () => {
     expect(client.healthSnapshot().map((h) => h.lastFailure ?? null)).toEqual([null, null, null, null]);
     calls.length = 0;
     expect((await client.getBlockNumber()).status).toBe("AVAILABLE");
+  });
+});
+
+describe("FailoverChainClient — whose range cap counts (Phase 7D.5)", () => {
+  /**
+   * Endpoints are tried best-key-first and the Alchemy keys refuse anything wider than 10
+   * blocks. When the widest endpoint (the public default, lowest priority) is in cooldown,
+   * the only voice left is a narrow one — and `curveTradeListener` used to believe it,
+   * halving its window repeatedly down to the 10-block floor while a provider stood ready
+   * to serve 7,500. A cap is only evidence about the range when the widest endpoint spoke.
+   */
+  it("does not report a narrow endpoint's range cap while the widest endpoint is cooled down", async () => {
+    const { client } = buildClient({
+      // Cool the default down with a quota failure on an unrelated call first.
+      ROBINHOOD_RPC_HTTPS: async () => unavailable(ALCHEMY_RANGE_MESSAGE),
+      ROBINHOOD_RPC_HTTPS2: async () => unavailable(ALCHEMY_RANGE_MESSAGE),
+      DEAFULT_RPC_HTTPS: async () => unavailable(ALCHEMY_QUOTA_MESSAGE),
+    });
+
+    // First call cools DEAFULT (quota → 30 min).
+    await client.getBlockNumber();
+    const result = await client.getBlockNumber();
+
+    expect(result.status).toBe("UNAVAILABLE");
+    if (result.status !== "UNAVAILABLE") return;
+    expect(result.reason).toMatch(/no usable RPC endpoint for this request right now/i);
+    expect(result.reason).not.toMatch(/up to a \d+ block range/i);
+  });
+
+  it("does report the widest endpoint's own range cap — that one is authoritative", async () => {
+    const { client } = buildClient({
+      ROBINHOOD_RPC_HTTPS: async () => unavailable(ALCHEMY_RANGE_MESSAGE),
+      ROBINHOOD_RPC_HTTPS2: async () => unavailable(ALCHEMY_RANGE_MESSAGE),
+      DEAFULT_RPC_HTTPS: async () => unavailable("block range exceeds maximum allowed (max=10000, requested=50001)"),
+    });
+
+    const result = await client.getBlockNumber();
+
+    expect(result.status).toBe("UNAVAILABLE");
+    if (result.status !== "UNAVAILABLE") return;
+    // The caller must see this one, or the window can never find its real ceiling.
+    expect(result.reason).toMatch(/block range exceeds maximum allowed/i);
   });
 });
 

@@ -15,6 +15,12 @@ import { RobinhoodTokenListQuerySchema, DiscoveryChainsResponseSchema,
   RobinhoodTokenDetailResponseSchema,
   RobinhoodTokenListResponseSchema,
   RobinhoodStatusResponseSchema,
+  TokenHistoryBackfillSchema,
+  MoonPayConfigResponseSchema,
+  MoonPayCheckoutRequestSchema,
+  MoonPayCheckoutResponseSchema,
+  MoonPayOrderSchema,
+  MoonPayOrderListResponseSchema,
 } from "./robinhoodTokens";
 import { CandleHistoryResponseSchema } from "./candles";
 import { CalloutListResponseSchema } from "./callouts";
@@ -162,6 +168,81 @@ registry.registerPath({
     400: errorResponse,
     401: errorResponse,
     404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/moonpay/config",
+  summary: "Phase 7D.5.1 — whether card/bank buying is available and in which environment. Returns the publishable key only; the secret and webhook keys never leave the server.",
+  tags: ["buying"],
+  responses: { 200: { description: "MoonPay availability", content: { "application/json": { schema: MoonPayConfigResponseSchema } } } },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/moonpay/checkouts",
+  summary: "Phase 7D.5.1 — create a MoonPay hosted checkout for the signed-in user. The returned URL is signed server-side so the destination wallet cannot be tampered with. A repeated idempotencyKey reuses the pending order rather than opening a second one.",
+  tags: ["buying"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: MoonPayCheckoutRequestSchema } } } },
+  responses: {
+    201: { description: "Checkout created", content: { "application/json": { schema: MoonPayCheckoutResponseSchema } } },
+    200: { description: "Existing pending checkout reused", content: { "application/json": { schema: MoonPayCheckoutResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    429: errorResponse,
+    503: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/moonpay/orders",
+  summary: "Phase 7D.5.1 — the signed-in user's MoonPay orders. Never another user's.",
+  tags: ["buying"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Orders", content: { "application/json": { schema: MoonPayOrderListResponseSchema } } }, 401: errorResponse },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/moonpay/orders/{orderId}",
+  summary: "Phase 7D.5.1 — one order, owned by the caller. A miss is 404 rather than 403 so another user's order id cannot be confirmed by probing.",
+  tags: ["buying"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ orderId: z.string() }) },
+  responses: { 200: { description: "Order", content: { "application/json": { schema: MoonPayOrderSchema } } }, 401: errorResponse, 404: errorResponse },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/history",
+  summary:
+    "Phase 7D.5 — fetch this token's trade history on demand. An address-filtered log query the node answers from an index, not the chain-wide indexer scan: measured 2026-09-20, a token with 5.1M blocks of history returned all 9,784 trades in 11 requests. Idempotent, resumable and bounded.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Backfill outcome", content: { "application/json": { schema: TokenHistoryBackfillSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/robinhood/{tokenAddress}/history",
+  summary: "Phase 7D.5 — what has been backfilled for this token, including which venues the history does NOT cover.",
+  tags: ["robinhood-chain"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: RobinhoodTokenAddressParamSchema },
+  responses: {
+    200: { description: "Backfill state", content: { "application/json": { schema: TokenHistoryBackfillSchema } } },
+    400: errorResponse,
+    401: errorResponse,
   },
 });
 

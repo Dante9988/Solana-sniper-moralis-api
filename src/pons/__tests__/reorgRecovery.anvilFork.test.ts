@@ -126,6 +126,7 @@ describe.skipIf(!RUN)("reorg recovery — real anvil fork integration (genuine n
         freshStartLookbackBlocks: 1_000,
         enrichmentConcurrency: 5,
         enrichmentRetryBatchSize: 25,
+        enrichmentMulticallBatchSize: 40,
         tradePoolChunkSize: 40,
         tradeQueryConcurrency: 3,
         reorgMaxDepthBlocks: 500,

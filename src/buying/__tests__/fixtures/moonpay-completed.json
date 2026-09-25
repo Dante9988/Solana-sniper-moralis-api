@@ -1,0 +1,15 @@
+{
+  "type": "transaction_updated",
+  "data": {
+    "id": "provider-test-1",
+    "externalTransactionId": "checkout-test-1",
+    "updatedAt": "2026-09-20T12:00:00.000Z",
+    "status": "completed",
+    "walletAddress": "0x1111111111111111111111111111111111111111",
+    "currency": { "code": "eth", "metadata": { "networkCode": "ethereum" } },
+    "baseCurrency": { "code": "usd" },
+    "baseCurrencyAmount": 50,
+    "quoteCurrencyAmount": 0.012345678901234567,
+    "cryptoTransactionId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

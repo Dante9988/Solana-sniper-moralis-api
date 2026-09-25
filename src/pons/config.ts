@@ -91,6 +91,7 @@ export interface RobinhoodChainConfig {
   readonly enrichmentConcurrency: number;
   /** How many PENDING-enrichment rows a single discovery tick retries, bounded so a large backlog can't turn one tick into an unbounded RPC burst. */
   readonly enrichmentRetryBatchSize: number;
+  readonly enrichmentMulticallBatchSize: number;
   /** Max pool addresses per eth_getLogs call for trade polling (§3) — chunked rather than one ever-growing address array. */
   readonly tradePoolChunkSize: number;
   /** Bounded concurrency across those chunked eth_getLogs calls. */
@@ -123,6 +124,11 @@ export function loadRobinhoodChainConfig(env: NodeJS.ProcessEnv = process.env): 
     freshStartLookbackBlocks: parsePositiveInt(env, "PONS_FRESH_START_LOOKBACK_BLOCKS", 1_000),
     enrichmentConcurrency: parsePositiveInt(env, "PONS_ENRICHMENT_CONCURRENCY", 5),
     enrichmentRetryBatchSize: parsePositiveInt(env, "PONS_ENRICHMENT_RETRY_BATCH_SIZE", 25),
+    // Phase 7D.5 — tokens per Multicall3 aggregate3 during V2 enrichment. Three reads each,
+    // so 40 tokens is 120 calls in one round trip. Bounded because aggregate3 response size
+    // and node gas limits both grow with it; the listener halves on a failure before
+    // falling back to per-token reads.
+    enrichmentMulticallBatchSize: parsePositiveInt(env, "PONS_ENRICHMENT_MULTICALL_BATCH_SIZE", 40),
     tradePoolChunkSize: parsePositiveInt(env, "PONS_TRADE_POOL_CHUNK_SIZE", 40),
     tradeQueryConcurrency: parsePositiveInt(env, "PONS_TRADE_QUERY_CONCURRENCY", 3),
     reorgMaxDepthBlocks: parsePositiveInt(env, "PONS_REORG_MAX_DEPTH_BLOCKS", 500),

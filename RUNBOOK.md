@@ -28,11 +28,11 @@ API and database are fine, but nothing is writing observations.
 ## Starting
 
 ```bash
-# Postgres (host-owned; adjust to your setup)
-docker start solana-sniper-postgres
+# Postgres — the app database is the onlypump-pg container (Phase 7D.5 notes below).
+docker start onlypump-pg
 
-# Backend services
-scripts/dev-stack.sh start          # api, pons, candles
+# Backend services. Opens a live-head observation session, then starts api, pons, candles.
+scripts/dev-stack.sh start
 scripts/dev-stack.sh status
 scripts/dev-stack.sh logs pons
 
@@ -41,6 +41,53 @@ scripts/dev-stack.sh logs pons
 cd ../only-pump-me && VITE_API_BASE_URL=http://localhost:8787/api/v1 npm run dev
 # → http://localhost:8080  (or http://127.0.0.1:8080)
 ```
+
+### Ingestion modes (Phase 7D.5)
+
+`start` prints the boundary it chose — this is the line to record:
+
+```
+opening a new live-head observation session:
+live-head session opened
+  id:        355f2236-d843-4e02-990a-8e948cb655ef
+  boundary:  block 67747143 (0xe245fe06…)
+  chain time:2026-09-20T07:05:47.000Z
+  ingesting: from block 67747144 forward
+```
+
+`PONS_INGESTION_MODE` selects how ingestion begins. `dev-stack.sh` defaults it to
+`live-head`; every other entry point defaults to `resume`.
+
+| Mode | What happens | Use it for |
+|---|---|---|
+| `live-head` | Fresh boundary at the current chain head, ingest forward. Old backlogs are skipped, never replayed. | Local development |
+| `resume` | Durable `ChainIngestionCheckpoint` rows, continuing where they stopped. | Hosted dev/staging/production |
+
+```bash
+scripts/dev-stack.sh start                                  # local: current activity in seconds
+PONS_INGESTION_MODE=resume scripts/dev-stack.sh start       # rehearse hosted catch-up instead
+```
+
+**Who opens a session matters.** `dev-stack.sh start` with no service names opens a new one;
+`dev-stack.sh start pons` *joins* the active session. If every worker restart cut its own
+boundary, each restart would silently create a gap. A browser refresh or an API restart
+never creates one either.
+
+`live-head` never touches durable state: session checkpoints are written under
+`session:<id>:<source>`, so the `robinhood:*` rows keep their heights and no historical range
+is ever marked processed. Nothing is deleted — tokens, pools, trades and candles all remain.
+
+Inspect the live session:
+
+```bash
+curl -s localhost:8787/api/v1/tokens/robinhood/status \
+  | jq '{status, session, streams: [.streams[] | {source, status, blocksBehind}]}'
+```
+
+`session.mode` reads `resume` when no session is in play. Within ~90s of `start` every
+running stream should sit a handful of blocks behind. `robinhood:pons:trades` stays
+`UNAVAILABLE` while no `venue = "pons"` token exists — that is idle, not broken, and it no
+longer drags the overall status down.
 
 ### CORS
 
@@ -187,6 +234,31 @@ archive RPC; see `evm-verification/README.md`.
 - `COINGECKO_DEMO_API_KEY` — optional. The Crypto and Stocks lists work without a key at lower limits.
 - **Trending is empty.** Check `GET /api/v1/tokens/robinhood?lifecycle=trending`, which returns `trending.reason` with the indexing lag. It turns on by itself once both Pons trade streams are within 10 minutes of the tip.
 - **Stopping the pons worker.** `scripts/dev-stack.sh stop` may leave the `node` child running for a few seconds. Stop it by PID. Never use `pkill -f`/`pgrep -f` with a pattern your own shell's command line also contains.
+
+## Phase 7D.5 notes
+
+- **The app database is the `onlypump-pg` container.** `docker start onlypump-pg`. Its data
+  lives on the named volume `onlypump-pgdata`, so starting and stopping it is safe. The
+  `solana-sniper-postgres` container referenced by older notes no longer exists on this host.
+  Still inspect through `DATABASE_URL`, never `docker exec`.
+- **Every RPC request carries a `User-Agent`** (`chainClient.ts`). Do not remove it: the
+  wide-range endpoint is behind Cloudflare, which answers a request without one with
+  `403 / error code: 1010`, and failover then drops to Alchemy keys capped at a 10-block
+  `eth_getLogs` range. That single header is the difference between ~10 and ~17,000 blocks/s
+  (ARCHITECTURE §28.1).
+- **Reading the log window warnings.** `pons:curve-trades` now says when and why it narrows:
+  `curve-trade log window 10000 → 5000 blocks after a provider range cap: …`. A narrowing
+  after a *provider range cap* is normal — it is finding the real ceiling, which for
+  topic-only curve queries is set by viem's 10 MB response cap at roughly 7,500 blocks.
+  A window pinned at 10 for many ticks is the pathology fixed in §28.2; check endpoint
+  cooldowns before blaming the window.
+- **Stopping workers.** `dev-stack.sh stop <svc>` reaps untracked PIDs, but a `ts-node` child
+  can survive; check with
+  `ps -eo pid,args | grep "[p]onsWorkerMain"` and `kill` by PID.
+  Never `pkill -f ponsWorkerMain` — the pattern matches your own shell and kills it.
+- **Deployed-secret check (frontend).** `npm run check:deployed-secrets` probes a deployed
+  origin for the three burned keypair files. It distinguishes a real file from a SPA
+  fallback and prints no response bodies. Run it after every onlypump.me deploy.
 
 ## Logs
 

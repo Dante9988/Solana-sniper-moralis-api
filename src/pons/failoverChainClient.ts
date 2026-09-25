@@ -276,6 +276,9 @@ export class FailoverChainClient implements ChainCaller, EventLogReader {
     const deadlineExceeded = () => this.now() - startedAt >= this.totalDeadlineMs;
 
     const entries = this.available();
+    // How many configured endpoints sat this request out in cooldown. Used at the end to
+    // decide whether a RANGE_LIMIT is actually evidence about the requested range.
+    const skippedForCooldown = this.entries.length - entries.length;
     if (entries.length === 0) {
       return {
         status: "UNAVAILABLE",
@@ -288,6 +291,8 @@ export class FailoverChainClient implements ChainCaller, EventLogReader {
     }
 
     let last: ChainClientResult<T> | undefined;
+    /** The endpoint whose failure `last` holds — needed to judge whether a range cap is authoritative. */
+    let lastEntry: EndpointEntry | undefined;
 
     for (let index = 0; index < entries.length; index += 1) {
       if (deadlineExceeded()) {
@@ -303,6 +308,7 @@ export class FailoverChainClient implements ChainCaller, EventLogReader {
       }
 
       const entry = entries[index];
+      lastEntry = entry;
       await this.ensureChainId(entry);
 
       for (let attempt = 0; attempt <= this.perEndpointRetries; attempt += 1) {
@@ -379,6 +385,39 @@ export class FailoverChainClient implements ChainCaller, EventLogReader {
     }
 
     if (last && last.status === "UNAVAILABLE") {
+      /**
+       * Phase 7D.5 — do not report a range cap that only the *narrow* endpoints named.
+       *
+       * Endpoints are tried best-key-first, and the Alchemy free-tier keys refuse any
+       * `eth_getLogs` wider than 10 blocks. When the one endpoint that serves 10,000-block
+       * ranges was merely in cooldown, this method still returned Alchemy's "up to a 10
+       * block range" message. `curveTradeListener` believed it, halved its window, and
+       * repeated — measured 2026-09-19, the window collapsed from 7,500 to the 10-block
+       * floor and ingestion fell to ~115 blocks/s against a 6.3M-block backlog.
+       *
+       * A range cap is only evidence about the range when every configured endpoint got
+       * to speak. Otherwise this is an availability problem, and it says so.
+       */
+      /**
+       * The lowest-priority endpoint is the public default, and it is the widest-ranging
+       * one we have. If *it* named a range cap, that is authoritative and the caller must
+       * narrow. Only a cap named by a narrower, higher-priority endpoint while the widest
+       * one sat out in cooldown is misleading.
+       */
+      const widestConfigured = this.entries[this.entries.length - 1];
+      const capIsAuthoritative = lastEntry !== undefined && lastEntry === widestConfigured;
+      if (
+        skippedForCooldown > 0 &&
+        !capIsAuthoritative &&
+        classifyRpcFailure({ message: last.reason, code: last.code }) === "RANGE_LIMIT"
+      ) {
+        last = {
+          ...last,
+          reason:
+            `no usable RPC endpoint for this request right now: ${skippedForCooldown} of ${this.entries.length} ` +
+            `endpoint(s) in cooldown, and every endpoint tried caps eth_getLogs to a narrower window than asked`,
+        };
+      }
       last = { ...last, reason: redactRpcUrls(last.reason) };
     }
     return (

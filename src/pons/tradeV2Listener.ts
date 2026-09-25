@@ -17,6 +17,7 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { nextTickDelayMs, processedWidth } from "./tickPacing";
 import { getAbiItem } from "viem";
 import { ChainReader } from "./chainClient";
 import { RobinhoodChainConfig } from "./config";
@@ -58,6 +59,18 @@ export interface TradeV2ListenerDeps {
   config: RobinhoodChainConfig;
   v2Config: PonsV2Config;
   logger?: TradeV2ListenerLogger;
+  /**
+   * Phase 7D.5 — namespace for this listener's checkpoints. Set in `live-head` mode to
+   * `session:<id>:`, which keeps the durable `robinhood:*` rows untouched. Empty in
+   * `resume` mode, which is the pre-existing behaviour.
+   */
+  sessionPrefix?: string;
+  /**
+   * Phase 7D.5 — where to begin when this source has no checkpoint yet. In `live-head` mode
+   * this is the shared session boundary, so every stream starts from the same block instead
+   * of each picking its own lookback behind the tip.
+   */
+  freshStartHeight?: bigint;
 }
 
 export class TradeV2Listener {
@@ -70,7 +83,12 @@ export class TradeV2Listener {
   private timer: NodeJS.Timeout | null = null;
   private currentTick: Promise<void> = Promise.resolve();
 
+  private readonly sessionPrefix: string;
+  private readonly freshStartHeight: bigint | null;
+
   constructor(deps: TradeV2ListenerDeps) {
+    this.sessionPrefix = deps.sessionPrefix ?? "";
+    this.freshStartHeight = deps.freshStartHeight ?? null;
     this.chainClient = deps.chainClient;
     this.db = deps.db;
     this.config = deps.config;
@@ -89,7 +107,7 @@ export class TradeV2Listener {
   }
 
   async runOnce(): Promise<TradeV2TickResult> {
-    const checkpointStore = new CheckpointStore(this.db);
+    const checkpointStore = new CheckpointStore(this.db, this.sessionPrefix);
 
     const trackedTokens = await this.db.discoveredToken.findMany({
       where: { chain: ROBINHOOD_CHAIN, venue: VENUE, graduated: true, poolId: { not: null }, canonicalStatus: "CANONICAL" },
@@ -157,17 +175,23 @@ export class TradeV2Listener {
     }
     const barrierHeight = discoveryCheckpoint.lastHeight;
 
+    const freshStart = checkpoint === null;
     const fromBlock = checkpoint
       ? checkpoint.lastHeight + 1n
       : (() => {
+          if (this.freshStartHeight !== null) return this.freshStartHeight;
           const lookback = BigInt(this.config.freshStartLookbackBlocks);
           const start = safeTip - lookback + 1n;
-          this.logger.warn(`No pons_v2 trade checkpoint found — starting fresh at height ${start > 0n ? start : 0n}.`);
           return start > 0n ? start : 0n;
         })();
 
     const effectiveTip = safeTip < barrierHeight ? safeTip : barrierHeight;
     if (fromBlock > effectiveTip) {
+      // Phase 7D.5: this branch persists no `lastHeight` — deliberately, because nothing
+      // was scanned — so on a fresh start it recomputes `fromBlock` from the tip on every
+      // tick. Announcing a "starting fresh at height N" that never happens, once per tick,
+      // buried the real signal: 37 such warnings in 4 minutes while V2 discovery, the
+      // barrier this is waiting on, was the thing that was actually stuck.
       await checkpointStore.recordUpToDate(TRADE_V2_CHECKPOINT_SOURCE, observedChainHeight);
       if (barrierHeight < safeTip) {
         return { status: "WAITING_ON_DISCOVERY", reason: `barrier height ${barrierHeight} (pons_v2 discovery checkpoint) is behind the next block to scan` };
@@ -182,6 +206,9 @@ export class TradeV2Listener {
     })();
 
     const swapEvent = getAbiItem({ abi: UNISWAP_V4_POOL_MANAGER_ABI, name: SWAP_EVENT_NAME });
+    if (freshStart) {
+      this.logger.warn(`No pons_v2 trade checkpoint found — starting fresh at height ${fromBlock}.`);
+    }
     const poolIdChunks = chunk(poolIds, this.config.tradePoolChunkSize);
     const chunkOutcomes = await mapWithConcurrency(poolIdChunks, this.config.tradeQueryConcurrency, (ids) =>
       this.chainClient.getLogs({ address: poolManager, event: swapEvent, args: { id: ids }, fromBlock, toBlock })
@@ -254,7 +281,7 @@ export class TradeV2Listener {
             update: { canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp: heightTimestamps.get(trade.provenance.sourceHeight) ?? null },
           });
         }
-        const checkpointStoreTx = new CheckpointStore(tx);
+        const checkpointStoreTx = new CheckpointStore(tx, this.sessionPrefix);
         await checkpointStoreTx.set(TRADE_V2_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight, heightTimestamps.get(toBlock.toString()));
         await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
       },
@@ -280,7 +307,11 @@ export class TradeV2Listener {
       })();
       await this.currentTick;
       if (!this.stopping) {
-        const delay = result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs;
+        const delay = nextTickDelayMs({
+          processedWidth: processedWidth(result),
+          maxRangePerPoll: this.config.maxBlockRangePerPoll,
+          pollIntervalMs: this.config.pollIntervalMs,
+        });
         this.timer = setTimeout(tick, delay);
       }
     };

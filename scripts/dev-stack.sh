@@ -231,10 +231,34 @@ status_all() {
 
 cmd="${1:-status}"; shift || true
 targets=("$@")
+explicit_targets=$#
 [[ ${#targets[@]} -eq 0 ]] && targets=("${ALL_SERVICES[@]}")
 
+# Phase 7D.5 — local development observes from the current chain head rather than replaying
+# a backlog (PONS_INGESTION_MODE=live-head, the default for this script).
+#
+# The *stack* owns the session boundary, not the workers: a bare `start` opens a new one,
+# while `start pons` joins whatever session is already active. That is what stops a worker
+# restart, an API restart or a frontend reload from each cutting its own boundary and
+# quietly creating a gap. `session:start` is a no-op under PONS_INGESTION_MODE=resume.
+: "${PONS_INGESTION_MODE:=live-head}"
+export PONS_INGESTION_MODE
+
+open_session_if_whole_stack() {
+  if [[ "${PONS_INGESTION_MODE}" != "live-head" ]]; then
+    echo "mode=${PONS_INGESTION_MODE}: durable checkpoints are in charge, no observation session"
+    return
+  fi
+  if [[ ${explicit_targets} -eq 0 ]]; then
+    echo "opening a new live-head observation session:"
+    npm run --silent session:start || { echo "  failed to open session — aborting start" >&2; exit 1; }
+  else
+    echo "joining the active live-head session (started a subset: ${targets[*]})"
+  fi
+}
+
 case "${cmd}" in
-  start)  echo "starting:"; for s in "${targets[@]}"; do start_one "${s}"; done ;;
+  start)  open_session_if_whole_stack; echo "starting:"; for s in "${targets[@]}"; do start_one "${s}"; done ;;
   stop)   echo "stopping:"; for s in "${targets[@]}"; do stop_one "${s}"; done ;;
   status) status_all ;;
   logs)   tail -f "$(log_file "${targets[0]}")" ;;

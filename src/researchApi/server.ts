@@ -9,7 +9,9 @@
  * `forensicsWorkerMain.ts` and the rest of Phase 5D/5E.
  */
 
+import { startMoonPayRecovery } from "../buying/moonpay/recoveryWorker";
 import { PrismaClient } from "@prisma/client";
+import { createMoonPayRouter, createMoonPayWebhookRouter } from "./routes/moonpay";
 import express, { Express, NextFunction, Request, Response } from "express";
 import { randomUUID } from "node:crypto";
 import { ApiConfig, loadApiConfig } from "./config";
@@ -60,7 +62,20 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
 
   app.use(requestId);
   app.use(createCorsMiddleware(config.cors));
-  app.use(express.json());
+
+  /**
+   * Phase 7D.5.1 — the MoonPay webhook is mounted BEFORE `express.json()`, and this order
+   * is load-bearing rather than stylistic.
+   *
+   * Its signature is an HMAC over the exact bytes MoonPay sent. Once `express.json()` has
+   * parsed the stream, the original bytes are gone and cannot be reconstructed —
+   * `JSON.stringify(req.body)` does not round-trip key order, spacing or number formatting.
+   * A verifier fed a re-serialised body fails every time, and "fixing" that by trusting the
+   * parsed body instead would make the signature check decorative.
+   */
+  app.use("/api/v1", createMoonPayWebhookRouter(db, config));
+
+  app.use(express.json({ limit: "64kb" }));
 
   app.use((req, _res, next) => {
     logger.info({ requestId: req.requestId, method: req.method, path: req.path }, "request received");
@@ -81,6 +96,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   app.use("/api/v1", createMarketDataRouter(db, config, deps));
   app.use("/api/v1", createPracticeRouter(db, config, deps));
   app.use("/api/v1", createVanityRouter(db, config, deps));
+  app.use("/api/v1", createMoonPayRouter(db, config, deps));
   app.use("/api/v1", createMarketsRouter(config, deps));
   app.use("/api/v1/media", createMediaRouter(db, config));
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
@@ -97,6 +113,11 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   // Never leak internal error details or stack traces (phase6.txt §3, phase7b1.txt §7).
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const parserError = err as { type?: string; status?: number };
+    if (["entity.too.large", "encoding.unsupported", "entity.parse.failed"].includes(parserError?.type ?? "")) {
+      res.status(parserError.status ?? 400).json({ error: { code: "BAD_REQUEST", message: "Invalid request body", requestId: req.requestId } });
+      return;
+    }
     const requestIdForLog = req.requestId ?? randomUUID();
     logger.error({ requestId: requestIdForLog, err: err instanceof Error ? err.message : String(err) }, "unhandled error");
     sendError(res, "INTERNAL_ERROR", "internal error", requestIdForLog);
@@ -117,6 +138,7 @@ function main(): void {
 
   const realtime = attachRealtimeServer(server, config, { db, ticketStore, eventBus });
   // Phase 7D.3.2 §6 — logos are fetched in the background, never on a request path.
+  const stopMoonPayRecovery = startMoonPayRecovery(db);
   const stopImageWorker = startTokenImageWorker(db, (msg, meta) => logger.info(meta ?? {}, msg));
 
   let shuttingDown = false;
@@ -124,6 +146,7 @@ function main(): void {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, "[api] received signal, shutting down gracefully");
+    stopMoonPayRecovery();
     stopImageWorker();
     realtime
       .close()

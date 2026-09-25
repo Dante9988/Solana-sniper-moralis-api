@@ -8,6 +8,7 @@
  */
 
 import { DiscoveredToken, ChainTrade, PrismaClient, Prisma, type TokenMarketSnapshot } from "@prisma/client";
+import { createBackfillRunner, type BackfillResult, type BackfillRunner } from "../../pons/backfill/tokenTradeBackfill";
 import { Router } from "express";
 import { ApiConfig } from "../config";
 import { AuthenticateDeps, createAuthenticateUnlessPublicReads } from "../middleware/authenticate";
@@ -235,7 +236,9 @@ export function createRobinhoodTokensRouter(
   healthThresholds: PonsHealthThresholds = loadPonsHealthThresholds(),
   candleHealthThresholds: CandleHealthThresholds = loadCandleHealthThresholds(),
   // Injectable so route tests never touch a real RPC.
-  poolEvidenceProvider: PoolEvidenceProvider = createPoolEvidenceProvider()
+  poolEvidenceProvider: PoolEvidenceProvider = createPoolEvidenceProvider(),
+  // Phase 7D.5 — injectable so route tests never reach an RPC endpoint.
+  backfillRunner: BackfillRunner = createBackfillRunner(db)
 ): Router {
   const router = Router();
   const readAuth = createAuthenticateUnlessPublicReads(config, deps);
@@ -392,6 +395,67 @@ export function createRobinhoodTokensRouter(
     }
   });
 
+  /**
+   * Phase 7D.5 — fetch ONE token's trade history on demand.
+   *
+   * Chain-wide trade ingestion is an indexer workload; a chart is not. This is the
+   * address-filtered query a node answers from an index — measured 2026-09-20, a token
+   * with 5.1M blocks of history returned all 9,781 of its trades in 11 requests and 7.0s.
+   *
+   * Idempotent and bounded: a completed token returns immediately, a partial run resumes,
+   * and a run that hits its deadline says so instead of hanging the request.
+   */
+  const backfillLimiter = createRateLimiter({ windowMs: 60_000, max: 10, keyFn: rateLimitKey, store });
+  router.post("/:tokenAddress/history", readAuth, backfillLimiter, validateRobinhoodAddress, async (req, res, next) => {
+    try {
+      const result = await backfillRunner(req.params.tokenAddress);
+      res.json(toBackfillJson(result));
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.get("/:tokenAddress/history", readAuth, readLimiter, validateRobinhoodAddress, async (req, res, next) => {
+    try {
+      const row = await db.tokenTradeBackfill.findUnique({
+        where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: req.params.tokenAddress.toLowerCase() } },
+      });
+      if (!row) {
+        res.json({
+          tokenAddress: req.params.tokenAddress.toLowerCase(),
+          status: "NOT_STARTED",
+          fromBlock: null,
+          toBlock: null,
+          cursor: null,
+          tradesWritten: 0,
+          logsScanned: 0,
+          requests: 0,
+          elapsedMs: null,
+          stoppedReason: null,
+          coveredVenues: [],
+          uncoveredVenues: [],
+        });
+        return;
+      }
+      res.json({
+        tokenAddress: row.tokenAddress,
+        status: row.status,
+        fromBlock: row.fromBlock.toString(),
+        toBlock: row.toBlock.toString(),
+        cursor: row.cursor.toString(),
+        tradesWritten: row.tradesWritten,
+        logsScanned: row.logsScanned,
+        requests: row.requests,
+        elapsedMs: null,
+        stoppedReason: row.stoppedReason ?? row.lastError,
+        coveredVenues: ["PONS_V2_BONDING_CURVE"],
+        uncoveredVenues: [],
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.get("/:tokenAddress/candles", readAuth, readLimiter, validateRobinhoodAddress, async (req, res, next) => {
     try {
       const parsed = CandleQuerySchema.safeParse(req.query);
@@ -479,4 +543,21 @@ export function createRobinhoodTokensRouter(
   });
 
   return router;
+}
+
+function toBackfillJson(r: BackfillResult) {
+  return {
+    tokenAddress: r.tokenAddress,
+    status: r.status,
+    fromBlock: r.fromBlock.toString(),
+    toBlock: r.toBlock.toString(),
+    cursor: r.cursor.toString(),
+    tradesWritten: r.tradesWritten,
+    logsScanned: r.logsScanned,
+    requests: r.requests,
+    elapsedMs: r.elapsedMs,
+    stoppedReason: r.stoppedReason,
+    coveredVenues: [...r.coveredVenues],
+    uncoveredVenues: [...r.uncoveredVenues],
+  };
 }

@@ -18,6 +18,8 @@
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { nextTickDelayMs, processedWidth } from "./tickPacing";
+import { isRangeLimitMessage } from "./rpcEndpoints";
 
 import type { ChainReader, EventLogReader } from "./chainClient";
 import type { RobinhoodChainConfig } from "./config";
@@ -58,6 +60,18 @@ export interface CurveTradeListenerDeps {
   /** Widest log window per tick (PONS_CURVE_TRADES_MAX_RANGE); defaults to PONS_MAX_BLOCK_RANGE_PER_POLL. */
   maxRange?: number;
   logger?: CurveTradeListenerLogger;
+  /**
+   * Phase 7D.5 — namespace for this listener's checkpoints. Set in `live-head` mode to
+   * `session:<id>:`, which keeps the durable `robinhood:*` rows untouched. Empty in
+   * `resume` mode, which is the pre-existing behaviour.
+   */
+  sessionPrefix?: string;
+  /**
+   * Phase 7D.5 — where to begin when this source has no checkpoint yet. In `live-head` mode
+   * this is the shared session boundary, so every stream starts from the same block instead
+   * of each picking its own lookback behind the tip.
+   */
+  freshStartHeight?: bigint;
 }
 
 interface CurveInfo {
@@ -81,10 +95,46 @@ export function selectCurveTrades(logs: Parameters<typeof ponsV2Adapter.decodeCu
   return { trades, foreign };
 }
 
-/** Whether a getLogs failure is about the window's size (as opposed to rate limits or endpoint health). */
-export function isSizeFailure(reason: string): boolean {
-  if (/no usable RPC endpoint|rate.?limit|429|too many requests|quota|cool/i.test(reason)) return false;
-  return /range|more than \d+ results|too many (results|logs)|response size|exceeds|timeout|timed out|Request failed|deadline/i.test(reason);
+/**
+ * How a failed `getLogs` should affect the window width.
+ *
+ * Phase 7D.5. The previous single boolean counted a bare "Request failed" — viem's
+ * wording for *any* non-2xx — and any timeout as proof the window was too wide. Measured
+ * on 2026-09-19 the window collapsed 1875 → 10 blocks and stayed pinned at the floor, so
+ * curve-trade ingestion advanced ~35 blocks/s against a 6.3M-block backlog while the
+ * provider was in fact happily serving 10,000-block windows at ~3,000 blocks/s.
+ *
+ * - `RANGE`  the provider named a range/result cap. Hard evidence: shrink and remember.
+ * - `SOFT`   a timeout or cross-provider deadline. A window that is too wide can cause
+ *            this, but so can congestion — shrink to make progress, remember nothing.
+ * - `NONE`   rate limits, cooldowns, no usable endpoint, transport faults. Nothing to do
+ *            with width: keep the window and let failover/backoff handle it.
+ */
+/** Never narrow below this: a 10-block window is the Alchemy free-tier cap, not a useful working width. */
+const MIN_RANGE = 10n;
+/** Clean ticks required before a remembered range cap is forgotten. */
+const CEILING_SUCCESSES = 20;
+
+export type WindowFailureKind = "RANGE" | "SOFT" | "NONE";
+
+export function classifyWindowFailure(reason: string): WindowFailureKind {
+  /**
+   * "No capable endpoint *right now*" is transient, and stalling on it is worse than
+   * narrowing. Measured 2026-09-19: once this case was excluded from narrowing entirely,
+   * curve-trade ingestion made zero progress for 11 minutes — the wide-range endpoint was
+   * being cooled down by timeouts under contention from the two discovery loops, leaving
+   * only 10-block-capped keys, and the listener kept asking them for 10,000 blocks.
+   *
+   * SOFT is the right answer: squeeze through at a smaller width, remember no ceiling, and
+   * spring straight back to full width on the first clean tick. A missing *configuration*
+   * is a different thing and still narrows nothing.
+   */
+  if (/no usable RPC endpoint is configured/i.test(reason)) return "NONE";
+  if (/no usable RPC endpoint for this request right now/i.test(reason)) return "SOFT";
+  if (/rate.?limit|429|too many requests|quota|cool/i.test(reason)) return "NONE";
+  if (isRangeLimitMessage(reason)) return "RANGE";
+  if (/timeout|timed out|deadline/i.test(reason)) return "SOFT";
+  return "NONE";
 }
 
 export class CurveTradeListener {
@@ -104,7 +154,12 @@ export class CurveTradeListener {
   /** Block refs survive failed ticks, so a retry resumes instead of re-reading every block. */
   private readonly blockRefs = new Map<string, { hash: string; timestamp: bigint }>();
 
+  private readonly sessionPrefix: string;
+  private readonly freshStartHeight: bigint | null;
+
   constructor(deps: CurveTradeListenerDeps) {
+    this.sessionPrefix = deps.sessionPrefix ?? "";
+    this.freshStartHeight = deps.freshStartHeight ?? null;
     this.chainClient = deps.chainClient;
     this.db = deps.db;
     this.config = deps.config;
@@ -120,7 +175,7 @@ export class CurveTradeListener {
   }
 
   async runOnce(): Promise<CurveTradeTickResult> {
-    const checkpointStore = new CheckpointStore(this.db);
+    const checkpointStore = new CheckpointStore(this.db, this.sessionPrefix);
 
     const latestResult = await this.chainClient.getBlockNumber();
     if (latestResult.status === "UNAVAILABLE") {
@@ -163,10 +218,18 @@ export class CurveTradeListener {
     if (checkpoint) {
       fromBlock = checkpoint.lastHeight + 1n;
     } else {
-      const earliest = this.startHeight ?? (await this.earliestLaunchHeight());
-      if (earliest === null) return { status: "NO_CURVES_KNOWN" };
-      fromBlock = earliest;
-      this.logger.warn(`No curve-trade checkpoint found — starting at height ${fromBlock} (earliest known Pons V2 launch).`);
+      // Phase 7D.5 — in live-head mode the session boundary wins over "earliest known
+      // launch": a local session watches current activity on tokens it already knows about,
+      // and must not silently replay a curve's entire history to get there.
+      if (this.freshStartHeight !== null) {
+        fromBlock = this.freshStartHeight;
+        this.logger.warn(`No curve-trade checkpoint for this session — starting at the session boundary, height ${fromBlock}.`);
+      } else {
+        const earliest = this.startHeight ?? (await this.earliestLaunchHeight());
+        if (earliest === null) return { status: "NO_CURVES_KNOWN" };
+        fromBlock = earliest;
+        this.logger.warn(`No curve-trade checkpoint found — starting at height ${fromBlock} (earliest known Pons V2 launch).`);
+      }
     }
 
     const effectiveTip = safeTip < barrierHeight ? safeTip : barrierHeight;
@@ -186,10 +249,21 @@ export class CurveTradeListener {
       // A window too large for the provider (result cap, response size, timeout) is retried smaller.
       // Rate limits and cooled-down endpoints are not about size: wait, keep the window.
       const width = toBlock - fromBlock + 1n;
-      if (isSizeFailure(logsResult.reason)) {
+      const kind = classifyWindowFailure(logsResult.reason);
+      if (kind !== "NONE") {
         const next = width / 2n;
-        this.range = next < 10n ? 10n : next;
-        this.ceiling = { width: (width * 3n) / 4n, successesLeft: 20 };
+        this.range = next < MIN_RANGE ? MIN_RANGE : next;
+        // Only hard evidence installs a ceiling. A ceiling must also never sit below the
+        // width we just dropped to, or `range < cap` is false forever and the window is
+        // pinned at the floor until 20 clean ticks happen to occur — which is exactly how
+        // this listener got stuck at 10 blocks.
+        if (kind === "RANGE") {
+          const remembered = (width * 3n) / 4n;
+          this.ceiling = { width: remembered > this.range ? remembered : this.range, successesLeft: CEILING_SUCCESSES };
+        }
+        this.logger.warn(
+          `curve-trade log window ${width} → ${this.range} blocks after a ${kind === "RANGE" ? "provider range cap" : "timeout"}: ${logsResult.reason.slice(0, 160)}`
+        );
       }
       await checkpointStore.recordFailure(CURVE_TRADE_CHECKPOINT_SOURCE, `getLogs(CurveBuy|CurveSell) over ${toBlock - fromBlock + 1n} blocks: ${logsResult.reason}`);
       return { status: "UNAVAILABLE", reason: `getLogs: ${logsResult.reason}` };
@@ -272,7 +346,7 @@ export class CurveTradeListener {
             update: { canonicalStatus: "CANONICAL", orphanedAt: null, sourceTimestamp },
           });
         }
-        await new CheckpointStore(tx).set(CURVE_TRADE_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight, timestamps.get(toBlock.toString()));
+        await new CheckpointStore(tx, this.sessionPrefix).set(CURVE_TRADE_CHECKPOINT_SOURCE, { lastHeight: toBlock, lastHash: toBlockRef.data.hash }, observedChainHeight, timestamps.get(toBlock.toString()));
         await recordChainBlockCheckpoint(tx, ROBINHOOD_CHAIN, toBlock, toBlockRef.data.hash, this.config.reorgMaxDepthBlocks);
       },
       { timeout: 60_000 }
@@ -281,7 +355,13 @@ export class CurveTradeListener {
     for (const h of timestamps.keys()) this.blockRefs.delete(h);
     if (this.ceiling && --this.ceiling.successesLeft <= 0) this.ceiling = null;
     const cap = this.ceiling && this.ceiling.width < this.maxRange ? this.ceiling.width : this.maxRange;
-    if (this.range < cap) this.range = this.range * 2n > cap ? cap : this.range * 2n;
+    if (this.range < cap) {
+      const grown = this.range * 2n > cap ? cap : this.range * 2n;
+      if (grown !== this.range) {
+        this.range = grown;
+        this.logger.info(`curve-trade log window grew to ${this.range} blocks (cap ${cap}).`);
+      }
+    }
     this.logger.info(`pons_v2 curve trade tick: processed blocks ${fromBlock}-${toBlock}, ${trades.length} trade(s) recorded, ${foreign} foreign log(s) dropped.`);
     return { status: "PROCESSED", fromBlock, toBlock, tradesRecorded: trades.length, foreignLogsDropped: foreign };
   }
@@ -319,7 +399,11 @@ export class CurveTradeListener {
         }
       })();
       await this.currentTick;
-      if (!this.stopping) this.timer = setTimeout(tick, result?.status === "PROCESSED" ? 0 : this.config.pollIntervalMs);
+      if (!this.stopping)
+        this.timer = setTimeout(
+          tick,
+          nextTickDelayMs({ processedWidth: processedWidth(result), maxRangePerPoll: Number(this.range), pollIntervalMs: this.config.pollIntervalMs })
+        );
     };
     this.timer = setTimeout(tick, 0);
   }

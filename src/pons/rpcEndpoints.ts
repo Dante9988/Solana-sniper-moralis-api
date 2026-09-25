@@ -60,6 +60,7 @@ export type RpcFailureClass =
   | "WRONG_CHAIN" // wrong chainId — never use, regardless of health
   | "STALE" // too far behind for the requested operation
   | "RANGE_LIMIT" // this endpoint's plan caps eth_getLogs ranges — try the next one, no cooldown
+  | "BOT_CHALLENGE" // a CDN/bot shield rejected the request before the node saw it — fix the request, not the key
   | "REQUEST_FAULT"; // revert / invalid params / unsupported method — do NOT fail over
 
 /** Cooldowns, in ms, applied to an endpoint after a failure of each class. */
@@ -75,6 +76,11 @@ export const COOLDOWN_MS: Record<RpcFailureClass, number> = {
   STALE: 30_000,
   // The endpoint is healthy; it just cannot serve this particular request shape.
   RANGE_LIMIT: 0,
+  // The node is fine and the key is fine; a shield in front of it refused the request
+  // shape. A 30-minute quota cooldown here is actively harmful — it parks a healthy
+  // endpoint — so this is short, and the distinct label is what tells an operator to
+  // look at request headers instead of at billing.
+  BOT_CHALLENGE: 60_000,
   REQUEST_FAULT: 0,
 };
 
@@ -154,6 +160,25 @@ const QUOTA_PATTERNS = [
 const RATE_LIMIT_PATTERNS = [/rate limit/i, /too many requests/i, /throttl/i];
 
 /**
+ * A CDN bot shield answering instead of the node. Observed 2026-09-19: Cloudflare in
+ * front of `rpc-robinhood.blockmachine.io` returned `HTTP 403` with the `text/plain`
+ * body `error code: 1010` to requests that carried no `User-Agent` header.
+ *
+ * This must not be read as a dead key. The endpoint and the credential are both healthy;
+ * the request never reached the node. Misfiled as QUOTA_EXHAUSTED it earned a 30-minute
+ * cooldown on the only endpoint able to serve wide `eth_getLogs` ranges, which is how
+ * Pons ingestion came to look like a provider-capacity problem (§28).
+ */
+const BOT_CHALLENGE_PATTERNS = [
+  /error code: 10\d\d/i,
+  /\bcf-mitigated\b/i,
+  /just a moment/i,
+  /attention required.*cloudflare/i,
+  /checking your browser/i,
+  /enable javascript and cookies to continue/i,
+];
+
+/**
  * Provider plans that cap eth_getLogs block ranges. Observed 2026-09-15 on Robinhood Chain's
  * Alchemy free tier (JSON-RPC -32600): "Under the Free tier plan, you can make eth_getLogs
  * requests with up to a 10 block range." Other providers word it as a maximum range or a
@@ -165,6 +190,16 @@ const RANGE_LIMIT_PATTERNS = [
   /(max(imum)?|exceed(s|ed)?) (the )?(allowed )?block range/i,
   /query returned more than \d+ results/i,
   /log response size exceeded/i,
+  /**
+   * Phase 7D.5 — the size cap can also be enforced by the *client*. A topic-only
+   * `eth_getLogs` over 10,000 blocks of Pons curve trades returns ~10.5 MB and viem
+   * refuses it with "HTTP response body exceeded the size limit. Max: 10485760 bytes".
+   * That is the window being too wide, and nothing at all to do with endpoint health:
+   * classified as CONNECTION it cooled down the one endpoint able to serve wide ranges,
+   * while the listener kept the window and retried the same oversized request.
+   */
+  /response body exceeded the size limit/i,
+  /response size (limit )?exceeded/i,
 ];
 
 /**
@@ -199,10 +234,24 @@ export interface ClassifyInput {
  * Classify a failure. Order matters: a 429 carrying a monthly-quota message is a quota
  * exhaustion, not a transient throttle, and the two get very different cooldowns.
  */
+/**
+ * Does this message say the provider refused the *block range* (as opposed to being
+ * throttled, sick, or unreachable)?
+ *
+ * Exported so the adaptive log windows in the listeners narrow on exactly the same
+ * evidence the failover classifier uses. Phase 7D.5: `curveTradeListener` previously kept
+ * its own, much looser test that counted a bare "Request failed" as a range problem, so
+ * any transport hiccup halved the window; it collapsed to the 10-block floor and stayed
+ * there, which is why curve-trade ingestion ran at ~35 blocks/s against a 6.3M backlog.
+ */
+export function isRangeLimitMessage(message: string): boolean {
+  return RANGE_LIMIT_PATTERNS.some((p) => p.test(message));
+}
+
 export function classifyRpcFailure(input: ClassifyInput): RpcFailureClass {
   const message = input.message ?? "";
 
-  if (RANGE_LIMIT_PATTERNS.some((p) => p.test(message))) return "RANGE_LIMIT";
+  if (isRangeLimitMessage(message)) return "RANGE_LIMIT";
   if (REQUEST_FAULT_PATTERNS.some((p) => p.test(message))) return "REQUEST_FAULT";
   if (QUOTA_PATTERNS.some((p) => p.test(message))) return "QUOTA_EXHAUSTED";
 
@@ -210,6 +259,10 @@ export function classifyRpcFailure(input: ClassifyInput): RpcFailureClass {
     return "RATE_LIMITED";
   }
   if (input.status === 402) return "QUOTA_EXHAUSTED";
+  // A 403 that carries a bot-shield fingerprint is about the request, not the key — keep
+  // it separate so a healthy endpoint is not parked for 30 minutes. Checked before the
+  // generic 401/403 rule below, which still owns a plain "Forbidden" (a revoked key).
+  if (BOT_CHALLENGE_PATTERNS.some((p) => p.test(message))) return "BOT_CHALLENGE";
   // 401/403 usually mean a bad or exhausted key. Treated as quota-like: a long cooldown,
   // because retrying in 10s will fail identically.
   if (input.status === 401 || input.status === 403) return "QUOTA_EXHAUSTED";

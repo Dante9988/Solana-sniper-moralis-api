@@ -21,6 +21,23 @@ export type ChainClientResult<T> =
 
 const SOURCE = "robinhood-chain-rpc";
 
+/**
+ * Identify this client on every RPC request.
+ *
+ * Phase 7D.5: `rpc-robinhood.blockmachine.io` — the only configured endpoint that serves
+ * `eth_getLogs` over wide block ranges — sits behind Cloudflare, which answers a request
+ * carrying **no** `User-Agent` with `HTTP 403, error code: 1010` and a `text/plain` body.
+ * viem's fetch transport sets no `User-Agent`, so every wide-range log query to that host
+ * failed before it reached the node, and failover fell back to the Alchemy free-tier
+ * endpoints whose plan caps `eth_getLogs` at 10 blocks. That is what stalled Pons
+ * ingestion, not provider capacity: measured 2026-09-19, the same host with this header
+ * serves 10,000-block ranges at ~13.5k blocks/s (filtered) and ~3k blocks/s (topic-only).
+ *
+ * Any non-empty `User-Agent` is accepted, so this states honestly what the client is
+ * rather than impersonating a browser.
+ */
+const RPC_USER_AGENT = "OnlyPumpBackend/1.0 (+https://onlypump.me)";
+
 function unavailable<T>(code: ChainClientFailureCode, reason: string, attempts: number): ChainClientResult<T> {
   // Provider errors embed the request URL, and that URL carries the API key. This result
   // is surfaced through the HTTP API, so redacting here — at the single point every
@@ -182,7 +199,10 @@ export class PonsChainClient implements ChainCaller, EventLogReader {
           nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
           rpcUrls: { default: { http: [options.config.rpcHttpUrl] } },
         }),
-        transport: http(options.config.rpcHttpUrl, { timeout: this.requestTimeoutMs }),
+        transport: http(options.config.rpcHttpUrl, {
+          timeout: this.requestTimeoutMs,
+          fetchOptions: { headers: { "User-Agent": RPC_USER_AGENT } },
+        }),
       }) as PublicClient);
   }
 

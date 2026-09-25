@@ -902,6 +902,125 @@ model ChainTrade {
 /// Phase 7B.5A §5/§9 extends this with the persisted, backend-owned facts the
 /// source-health projection (sourceHealth.ts) reads — never inferred from a
 /// live RPC call per API request, and never derived in the browser.
+/// Phase 7D.5 — one local observation session.
+///
+/// Local development starts from the current chain head rather than replaying a
+/// historical backlog. A session records the boundary that decision creates, so every
+/// worker in a stack can share it: the block the stack agreed to start after, its hash and
+/// its chain timestamp.
+///
+/// Checkpoints for a session are written under a prefixed `source`
+/// (`session:<id>:<base>`), which is what keeps the durable `robinhood:*` checkpoints
+/// untouched. Nothing here pretends a historical range was processed — an old durable
+/// checkpoint is simply not consulted in `live-head` mode.
+///
+/// `resume` mode creates no session and behaves exactly as before, which is what hosted
+/// environments will use.
+/// Phase 7D.5 — per-token, on-demand trade history backfill.
+///
+/// Chain-wide trade ingestion is a topic-only `eth_getLogs` across every token, which is an
+/// indexer workload. A *chart* needs one token's logs, which is an address-filtered query
+/// the node answers from an index. Measured 2026-09-20: a token launched 5.1M blocks
+/// earlier returned its complete history — 9,781 trades — in **11 requests and 7.0s**.
+///
+/// So history is fetched per token, when someone actually opens it, and remembered here so
+/// it happens once rather than on every view.
+/// Phase 7D.5.1 — a MoonPay hosted-checkout order.
+///
+/// Four states are deliberately kept apart here, because collapsing any two of them
+/// misleads the user:
+///   * our business verification / production activation (config, not this table)
+///   * the customer's MoonPay identity verification (MoonPay's, never mirrored as a badge)
+///   * payment/order status (`status`)
+///   * actual on-chain delivery (`cryptoTransactionId`, `deliveredAmount`)
+/// A paid order that has not been delivered is not a completed purchase.
+model MoonPayOrder {
+  id                    String   @id @default(uuid())
+  userId                String
+  /// Our id, sent as externalTransactionId so MoonPay's events map back to a user.
+  externalTransactionId String   @unique
+  /// MoonPay's id, unknown until their first event.
+  providerTransactionId String?   @unique
+  idempotencyKey        String?
+  redirectUrl           String?
+  providerUpdatedAt     DateTime?
+  quotedAmount          String?
+  lastReconciledAt       DateTime?
+  reconciliationError   String?
+  environment           String
+  status                String
+  baseCurrencyCode      String
+  baseCurrencyAmount    String
+  currencyCode          String
+  walletAddress         String
+  network               String
+  cryptoTransactionId   String?
+  deliveredAmount       String?
+  failureReason         String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @default(now()) @updatedAt
+
+  @@index([userId, createdAt])
+  @@unique([userId, environment, idempotencyKey])
+  @@index([status, lastReconciledAt])
+}
+
+/// Phase 7D.5.1 — every verified webhook, recorded before it is applied.
+///
+/// MoonPay sends no event id, so identity is a hash of the raw body. The unique index is
+/// what makes a redelivery a no-op instead of a second state transition.
+model MoonPayWebhookEvent {
+  id                    String   @id @default(uuid())
+  signatureTimestamp    BigInt
+  payloadHash           String   @unique
+  semanticHash          String?  @unique
+  eventType             String
+  providerTransactionId String?
+  receivedAt            DateTime @default(now())
+}
+
+model TokenTradeBackfill {
+  chain         String
+  tokenAddress  String
+  /// PENDING | RUNNING | COMPLETE | PARTIAL | FAILED
+  status        String
+  fromBlock     BigInt
+  toBlock       BigInt
+  /// Highest block written so far; a resumed run continues from here.
+  cursor        BigInt
+  tradesWritten Int       @default(0)
+  logsScanned   Int       @default(0)
+  requests      Int       @default(0)
+  /// Why a bounded run stopped early — surfaced, never swallowed.
+  stoppedReason String?
+  lastError     String?
+  startedAt     DateTime  @default(now())
+  updatedAt     DateTime  @default(now()) @updatedAt
+  completedAt   DateTime?
+
+  @@id([chain, tokenAddress])
+  @@index([chain, status])
+}
+
+model IngestionSession {
+  id             String    @id @default(uuid())
+  chain          String
+  /// "live-head" — the only mode that creates a session row.
+  mode           String
+  /// The observation boundary. Ingestion starts at `startBlock + 1`; `startBlock` itself
+  /// is the last block deliberately NOT processed, so the boundary is unambiguous.
+  startBlock     BigInt
+  startHash      String
+  /// The chain's own timestamp for `startBlock`, never wall clock.
+  startTimestamp DateTime
+  createdAt      DateTime  @default(now())
+  /// Set when a later session supersedes this one. The newest row with a null value is the
+  /// active session that restarting workers rejoin.
+  endedAt        DateTime?
+
+  @@index([chain, endedAt, createdAt])
+}
+
 model ChainIngestionCheckpoint {
   source                  String    @id
   lastHeight              BigInt

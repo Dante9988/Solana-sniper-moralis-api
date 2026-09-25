@@ -27,19 +27,70 @@ import { computeTrending } from "../market/trendingVolume";
 import { fillMissingTokenMetadata } from "../metadata/alchemyMetadataFallback";
 import { ChainlinkQuoteUsdRateProvider } from "../usd/chainlinkQuoteUsdRateProvider";
 import { ponsLogger, ponsComponentLogger } from "../logger";
+import { loadIngestionMode, resolveSession, checkpointSourceFor, sessionStartHeight, describeSession } from "../ingestionSession";
+import { ROBINHOOD_CHAIN } from "../discoveryListener";
+
+/**
+ * Phase 7D.5 — reversible, local switches for the Pons **V1** loops.
+ *
+ * All three default to enabled, so an existing deployment behaves exactly as before and
+ * nothing here changes production unless the variable is set.
+ *
+ * Why they exist: V1 and V2 ingestion share one usable wide-range RPC endpoint, and the
+ * V1 loops can be measured against the V2 ones by pausing them. Sampled on 2026-09-19,
+ * `PONS_FACTORY` emitted 444 logs around block 20M and 40 around 30M, then **nothing**
+ * across every sampled window from block 40M to the tip (~27M blocks). It is dormant, not
+ * dead — and its active era sits far below any range discovery has ever scanned, because a
+ * fresh source starts near the tip.
+ *
+ * Pausing is safe and loses no data: checkpoints are left untouched, so re-enabling resumes
+ * exactly where it stopped, with the same reorg-recovery behaviour. Discovery, trades and
+ * graduation are separate switches because their dependencies differ — the V1 trade
+ * listener is barriered on the V1 discovery checkpoint, so pausing discovery alone simply
+ * parks trades rather than corrupting them.
+ */
+export function loopEnabled(name: string): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === "") return true;
+  return !(raw === "false" || raw === "0" || raw === "off" || raw === "no");
+}
 
 async function main(): Promise<void> {
   const config = loadRobinhoodChainConfig();
   const chainClient = new FailoverChainClient({ config });
   const db = new PrismaClient();
 
-  const discoveryListener = new DiscoveryListener({ chainClient, db, config, logger: ponsComponentLogger("pons:discovery") });
-  const tradeListener = new TradeListener({ chainClient, db, config, logger: ponsComponentLogger("pons:trades") });
+  /**
+   * Phase 7D.5 — resolve the ingestion mode and, in live-head, the shared session.
+   *
+   * `resolveSession` *joins* an existing active session rather than cutting a new boundary,
+   * so restarting one worker mid-session rejoins its siblings instead of opening a gap.
+   * Only `dev-stack.sh start` (all services) opens a new one — see `session:start`.
+   */
+  const mode = loadIngestionMode();
+  const session = await resolveSession(db, chainClient, ROBINHOOD_CHAIN, mode);
+  const sessionPrefix = session ? `session:${session.id}:` : "";
+  const freshStartHeight = session ? sessionStartHeight(session) : undefined;
+  ponsLogger.info(describeSession(mode, session));
+  const sessionOpts = { sessionPrefix, freshStartHeight };
+
+  const discoveryListener = new DiscoveryListener({ chainClient, db, config, ...sessionOpts, logger: ponsComponentLogger("pons:discovery") });
+  const tradeListener = new TradeListener({ chainClient, db, config, ...sessionOpts, logger: ponsComponentLogger("pons:trades") });
   const graduationPoller = new GraduationPoller({ chainClient, db, config, logger: ponsComponentLogger("pons:graduation") });
 
-  discoveryListener.start();
-  tradeListener.start();
-  graduationPoller.start();
+  const v1Discovery = loopEnabled("PONS_V1_DISCOVERY_ENABLED");
+  const v1Trades = loopEnabled("PONS_V1_TRADES_ENABLED");
+  const v1Graduation = loopEnabled("PONS_V1_GRADUATION_ENABLED");
+
+  if (v1Discovery) discoveryListener.start();
+  if (v1Trades) tradeListener.start();
+  if (v1Graduation) graduationPoller.start();
+  if (!v1Discovery || !v1Trades || !v1Graduation) {
+    ponsLogger.warn(
+      { discovery: v1Discovery, trades: v1Trades, graduation: v1Graduation },
+      "Pons V1 loop(s) paused by configuration — checkpoints are untouched, so re-enabling resumes from where each stopped"
+    );
+  }
 
   // Phase 7D §7 — Pons V2 (Uniswap V4 graduation + transaction history) is
   // optional at the config level: a deployment that hasn't set
@@ -51,14 +102,15 @@ async function main(): Promise<void> {
   let curveTradeListener: CurveTradeListener | null = null;
   try {
     const v2Config = loadPonsV2Config();
-    discoveryV2Listener = new DiscoveryV2Listener({ chainClient, db, config, v2Config, logger: ponsComponentLogger("pons:discovery-v2") });
-    tradeV2Listener = new TradeV2Listener({ chainClient, db, config, v2Config, logger: ponsComponentLogger("pons:trades-v2") });
+    discoveryV2Listener = new DiscoveryV2Listener({ chainClient, db, config, v2Config, ...sessionOpts, logger: ponsComponentLogger("pons:discovery-v2") });
+    tradeV2Listener = new TradeV2Listener({ chainClient, db, config, v2Config, ...sessionOpts, logger: ponsComponentLogger("pons:trades-v2") });
     // Phase 7D.4 §3 — pre-graduation bonding-curve trades.
     const curveStart = process.env.PONS_CURVE_TRADES_START_HEIGHT?.trim();
     curveTradeListener = new CurveTradeListener({
       chainClient,
       db,
       config,
+      ...sessionOpts,
       startHeight: curveStart ? BigInt(curveStart) : undefined,
       maxRange: process.env.PONS_CURVE_TRADES_MAX_RANGE?.trim() ? Number(process.env.PONS_CURVE_TRADES_MAX_RANGE) : undefined,
       logger: ponsComponentLogger("pons:curve-trades"),
@@ -124,6 +176,8 @@ async function main(): Promise<void> {
     clearInterval(metadataTimer);
     snapshots.stop();
     clearInterval(trendingTimer);
+    // Safe on a listener that was never started: stop() clears a null timer and
+    // waitForIdle() awaits an undefined tick.
     discoveryListener.stop();
     tradeListener.stop();
     graduationPoller.stop();
