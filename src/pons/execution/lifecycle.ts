@@ -48,7 +48,16 @@ const TRANSITIONS: Readonly<Record<ExecutionState, readonly ExecutionState[]>> =
   QUOTE_READY: ["SIMULATING", "READY_FOR_REVIEW", "USER_REJECTED"],
   SIMULATING: ["READY_FOR_REVIEW", "SIMULATION_FAILED"],
   SIMULATION_FAILED: [],
-  READY_FOR_REVIEW: ["AWAITING_SIGNATURE", "USER_REJECTED"],
+  /**
+   * SUBMITTED is reachable directly, not only through AWAITING_SIGNATURE.
+   *
+   * The wallet prompt happens entirely in the user's browser; this server never observes
+   * it. A client MAY report AWAITING_SIGNATURE so a second tab sees "waiting for your
+   * wallet", but it is not obliged to, and a client that simply comes back with a hash
+   * must not be refused. Requiring the intermediate state would make an optional courtesy
+   * load-bearing for recording a transaction that has already been broadcast.
+   */
+  READY_FOR_REVIEW: ["AWAITING_SIGNATURE", "SUBMITTED", "USER_REJECTED"],
   AWAITING_SIGNATURE: ["SUBMITTED", "USER_REJECTED"],
   USER_REJECTED: [],
   SUBMITTED: ["CONFIRMING", "CONFIRMED", "REVERTED", "DROPPED", "REPLACED", "UNKNOWN"],
