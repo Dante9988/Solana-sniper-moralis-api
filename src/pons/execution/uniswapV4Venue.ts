@@ -62,10 +62,6 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
     }
     const chain = checkChain(quote);
     if (chain) return chain;
-    const validity = await checkQuoteStillValid(quote, deps.caller, now);
-    if (validity) return validity;
-    const balances = await checkBalances(quote, walletAddress, deps);
-    if (balances) return balances;
 
     if (quote.venueState.kind !== "pool") {
       return { status: "REFUSED", reason: "VENUE_MISMATCH", detail: "quote carries no pool state" };
@@ -76,11 +72,24 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
     const router = UNISWAP_V4_ROBINHOOD.universalRouter;
     const poolKey = quote.venueState.poolKey as PoolKeyHex;
 
-    // Permit2's allowance field is uint160. A larger input cannot be approved at all, and
-    // saying so is better than emitting calldata that silently truncates.
+    // Permit2's allowance field is uint160. A larger input cannot be approved at all, so
+    // this is refused before any chain read: it is a pure arithmetic fact, and emitting
+    // calldata that silently truncated the allowance would be far worse than refusing.
     if (!isNative(quote.input.currency) && amountIn > PERMIT2_MAX_AMOUNT) {
       return { status: "REFUSED", reason: "UNSUPPORTED_ROUTE", detail: "this amount exceeds the maximum a Permit2 approval can carry" };
     }
+
+    const validity = await checkQuoteStillValid(quote, deps.caller, now);
+    if (validity) return validity;
+    const balances = await checkBalances(quote, walletAddress, deps);
+    if (balances) return balances;
+
+    // Both the swap deadline and the Permit2 expiration are compared by the chain against
+    // block.timestamp, so both are derived from the quote's own block timestamp. Deriving
+    // the expiration from this process's wall clock instead would let a clock offset
+    // produce an approval that lapses before the swap it authorises, reverting with
+    // AllowanceExpired even though the user approved.
+    const chainNowSeconds = BigInt(quote.block.timestamp);
 
     const approvals: ApprovalRequirement[] = [];
     if (!isNative(quote.input.currency)) {
@@ -108,14 +117,12 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
           spender: router,
           amount: amountIn,
           current: permit2.value,
-          nowSeconds: BigInt(Math.floor(now.getTime() / 1000)),
+          nowSeconds: chainNowSeconds,
         })
       );
     }
 
-    // The deadline is measured from the quote's own block timestamp, which is the clock
-    // the chain will compare it against — not this process's wall clock.
-    const deadline = BigInt(quote.block.timestamp) + EXECUTION_DEADLINE_SECONDS;
+    const deadline = chainNowSeconds + EXECUTION_DEADLINE_SECONDS;
     const zeroForOne = quote.input.currency.toLowerCase() === poolKey.currency0.toLowerCase();
     const { commands, inputs } = encodeRouterExactInSingle({ poolKey, zeroForOne, amountIn, minimumOut });
 

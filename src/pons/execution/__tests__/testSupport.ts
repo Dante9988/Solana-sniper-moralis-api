@@ -18,14 +18,20 @@ export const WALLET = "0x1111111111111111111111111111111111111111";
 export const TOKEN = "0x2222222222222222222222222222222222222222";
 export const CURVE = "0x3333333333333333333333333333333333333333";
 export const USDG = "0x4444444444444444444444444444444444444444";
-export const BLOCK = { number: "62211539", hash: "0xaaaa000000000000000000000000000000000000000000000000000000000000", timestamp: "1800000000" };
+/**
+ * The block is five seconds older than `quotedAt` (1790294400), as a real quote's block is.
+ * The two clocks are deliberately close but NOT equal, so a test can tell a value derived
+ * from the chain's timestamp apart from one derived from the server's wall clock.
+ */
+export const BLOCK = { number: "62211539", hash: "0xaaaa000000000000000000000000000000000000000000000000000000000000", timestamp: "1790294395" };
+export const BLOCK_SECONDS = BigInt(BLOCK.timestamp);
 
 function available<T>(data: T): ChainClientResult<T> {
   return { status: "AVAILABLE", data, source: "test", fetchedAt: new Date(0), attempts: 1 };
 }
 
 export function unavailable<T>(reason = "no provider"): ChainClientResult<T> {
-  return { status: "UNAVAILABLE", source: "test", fetchedAt: new Date(0), code: "NETWORK", reason, attempts: 1 };
+  return { status: "UNAVAILABLE", source: "test", fetchedAt: new Date(0), code: "NETWORK_ERROR", reason, attempts: 1 };
 }
 
 export interface FakeCallerOptions {
