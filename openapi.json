@@ -5225,6 +5225,715 @@
           "chainlinkFeed",
           "coingeckoUrl"
         ]
+      },
+      "CreateExecutionIntentResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "READY"
+                ]
+              },
+              "intentId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "state": {
+                "$ref": "#/components/schemas/ExecutionState"
+              },
+              "plan": {
+                "$ref": "#/components/schemas/ExecutionPlan"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "intentId",
+              "state",
+              "plan"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "REFUSED"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "example": "REAL_TRADING_DISABLED"
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "apiVersion": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "UNAVAILABLE"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "apiVersion",
+              "status",
+              "reason",
+              "detail",
+              "retryable"
+            ]
+          }
+        ]
+      },
+      "ExecutionState": {
+        "type": "string",
+        "enum": [
+          "QUOTE_READY",
+          "SIMULATING",
+          "SIMULATION_FAILED",
+          "READY_FOR_REVIEW",
+          "AWAITING_SIGNATURE",
+          "USER_REJECTED",
+          "SUBMITTED",
+          "CONFIRMING",
+          "CONFIRMED",
+          "REVERTED",
+          "DROPPED",
+          "REPLACED",
+          "UNKNOWN"
+        ]
+      },
+      "ExecutionPlan": {
+        "type": "object",
+        "properties": {
+          "venue": {
+            "$ref": "#/components/schemas/ExecutionVenue"
+          },
+          "route": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "BONDING_CURVE",
+                  "UNIVERSAL_ROUTER"
+                ]
+              },
+              "target": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              }
+            },
+            "required": [
+              "kind",
+              "target"
+            ]
+          },
+          "chainId": {
+            "type": "integer"
+          },
+          "walletAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$",
+            "description": "The wallet that will sign. Claimed by the caller, not cryptographically proven."
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "tokenAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalRequirement"
+            },
+            "description": "In order. Every unsatisfied approval must be signed and confirmed before the swap."
+          },
+          "swap": {
+            "$ref": "#/components/schemas/UnsignedTransaction"
+          },
+          "poolId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "deadline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "Unix seconds; null on the bonding curve, which has no deadline.",
+            "example": "10000000000000000"
+          },
+          "expectedOutput": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "minimumOutput": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "quoteBlock": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              },
+              "hash": {
+                "type": "string"
+              },
+              "timestamp": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              }
+            },
+            "required": [
+              "number",
+              "hash",
+              "timestamp"
+            ]
+          },
+          "calldataVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "venue",
+          "route",
+          "chainId",
+          "walletAddress",
+          "side",
+          "tokenAddress",
+          "approvals",
+          "swap",
+          "poolId",
+          "deadline",
+          "expectedOutput",
+          "minimumOutput",
+          "quoteBlock",
+          "calldataVersion"
+        ]
+      },
+      "ExecutionVenue": {
+        "type": "string",
+        "enum": [
+          "ROBINHOOD_PONS_CURVE",
+          "ROBINHOOD_UNISWAP_V4"
+        ]
+      },
+      "ApprovalRequirement": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ERC20_TO_CURVE",
+              "ERC20_TO_PERMIT2",
+              "PERMIT2_TO_ROUTER"
+            ]
+          },
+          "token": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "tokenSymbol": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "spender": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "required": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Exactly the trade's input amount. Never an unlimited allowance.",
+            "example": "10000000000000000"
+          },
+          "current": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "currentExpiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Permit2 allowances expire; null for a plain ERC-20 allowance."
+          },
+          "satisfied": {
+            "type": "boolean"
+          },
+          "transaction": {
+            "$ref": "#/components/schemas/UnsignedTransaction"
+          }
+        },
+        "required": [
+          "kind",
+          "token",
+          "tokenSymbol",
+          "spender",
+          "required",
+          "current",
+          "currentExpiresAt",
+          "satisfied",
+          "transaction"
+        ]
+      },
+      "UnsignedTransaction": {
+        "type": "object",
+        "properties": {
+          "chainId": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "data": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]*$"
+          },
+          "value": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Native value to attach, in wei.",
+            "example": "10000000000000000"
+          },
+          "gasLimit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "Null means the wallet should estimate.",
+            "example": "10000000000000000"
+          },
+          "description": {
+            "type": "string",
+            "description": "Plain-language sentence to show the user before they sign."
+          }
+        },
+        "required": [
+          "chainId",
+          "to",
+          "data",
+          "value",
+          "gasLimit",
+          "description"
+        ]
+      },
+      "CreateExecutionIntentRequest": {
+        "type": "object",
+        "properties": {
+          "quoteId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "simulationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "walletAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          }
+        },
+        "required": [
+          "quoteId",
+          "walletAddress"
+        ]
+      },
+      "ExecutionResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "execution": {
+            "$ref": "#/components/schemas/Execution"
+          }
+        },
+        "required": [
+          "apiVersion",
+          "execution"
+        ]
+      },
+      "Execution": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ExecutionState"
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "User-facing wording for `state`, owned by the backend so the UI and API cannot drift."
+          },
+          "chain": {
+            "type": "string"
+          },
+          "chainId": {
+            "type": "integer"
+          },
+          "walletAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "tokenAddress": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{40}$"
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "buy",
+              "sell"
+            ]
+          },
+          "venue": {
+            "$ref": "#/components/schemas/ExecutionVenue"
+          },
+          "route": {
+            "type": "string"
+          },
+          "input": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decimals": {
+                "type": "integer"
+              },
+              "amount": {
+                "type": "string",
+                "pattern": "^\\d+$",
+                "description": "Non-negative integer in base units, as a decimal string.",
+                "example": "10000000000000000"
+              }
+            },
+            "required": [
+              "currency",
+              "symbol",
+              "decimals",
+              "amount"
+            ]
+          },
+          "output": {
+            "type": "object",
+            "properties": {
+              "currency": {
+                "type": "string",
+                "pattern": "^0x[0-9a-fA-F]{40}$"
+              },
+              "symbol": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decimals": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "currency",
+              "symbol",
+              "decimals"
+            ]
+          },
+          "expectedOutput": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "minimumOutput": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "slippageBps": {
+            "type": "integer"
+          },
+          "quoteSnapshotId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "simulationSnapshotId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "failureReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "submissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecutionSubmission"
+            }
+          },
+          "paper": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "stateLabel",
+          "chain",
+          "chainId",
+          "walletAddress",
+          "tokenAddress",
+          "side",
+          "venue",
+          "route",
+          "input",
+          "output",
+          "expectedOutput",
+          "minimumOutput",
+          "slippageBps",
+          "quoteSnapshotId",
+          "simulationSnapshotId",
+          "failureReason",
+          "createdAt",
+          "updatedAt",
+          "submissions",
+          "paper"
+        ]
+      },
+      "ExecutionSubmission": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "transactionHash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$"
+          },
+          "submittedAt": {
+            "type": "string"
+          },
+          "receipt": {
+            "$ref": "#/components/schemas/ExecutionReceipt"
+          }
+        },
+        "required": [
+          "id",
+          "transactionHash",
+          "submittedAt",
+          "receipt"
+        ]
+      },
+      "ExecutionReceipt": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ExecutionState"
+          },
+          "blockNumber": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "blockHash": {
+            "type": "string"
+          },
+          "gasUsed": {
+            "type": "string",
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "effectiveGasPrice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "actualInput": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "From the venue's own event. Null when no recognised event was found — never back-filled from the quote.",
+            "example": "10000000000000000"
+          },
+          "actualOutput": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "Non-negative integer in base units, as a decimal string.",
+            "example": "10000000000000000"
+          },
+          "matchedWallet": {
+            "type": "boolean",
+            "description": "The venue's event named this wallet as recipient. Always false on Uniswap V4, whose Swap event carries no recipient."
+          },
+          "failureReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reconciledAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "blockNumber",
+          "blockHash",
+          "gasUsed",
+          "effectiveGasPrice",
+          "actualInput",
+          "actualOutput",
+          "matchedWallet",
+          "failureReason",
+          "reconciledAt"
+        ]
+      },
+      "CreateExecutionSubmissionRequest": {
+        "type": "object",
+        "properties": {
+          "transactionHash": {
+            "type": "string",
+            "pattern": "^0x[0-9a-fA-F]{64}$",
+            "description": "The hash the user's wallet returned. Never a signature or a signed payload."
+          }
+        },
+        "required": [
+          "transactionHash"
+        ]
+      },
+      "ExecutionListResponse": {
+        "type": "object",
+        "properties": {
+          "apiVersion": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "executions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Execution"
+            }
+          }
+        },
+        "required": [
+          "apiVersion",
+          "executions"
+        ]
       }
     },
     "parameters": {}
@@ -8413,6 +9122,324 @@
             }
           },
           "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/executions": {
+      "post": {
+        "summary": "Prepare one real trade for the caller's own wallet to sign: validates the quote is fresh and its block canonical, checks balances and allowances, and returns approval and swap calldata. Nothing is signed or broadcast here, and no key ever reaches this server. Refused with REAL_TRADING_DISABLED unless the operator has explicitly enabled real trading.",
+        "tags": [
+          "executions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExecutionIntentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing intent replayed for the same Idempotency-Key, or a refusal/unavailable result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateExecutionIntentResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Execution prepared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateExecutionIntentResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED — the same key was already used for a different trade",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "The caller's real trades, newest first, with submissions and reconciled receipts. This is what restores pending trade status after a reload.",
+        "tags": [
+          "executions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Executions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/executions/{intentId}/submissions": {
+      "post": {
+        "summary": "Record the transaction hash the user's wallet returned. This does NOT mark the trade successful — it moves to SUBMITTED, and only a reconciled chain receipt can take it further. One hash reconciles to exactly one execution.",
+        "tags": [
+          "executions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "intentId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateExecutionSubmissionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hash already recorded for this trade; the existing state is returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Submission recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "EXECUTION_CONFLICT — the hash belongs to another trade, or this trade cannot accept one",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/executions/{intentId}": {
+      "get": {
+        "summary": "One of the caller's real trades.",
+        "tags": [
+          "executions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "required": true,
+            "name": "intentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Execution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Standard error envelope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
             "description": "Standard error envelope",
             "content": {
               "application/json": {

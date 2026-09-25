@@ -27,6 +27,7 @@ import { createMeRouter } from "./routes/me";
 import { createRealtimeTicketsRouter } from "./routes/realtimeTickets";
 import { createRobinhoodTokensRouter } from "./routes/robinhoodTokens";
 import { createCalloutsRouter } from "./routes/callouts";
+import { createExecutionsRouter } from "./routes/executions";
 import { createPaperTradingRouter } from "./routes/paperTrading";
 import { createMarketDataRouter } from "./routes/marketData";
 import { createPracticeRouter } from "./routes/practice";
@@ -93,6 +94,7 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   // /me/paper-positions. Registered before the GET-only robinhood router; the paths do not
   // overlap, but keeping the more specific writers first keeps the intent obvious.
   app.use("/api/v1", createPaperTradingRouter(db, config, deps));
+  app.use("/api/v1", createExecutionsRouter(db, config, deps));
   app.use("/api/v1", createMarketDataRouter(db, config, deps));
   app.use("/api/v1", createPracticeRouter(db, config, deps));
   app.use("/api/v1", createVanityRouter(db, config, deps));

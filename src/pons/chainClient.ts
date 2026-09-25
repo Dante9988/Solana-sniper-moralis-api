@@ -36,7 +36,8 @@ const SOURCE = "robinhood-chain-rpc";
  * Any non-empty `User-Agent` is accepted, so this states honestly what the client is
  * rather than impersonating a browser.
  */
-const RPC_USER_AGENT = "OnlyPumpBackend/1.0 (+https://onlypump.me)";
+/** Exported so every outbound Robinhood RPC client identifies itself the same way; see the comment above. */
+export const RPC_USER_AGENT = "OnlyPumpBackend/1.0 (+https://onlypump.me)";
 
 function unavailable<T>(code: ChainClientFailureCode, reason: string, attempts: number): ChainClientResult<T> {
   // Provider errors embed the request URL, and that URL carries the API key. This result

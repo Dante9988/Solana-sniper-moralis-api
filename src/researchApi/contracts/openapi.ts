@@ -37,6 +37,14 @@ import {
   SimulationRequestSchema,
   SimulationResponseSchema,
 } from "./paperTrading";
+import {
+  CreateIntentRequestSchema,
+  CreateIntentResponseSchema,
+  CreateSubmissionRequestSchema,
+  ExecutionIdParamSchema,
+  ExecutionListResponseSchema,
+  ExecutionResponseSchema,
+} from "./executions";
 import { TokenMarketDataResponseSchema } from "./marketData";
 import {
   CompareSizesRequestSchema,
@@ -673,6 +681,75 @@ registry.registerPath({
   tags: ["markets"],
   request: { params: MarketSegmentParamSchema, query: MarketListQuerySchema },
   responses: { 200: { description: "Market list", content: { "application/json": { schema: MarketListResponseSchema } } }, 400: errorResponse },
+});
+
+// --- Phase 7E.1 — real, wallet-signed execution on Robinhood Chain ---
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/executions",
+  summary:
+    "Prepare one real trade for the caller's own wallet to sign: validates the quote is fresh and its block canonical, checks balances and allowances, and returns approval and swap calldata. Nothing is signed or broadcast here, and no key ever reaches this server. Refused with REAL_TRADING_DISABLED unless the operator has explicitly enabled real trading.",
+  tags: ["executions"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { body: { content: { "application/json": { schema: CreateIntentRequestSchema } } } },
+  responses: {
+    200: { description: "Existing intent replayed for the same Idempotency-Key, or a refusal/unavailable result", content: { "application/json": { schema: CreateIntentResponseSchema } } },
+    201: { description: "Execution prepared", content: { "application/json": { schema: CreateIntentResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+    409: { description: "IDEMPOTENCY_KEY_REUSED — the same key was already used for a different trade", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/v1/me/executions/{intentId}/submissions",
+  summary:
+    "Record the transaction hash the user's wallet returned. This does NOT mark the trade successful — it moves to SUBMITTED, and only a reconciled chain receipt can take it further. One hash reconciles to exactly one execution.",
+  tags: ["executions"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: ExecutionIdParamSchema, body: { content: { "application/json": { schema: CreateSubmissionRequestSchema } } } },
+  responses: {
+    200: { description: "Hash already recorded for this trade; the existing state is returned", content: { "application/json": { schema: ExecutionResponseSchema } } },
+    201: { description: "Submission recorded", content: { "application/json": { schema: ExecutionResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+    409: { description: "EXECUTION_CONFLICT — the hash belongs to another trade, or this trade cannot accept one", content: { "application/json": { schema: ErrorEnvelopeSchema } } },
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/executions",
+  summary: "The caller's real trades, newest first, with submissions and reconciled receipts. This is what restores pending trade status after a reload.",
+  tags: ["executions"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Executions", content: { "application/json": { schema: ExecutionListResponseSchema } } },
+    401: errorResponse,
+    429: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/me/executions/{intentId}",
+  summary: "One of the caller's real trades.",
+  tags: ["executions"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: ExecutionIdParamSchema },
+  responses: {
+    200: { description: "Execution", content: { "application/json": { schema: ExecutionResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+    429: errorResponse,
+  },
 });
 
 export function generateOpenApiDocument() {
