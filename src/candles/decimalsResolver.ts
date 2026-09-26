@@ -75,6 +75,18 @@ export async function resolveTokenDecimals(chainClient: ChainReader, db: PrismaC
     return { tokenDecimals: existing.tokenDecimals, quoteDecimals: existing.quoteDecimals };
   }
 
+  /**
+   * Phase 7E.4.3 §11 — a chain whose decimals this EVM reader cannot answer fails closed here
+   * rather than calling `decimals()` on a base58 address and treating the revert as "unknown".
+   *
+   * Solana's decimals are persisted onto the `DiscoveredToken` row at discovery time (read from
+   * the mint account — see src/solana/solanaDecimals.ts), so a Solana token reaching this point
+   * genuinely has no verified decimals yet, and the candle feed must skip it until it does.
+   */
+  if (chain !== "robinhood") {
+    return null;
+  }
+
   const memoKey = `${chain}:${quoteAddress}`;
   let quoteDecimals = existing.quoteDecimals ?? quoteDecimalsMemo.get(memoKey) ?? null;
   if (quoteDecimals === null) {

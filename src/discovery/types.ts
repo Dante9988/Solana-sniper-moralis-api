@@ -42,6 +42,26 @@ export interface ChainProvenance {
   readonly sourceIndex: number;
 }
 
+/**
+ * Phase 7E.4.3 §5 — facts a venue can prove at discovery time that not every venue can.
+ *
+ * Optional and additive on purpose. Pump.fun's CreateEvent carries name/symbol/uri in the event
+ * payload itself, so those cost no extra I/O; Pons has to fetch them later and leaves this
+ * absent. Every field is independently nullable because §5 is explicit that missing metadata
+ * must read as unknown and must never block discovery — and must never be fabricated.
+ */
+export interface NormalizedTokenMetadata {
+  readonly name: string | null;
+  readonly symbol: string | null;
+  /** Off-chain metadata document (e.g. an IPFS URI). Not fetched here — recorded as given. */
+  readonly metadataUri: string | null;
+  /** Read from the mint/token contract, never assumed from the chain (no "Solana means 6"). */
+  readonly tokenDecimals: number | null;
+  readonly quoteDecimals: number | null;
+  /** The bonding-curve account/contract this token trades on before graduation. */
+  readonly curveAddress: string | null;
+}
+
 export interface NormalizedTokenDiscovered {
   readonly kind: "tokenDiscovered";
   readonly chain: ChainId;
@@ -57,6 +77,8 @@ export interface NormalizedTokenDiscovered {
   readonly provenance: ChainProvenance;
   /** When OnlyPump processed this fact — never the chain's own block/event timestamp. */
   readonly observedAt: string;
+  /** Phase 7E.4.3 §5 — absent when the venue proves nothing extra at discovery time. */
+  readonly metadata?: NormalizedTokenMetadata;
 }
 
 export interface NormalizedTradeExecuted {
@@ -97,6 +119,62 @@ export interface NormalizedTokenGraduated {
   readonly pairTokenAmount: DecimalString;
   readonly provenance: ChainProvenance;
   readonly observedAt: string;
+}
+
+/**
+ * Phase 7E.4.3 §12/§13 — a token's lifecycle position, and the transition that moved it there.
+ *
+ * Three things are kept deliberately distinct, because collapsing any two of them would tell a
+ * user something the chain did not say:
+ *
+ *   `bonding_complete`  the curve finished. Pump.fun's CompleteEvent proves exactly this and
+ *                       NOTHING about a destination pool. §12: "Do not call CompleteEvent alone
+ *                       'PumpSwap migrated'."
+ *   `migrating`         a migration is under way but its destination is not yet proven.
+ *   `pumpswap`          the destination pool is established and named by the chain — the only
+ *                       state that means GRADUATED.
+ *
+ * NEAR_MIGRATION is deliberately NOT in this list. It is a threshold judgement over curve
+ * reserves, and this repository has no verified completion threshold to compare against — so it
+ * stays a derived, read-time presentation concern (§2: the listener computes no card state),
+ * never a persisted claim.
+ */
+export type TokenLifecyclePhase = "bonding_curve" | "bonding_complete" | "migrating" | "pumpswap" | "unsupported";
+
+/**
+ * The lifecycle event every source must emit (§15: LaunchLab must produce the same contracts),
+ * carrying enough for a later social/autopost consumer to work entirely from stored facts.
+ *
+ * §13 is explicit that ingestion must never call X. This type is the seam that makes that
+ * possible: it records who migrated where and when, and a downstream outbox — not this event's
+ * producer — decides whether to post.
+ */
+export interface NormalizedLifecycleTransition {
+  readonly kind: "lifecycleTransition";
+  readonly chain: ChainId;
+  readonly venue: string;
+  readonly tokenAddress: string;
+  readonly phase: TokenLifecyclePhase;
+  /** The source's own event name, lower-snake: "created" | "completed" | "migrated" | ... */
+  readonly eventType: string;
+  /** Where the token traded before this transition, e.g. "pump". */
+  readonly sourceVenue: string;
+  /** Where it trades after, when the chain names it. Null when the transition does not move it. */
+  readonly destinationVenue: string | null;
+  /** The destination pool/market address, when the chain proves one exists. Null otherwise. */
+  readonly destinationPool: string | null;
+  readonly curveAddress: string | null;
+  /** The event's OWN asserted timestamp, when it carries one. Never substituted for block time. */
+  readonly eventTimestamp: string | null;
+  /**
+   * Whether this observation is safe to treat as irreversible. A pre-finalized observation is
+   * "provisional" and must not trigger anything that cannot be taken back (§8).
+   */
+  readonly confidence: "provisional" | "final";
+  readonly provenance: ChainProvenance;
+  readonly observedAt: string;
+  /** Every numeric field already a decimal string — never a JS number for an on-chain amount. */
+  readonly payload: Readonly<Record<string, string | boolean | null>>;
 }
 
 export type NormalizedChainEvent = NormalizedTokenDiscovered | NormalizedTradeExecuted;

@@ -15,15 +15,16 @@ export async function getFormattedBalance(walletAddress: string): Promise<string
     const balance = await connection.getBalance(publicKey);
     const solBalance = balance / 1e9; // Convert lamports to SOL
     
-    // Get SOL price (in a real app you'd use an oracle or price feed)
-    // For now assuming ~$100 for SOL
-    const solPrice = 100; 
-    const usdValue = solBalance * solPrice;
-    
-    return `${solBalance.toFixed(4)} SOL ($${usdValue.toFixed(2)} USD)`;
+    // No USD figure. This used to multiply the balance by a hardcoded $100 SOL price and present
+    // the result to the user as their portfolio value. There is no trusted historical or live
+    // SOL/USD source configured in this repository (see src/candles/usdPricing.ts), and Phase
+    // 7E.4.3 §10 is explicit: if the USD price cannot be trusted, the USD figure is unavailable
+    // rather than estimated. The SOL balance itself is a real on-chain read and is shown as-is.
+    return `${solBalance.toFixed(4)} SOL`;
   } catch (error) {
     console.error('Error getting balance:', error);
-    return '0.00 SOL ($0.00 USD)';
+    // Never report a zero balance for a failed read — that is a different claim from "unknown".
+    return 'balance unavailable';
   }
 }
 

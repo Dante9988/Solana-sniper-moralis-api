@@ -4,15 +4,19 @@
  * This is the ONLY place `ChainTrade` rows get read for candle purposes and
  * the ONLY place Pons-specific pricing/enrichment (verified decimals, an
  * optional USD rate) is applied — src/candles/aggregate.ts never sees a
- * ChainTrade or knows Pons/EVM exist. A future Solana feed module would
- * mirror this file's shape, producing the same `CandleTradeInput[]` from
- * Pump.fun's own normalized trades.
+ * ChainTrade or knows Pons/EVM exist.
+ *
+ * Phase 7E.4.3 §11 — Solana needs NO counterpart to this file. Pump.fun's canonical trades are
+ * `ChainTrade` rows with `chain = "solana"`, which is exactly what this function already reads, and
+ * their decimals are persisted on the `DiscoveredToken` row at discovery time so
+ * `resolveTokenDecimals` short-circuits before it would reach for an EVM client. §11 is explicit:
+ * "Do NOT build Solana-specific candle infrastructure."
  */
 
 import type { PrismaClient } from "@prisma/client";
 import type { ChainReader } from "./chainClient";
 import { computeNormalizedPrice, normalizeAmount } from "../discovery/normalizedPrice";
-import { formatScaledBigInt, parseDecimalToScaledBigInt } from "../discovery/decimal";
+import { quoteRawToUsd } from "../discovery/quoteUsd";
 import { resolveTokenDecimals } from "../candles/decimalsResolver";
 import type { QuoteUsdRateProvider } from "../candles/usdPricing";
 import type { CandleTradeInput } from "../candles/types";
@@ -77,13 +81,12 @@ export async function loadCandleTradeInputs(params: LoadCandleTradeInputsParams)
     const tokenAmount = normalizeAmount(tokenAmountRaw, decimals.tokenDecimals);
     const quoteAmount = normalizeAmount(quoteAmountRaw, decimals.quoteDecimals);
 
-    let usdAmount: string | null = null;
     // row.sourceTimestamp is non-null by construction of the query filter above.
     const sourceTimestamp = row.sourceTimestamp as Date;
     const rate = await params.usdRateProvider.getHistoricalRate({ chain: params.chain, quoteAddress: params.quoteAddress, at: sourceTimestamp });
-    if (rate.status === "AVAILABLE") {
-      usdAmount = multiplyDecimalStrings(quoteAmount, rate.rate.rateUsdPerQuote);
-    }
+    // Phase 7E.4.3 §10 — the same single conversion the trending windows use, straight from the
+    // raw amount and verified decimals. Null rate means USD is unavailable, never estimated.
+    const usdAmount = quoteRawToUsd(quoteAmountRaw, decimals.quoteDecimals, rate.status === "AVAILABLE" ? rate.rate.rateUsdPerQuote : null);
 
     trades.push({
       side: row.side === "buy" ? "buy" : "sell",
@@ -101,11 +104,3 @@ export async function loadCandleTradeInputs(params: LoadCandleTradeInputsParams)
   return { status: "OK", trades, truncated };
 }
 
-/** Decimal-safe (never float) multiply of two decimal strings at 18-fractional-digit scale — used only for the optional USD amount. */
-function multiplyDecimalStrings(a: string, b: string): string {
-  const SCALE = 18;
-  const scaledA = parseDecimalToScaledBigInt(a, SCALE);
-  const scaledB = parseDecimalToScaledBigInt(b, SCALE);
-  const product = (scaledA * scaledB) / 10n ** BigInt(SCALE);
-  return formatScaledBigInt(product, SCALE);
-}

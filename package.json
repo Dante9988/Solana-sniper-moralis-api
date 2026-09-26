@@ -42,7 +42,10 @@
     "test:api-v1": "vitest run src/researchApi",
     "test:candles": "vitest run src/candles src/discovery",
     "openapi:check": "node scripts/check-openapi-drift.mjs",
-    "session:start": "ts-node src/pons/scripts/sessionStartMain.ts"
+    "session:start": "ts-node src/pons/scripts/sessionStartMain.ts",
+    "solana:worker": "ts-node src/solana/scripts/solanaWorkerMain.ts",
+    "solana:capture": "ts-node src/solana/scripts/pumpfunLiveCapture.ts",
+    "solana:candles": "ts-node src/solana/scripts/solanaCandleTick.ts"
   },
   "keywords": [],
   "author": "xadja35@gmail.com",

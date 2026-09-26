@@ -22,6 +22,10 @@ const DB_TEST_FLAGS = [
   "CANDLES_RUN_DB_TESTS",
   "PAPER_RUN_DB_TESTS",
   "EXECUTIONS_RUN_DB_TESTS",
+  // Phase 7E.4.3 — the Solana suites delete DiscoveredToken/ChainTrade/PumpLifecycleEvent rows and
+  // this chain's ingestion checkpoint. Registered here on the first run that forgot to, which is
+  // exactly the omission this guard exists to catch.
+  "SOLANA_RUN_DB_TESTS",
 ] as const;
 
 export function databaseNameOf(url: string | undefined): string | null {

@@ -17,9 +17,9 @@
 import type { PrismaClient } from "@prisma/client";
 
 import { loadFinality } from "../../candles/candleAggregationService";
+import { quoteRawToUsdNumber } from "../../discovery/quoteUsd";
 import type { QuoteUsdRateProvider } from "../../candles/usdPricing";
 import { lookupQuoteAsset } from "../usd/chainlinkQuoteUsdRateProvider";
-import { parseDecimal } from "./marketSnapshot";
 import { assessTrendingHealth, type TrendingHealth } from "./trendingCoverage";
 import { loadTrendingConfig, type TrendingConfig } from "./trendingConfig";
 import { classifyEligibility, liquidityRatioBps, type RiskClassification } from "./trendingEligibility";
@@ -158,7 +158,14 @@ export async function computeTrending(
   );
 
   const rates = new Map<string, number | null>();
-  const scale = (raw: string, decimals: number) => Number(parseDecimal(raw.split(".")[0], 0)) / 10 ** decimals;
+  /**
+   * Phase 7E.4.3 §10 — all three windows convert through one function, so "5m, 1h and baseline
+   * use the same conversion logic" is structural rather than a coincidence of three call sites.
+   * It also removes this path's old float division: the raw sum of an hour of lamport amounts can
+   * exceed Number.MAX_SAFE_INTEGER, and dividing it as a double rounded before the rate applied.
+   */
+  const usdOf = (raw: string, decimals: number, rate: number): number =>
+    quoteRawToUsdNumber(raw.split(".")[0], decimals, rate) ?? 0;
 
   interface Candidate {
     row: Agg;
@@ -210,9 +217,9 @@ export async function computeTrending(
       reasons: eligibility.reasons,
       ratio,
       metrics: {
-        volume5mUsd: scale(r.v5m, asset.decimals) * rate,
-        volume1hUsd: scale(r.v1h, asset.decimals) * rate,
-        baselineHourlyUsd: Number(r.prevTrades) > 0 ? (scale(r.vPrev, asset.decimals) * rate) / baselineHours : null,
+        volume5mUsd: usdOf(r.v5m, asset.decimals, rate),
+        volume1hUsd: usdOf(r.v1h, asset.decimals, rate),
+        baselineHourlyUsd: Number(r.prevTrades) > 0 ? usdOf(r.vPrev, asset.decimals, rate) / baselineHours : null,
         trades1h: Number(r.trades1h),
         traders1h: Number(r.traders1h),
         liquidityUsd: liquidityUsd ?? 0,
