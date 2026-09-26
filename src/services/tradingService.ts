@@ -1,3 +1,27 @@
+/**
+ * @deprecated LEGACY — custodial. Do not import from production code.
+ *
+ * This is the pre-OnlyPump trading model and it is kept only so the boundary tests below
+ * have something concrete to assert against. It has **zero production importers**: the sole
+ * non-test reference in the repository is its own `export const` on the last line.
+ *
+ * Every reason it must not be revived, measured rather than assumed:
+ *
+ *   - it takes `wallet: Keypair` and signs server-side, which is the one thing OnlyPump's
+ *     architecture forbids — the backend builds an unsigned transaction and the user's own
+ *     wallet signs it (Part D of phase7e.4.1);
+ *   - it defaults to `slippage: 5000`, i.e. **50%**, silently;
+ *   - it sends with `skipPreflight: true`, so a transaction that would fail simulation is
+ *     broadcast anyway;
+ *   - it points at `https://quote-api.jup.ag/v6`, a host that was retired and no longer
+ *     resolves (verified 2026-09-26), so it cannot work even on its own terms.
+ *
+ * The replacement is `src/services/jupiterService.ts`, which quotes and builds an unsigned
+ * transaction for a public key and never sees a private one.
+ *
+ * `src/__tests__/noCustodialTradingImports.test.ts` fails the build if any production module
+ * imports this file.
+ */
 import { Connection, PublicKey, Transaction, Keypair, ComputeBudgetProgram } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
 import axios from 'axios';
