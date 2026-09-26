@@ -851,27 +851,27 @@ model DiscoveredToken {
 }
 
 model ChainTrade {
-  id              String          @id @default(uuid())
-  chain           String
-  venue           String
-  tokenAddress    String
-  poolAddress     String?
+  id                   String          @id @default(uuid())
+  chain                String
+  venue                String
+  tokenAddress         String
+  poolAddress          String?
   /// Phase 7D §2 — Uniswap V4 has no discrete per-pool contract address
   /// (singleton PoolManager, keyed by PoolId) — V2 trades set this instead
   /// of poolAddress; V1/other venues leave it null.
-  poolId          String?
-  side            String // buy | sell
-  normalizationVersion Int @default(1)
-  tokenAmount     Decimal         @db.Decimal(78, 0)
-  quoteAmount     Decimal         @db.Decimal(78, 0)
-  quoteAddress    String
-  priceQuote      Decimal         @db.Decimal(60, 18)
-  trader          String
-  sourceHeight    BigInt
-  sourceHash      String
-  sourceTxHash    String
-  sourceIndex     Int
-  observedAt      DateTime        @default(now())
+  poolId               String?
+  side                 String // buy | sell
+  normalizationVersion Int             @default(1)
+  tokenAmount          Decimal         @db.Decimal(78, 0)
+  quoteAmount          Decimal         @db.Decimal(78, 0)
+  quoteAddress         String
+  priceQuote           Decimal         @db.Decimal(60, 18)
+  trader               String
+  sourceHeight         BigInt
+  sourceHash           String
+  sourceTxHash         String
+  sourceIndex          Int
+  observedAt           DateTime        @default(now())
   /// Phase 7B.5B §1 — the real source-chain block time (from the block's own
   /// `timestamp` field), never DB insertion time or API observation time.
   /// Nullable because it is an additive column: rows persisted before this
@@ -879,10 +879,10 @@ model ChainTrade {
   /// safe for any environment that already has trade rows) have no value
   /// until backfilled (scripts/backfillTradeTimestamps.ts) — until then such
   /// a row cannot contribute to a candle (fail closed, never fabricated).
-  sourceTimestamp DateTime?
+  sourceTimestamp      DateTime?
   /// Phase 7B.5A §2/§9 — same reorg bookkeeping as DiscoveredToken.
-  canonicalStatus ChainFactStatus @default(CANONICAL)
-  orphanedAt      DateTime?
+  canonicalStatus      ChainFactStatus @default(CANONICAL)
+  orphanedAt           DateTime?
 
   /// One log/instruction produces at most one trade fact — the EVM analog
   /// of PumpTrade's @@unique([signature, outerInstructionIndex, ...]).
@@ -1238,8 +1238,10 @@ model EvidenceSnapshot {
   missingEvidence    Json
   createdAt          DateTime             @default(now())
 
-  paperPositionsFromQuote      PaperPosition[] @relation("PaperPositionQuote")
-  paperPositionsFromSimulation PaperPosition[] @relation("PaperPositionSimulation")
+  paperPositionsFromQuote        PaperPosition[]   @relation("PaperPositionQuote")
+  paperPositionsFromSimulation   PaperPosition[]   @relation("PaperPositionSimulation")
+  executionIntentsFromQuote      ExecutionIntent[] @relation("ExecutionIntentQuote")
+  executionIntentsFromSimulation ExecutionIntent[] @relation("ExecutionIntentSimulation")
 
   @@index([chain, tokenAddress, createdAt])
   @@index([parentId])
@@ -1576,4 +1578,157 @@ model CandleWatch {
 
   @@id([chain, tokenAddress])
   @@index([lastSeenAt])
+}
+
+// --- Phase 7E.1: real Robinhood Chain spot execution ---
+
+/// §12 — the lifecycle of one real execution. Names match src/pons/execution/lifecycle.ts,
+/// which owns the legal transitions; the database only stores where a record got to.
+enum ExecutionState {
+  QUOTE_READY
+  SIMULATING
+  SIMULATION_FAILED
+  READY_FOR_REVIEW
+  AWAITING_SIGNATURE
+  USER_REJECTED
+  SUBMITTED
+  CONFIRMING
+  CONFIRMED
+  REVERTED
+  DROPPED
+  REPLACED
+  UNKNOWN
+}
+
+/// Phase 7E.1 §13 — a user's intent to make one real trade, and everything needed to
+/// reconcile it later without the browser.
+///
+/// OnlyPump is non-custodial (§3). This table therefore holds calldata, amounts and, once
+/// the wallet reports one, a transaction hash — and never a private key, seed phrase or
+/// signature. `walletAddress` is CLAIMED, not proven: VerifiedWallet only covers Solana
+/// (Ed25519 over a WalletChallenge), so no private data may be released on the strength of
+/// this column.
+///
+/// An approval is an intent too, with `route = "APPROVAL"`, so §11's "persist and
+/// reconcile approval transaction state" needs no second table.
+model ExecutionIntent {
+  id                   String            @id @default(uuid())
+  /// Supabase subject. Every read and write is scoped by it.
+  userId               String
+  /// §14 — a retried request returns the original row; the same key with a different
+  /// request is refused by comparing requestFingerprint.
+  idempotencyKey       String
+  requestFingerprint   String
+  chain                String
+  chainId              Int
+  walletAddress        String
+  tokenAddress         String
+  side                 String
+  venue                String
+  /// "BONDING_CURVE" | "UNIVERSAL_ROUTER" | "APPROVAL"
+  route                String
+  routeTarget          String
+  /// Phase 7E.2 §17 — pinned so reconciliation trusts only the pool and hook this
+  /// quote was built against, never a look-alike event elsewhere in the same
+  /// transaction. Null on the bonding curve, which has neither.
+  poolId               String?
+  hookAddress          String?
+  inputCurrency        String
+  inputSymbol          String?
+  inputDecimals        Int
+  inputAmount          Decimal           @db.Decimal(78, 0)
+  outputCurrency       String
+  outputSymbol         String?
+  outputDecimals       Int
+  expectedOutput       Decimal           @db.Decimal(78, 0)
+  minimumOutput        Decimal           @db.Decimal(78, 0)
+  slippageBps          Int
+  /// Unix seconds. Null on the curve, which has no deadline parameter.
+  deadline             BigInt?
+  /// Exactly what the wallet was asked to sign, kept so a later dispute can be settled
+  /// against bytes rather than a reconstruction.
+  calldata             String
+  callValue            Decimal           @db.Decimal(78, 0)
+  calldataVersion      String
+  /// The immutable quote and simulation this intent was built on. Restrict, not Cascade:
+  /// evidence outlives the intent.
+  quoteSnapshotId      String
+  quoteSnapshot        EvidenceSnapshot  @relation("ExecutionIntentQuote", fields: [quoteSnapshotId], references: [id], onDelete: Restrict)
+  simulationSnapshotId String?
+  simulationSnapshot   EvidenceSnapshot? @relation("ExecutionIntentSimulation", fields: [simulationSnapshotId], references: [id], onDelete: Restrict)
+  state                ExecutionState    @default(READY_FOR_REVIEW)
+  failureReason        String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  submissions SubmittedExecution[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt])
+  @@index([userId, state])
+  @@index([chain, tokenAddress])
+}
+
+/// Phase 7E.1 §14 — the hash a wallet handed back, recorded once.
+///
+/// `@@unique([chain, transactionHash])` is what makes a reload, a reconnect or a double
+/// click reconcile to ONE canonical submission instead of creating a second trade. It is
+/// enforced in PostgreSQL, not in the browser and not in a service-layer check.
+model SubmittedExecution {
+  id                String          @id @default(uuid())
+  intentId          String
+  intent            ExecutionIntent @relation(fields: [intentId], references: [id], onDelete: Restrict)
+  chain             String
+  transactionHash   String
+  walletAddress     String
+  submittedAt       DateTime        @default(now())
+  /// Where reconciliation should start looking; the head at submission time.
+  observedFromBlock BigInt?
+  /// How many times reconciliation has looked, so a permanently missing hash can become
+  /// DROPPED instead of being polled forever.
+  reconcileAttempts Int             @default(0)
+  lastReconciledAt  DateTime?
+  createdAt         DateTime        @default(now())
+
+  receipt ExecutionReceipt?
+
+  @@unique([chain, transactionHash])
+  @@index([intentId])
+  @@index([lastReconciledAt])
+}
+
+/// Phase 7E.1 §15 — what the chain says happened, decoded from the canonical receipt.
+///
+/// Amounts come from the venue's own event (CurveBuy/CurveSell, or PoolManager's Swap) and
+/// stay null when no recognised event was found rather than being back-filled from the
+/// quote. §2: a transaction hash is not a result.
+///
+/// Phase 7E.2 §17 — output is two columns, because on Uniswap V4 they differ. `Swap`
+/// reports the swap's GROSS result and the Pons hook then takes its fee from the
+/// unspecified leg, so the wallet receives less. Only `netWalletOutput` may ever be shown
+/// as "you received", and a null there means unknown, never "use the gross one".
+model ExecutionReceipt {
+  id                String             @id @default(uuid())
+  submissionId      String             @unique
+  submission        SubmittedExecution @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  status            ExecutionState
+  blockNumber       BigInt
+  blockHash         String
+  gasUsed           Decimal            @db.Decimal(78, 0)
+  effectiveGasPrice Decimal?           @db.Decimal(78, 0)
+  actualInput       Decimal?           @db.Decimal(78, 0)
+  /// What the venue's event reported. Gross of any hook fee on Uniswap V4.
+  grossVenueOutput  Decimal?           @db.Decimal(78, 0)
+  /// What the wallet actually received. Null when it could not be established.
+  netWalletOutput   Decimal?           @db.Decimal(78, 0)
+  /// The hook's take, when knowable. Null on the curve, which has no hook.
+  hookFeeAmount     Decimal?           @db.Decimal(78, 0)
+  /// True when the venue's trade event named the intent's wallet as recipient. False is
+  /// not necessarily wrong — V4's Swap carries no recipient — so it is reported, not judged.
+  matchedWallet     Boolean            @default(false)
+  failureReason     String?
+  reconciledAt      DateTime           @default(now())
+  createdAt         DateTime           @default(now())
+
+  @@index([blockNumber])
 }

@@ -43,6 +43,9 @@ export const ErrorCode = {
   // Phase 7D.5.1 — a provider the deployment has no credentials for. Distinct from an
   // outage: the operator must configure it, the user can do nothing.
   PROVIDER_NOT_CONFIGURED: "PROVIDER_NOT_CONFIGURED",
+  // Phase 7E.1 — real execution. A transaction hash already recorded against a different
+  // trade, or a trade too far along to accept one: the client must re-read state, not retry.
+  EXECUTION_CONFLICT: "EXECUTION_CONFLICT",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -60,6 +63,7 @@ export const ErrorEnvelopeSchema = z
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
 
 const STATUS_FOR_CODE: Record<ErrorCode, number> = {
+  EXECUTION_CONFLICT: 409,
   BAD_REQUEST: 400,
   INVALID_MINT: 400,
   INVALID_ADDRESS: 400,

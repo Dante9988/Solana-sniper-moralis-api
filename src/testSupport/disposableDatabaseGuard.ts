@@ -21,6 +21,7 @@ const DB_TEST_FLAGS = [
   "WALLET_RUN_DB_TESTS",
   "CANDLES_RUN_DB_TESTS",
   "PAPER_RUN_DB_TESTS",
+  "EXECUTIONS_RUN_DB_TESTS",
 ] as const;
 
 export function databaseNameOf(url: string | undefined): string | null {

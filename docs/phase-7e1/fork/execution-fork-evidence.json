@@ -1,0 +1,156 @@
+{
+  "forkBlock": "72248960",
+  "wallet": "0xa6bEbe66A0F486CC2ad4Ab7D50319c32366B4F2E",
+  "legs": [
+    {
+      "venue": "ROBINHOOD_PONS_CURVE",
+      "side": "buy",
+      "token": "0x923bfb0eb05e918f8b42db5503ded94a44dca4ff",
+      "symbol": "SOCIAL",
+      "route": {
+        "kind": "BONDING_CURVE",
+        "target": "0x81560d4875602daaf7de7b20fa54ce1b3ada0949"
+      },
+      "poolId": null,
+      "quoteBlock": "72248960",
+      "selector": "0x59a87bc1",
+      "approvals": [],
+      "amountIn": "10000000000000000",
+      "expectedOut": "1351767018079350583032607",
+      "minimumOut": "1311214007536970065541628",
+      "ethBefore": "10000000000000000000000",
+      "ethAfter": "9999989893588293473847",
+      "tokenBefore": "0",
+      "tokenAfter": "1351767018079350583032607",
+      "gasUsed": "103153",
+      "effectiveGasPrice": "1031591001",
+      "totalGasCost": "106411706526153",
+      "txHash": "0x38800a9f890425773120a9f49a5faad80d95811bfbcb07d04a0ab1db8343f37d",
+      "receiptStatus": "success",
+      "reconciled": {
+        "status": "CONFIRMED",
+        "actualInput": "10000000000000000",
+        "actualOutput": "1351767018079350583032607",
+        "matchedWallet": true
+      }
+    },
+    {
+      "venue": "ROBINHOOD_PONS_CURVE",
+      "side": "sell",
+      "token": "0x923bfb0eb05e918f8b42db5503ded94a44dca4ff",
+      "symbol": "SOCIAL",
+      "route": {
+        "kind": "BONDING_CURVE",
+        "target": "0x81560d4875602daaf7de7b20fa54ce1b3ada0949"
+      },
+      "poolId": null,
+      "quoteBlock": "72248961",
+      "selector": "0xd04c6983",
+      "approvals": [
+        {
+          "kind": "ERC20_TO_CURVE",
+          "spender": "0x81560d4875602daaf7de7b20fa54ce1b3ada0949",
+          "required": "675883509039675291516303",
+          "txHash": "0xb39e67d71adc59cc6c3dea549237aadfdeda8848c3f27c5c8654332fac4089c2"
+        }
+      ],
+      "amountIn": "675883509039675291516303",
+      "expectedOut": "4907415504126201",
+      "minimumOut": "4760193039002414",
+      "ethBefore": "9999989893588293473847",
+      "ethAfter": "9999994667381027545211",
+      "tokenBefore": "1351767018079350583032607",
+      "tokenAfter": "675883509039675291516304",
+      "gasUsed": "84315",
+      "effectiveGasPrice": "1024186861",
+      "totalGasCost": "133622770054837",
+      "txHash": "0xe57b74cd4640e64e4888dbc14d188e3c5bde9641f984ce2107c276b7d545b172",
+      "receiptStatus": "success",
+      "reconciled": {
+        "status": "CONFIRMED",
+        "actualInput": "675883509039675291516303",
+        "actualOutput": "4907415504126201",
+        "matchedWallet": true
+      }
+    },
+    {
+      "venue": "ROBINHOOD_UNISWAP_V4",
+      "side": "buy",
+      "token": "0xb41c7ac9d46a980f8bdf1894b392a2a07ec9992a",
+      "symbol": "RBD",
+      "route": {
+        "kind": "UNIVERSAL_ROUTER",
+        "target": "0x8876789976decbfcbbbe364623c63652db8c0904"
+      },
+      "poolId": "0x5672a58887e888d1e2de8ab83f33116ba171fd298ee7d3cc96a989d15b1b6e0d",
+      "quoteBlock": "72248963",
+      "selector": "0x3593564c",
+      "approvals": [],
+      "amountIn": "10000000000000000",
+      "expectedOut": "3297528330727753021819",
+      "minimumOut": "3198602480805920431164",
+      "ethBefore": "9999994667381027545211",
+      "ethAfter": "9999984513125089794475",
+      "tokenBefore": "0",
+      "tokenAfter": "3297528330727753021819",
+      "gasUsed": "151059",
+      "effectiveGasPrice": "1021163504",
+      "totalGasCost": "154255937750736",
+      "txHash": "0x9ab8c23501333a0ace2f9ea7dae3453420ca75e3c4ebdeb41ccfe9d3ecaa8b95",
+      "receiptStatus": "success",
+      "reconciled": {
+        "status": "CONFIRMED",
+        "actualInput": "10000000000000000",
+        "actualOutput": "3330836697704801032140",
+        "matchedWallet": false
+      }
+    },
+    {
+      "venue": "ROBINHOOD_UNISWAP_V4",
+      "side": "sell",
+      "token": "0xb41c7ac9d46a980f8bdf1894b392a2a07ec9992a",
+      "symbol": "RBD",
+      "route": {
+        "kind": "UNIVERSAL_ROUTER",
+        "target": "0x8876789976decbfcbbbe364623c63652db8c0904"
+      },
+      "poolId": "0x5672a58887e888d1e2de8ab83f33116ba171fd298ee7d3cc96a989d15b1b6e0d",
+      "quoteBlock": "72248964",
+      "selector": "0x3593564c",
+      "approvals": [
+        {
+          "kind": "ERC20_TO_PERMIT2",
+          "spender": "0x000000000022d473030f116ddee9f6b43ac78ba3",
+          "required": "1648764165363876510909",
+          "txHash": "0x8a744f1db309ccef217415c0d1b6f963c5a03266d791eb947a78a374190ad3d9"
+        },
+        {
+          "kind": "PERMIT2_TO_ROUTER",
+          "spender": "0x8876789976decbfcbbbe364623c63652db8c0904",
+          "required": "1648764165363876510909",
+          "txHash": "0x5f7c055c51e21914df9c4706a7a52c2e9c75d2799eeabc31f887c79804af05a9"
+        }
+      ],
+      "amountIn": "1648764165363876510909",
+      "expectedOut": "4900987845454555",
+      "minimumOut": "4753958210090918",
+      "ethBefore": "9999984513125089794475",
+      "ethAfter": "9999989174290646926969",
+      "tokenBefore": "3297528330727753021819",
+      "tokenAfter": "1648764165363876510910",
+      "gasUsed": "142615",
+      "effectiveGasPrice": "1014177896",
+      "totalGasCost": "239822288322061",
+      "txHash": "0x1331faaccbc9d0bcfad199701145ddf6ffc33dab8682cac5851d3419ea9e4903",
+      "receiptStatus": "success",
+      "reconciled": {
+        "status": "CONFIRMED",
+        "actualInput": "1648764165363876510909",
+        "actualOutput": "4950492773186419",
+        "matchedWallet": false
+      }
+    }
+  ],
+  "generatedBy": "src/pons/execution/__tests__/execution.anvilFork.test.ts",
+  "command": "PONS_RUN_EXECUTION_FORK_TEST=true npx vitest run src/pons/execution/__tests__/execution.anvilFork.test.ts"
+}
