@@ -32,6 +32,7 @@ import {
 import { RequestBudget } from "./requestBudget";
 import { ForensicsClientRuntimeConfig, RESOLVED_FORENSICS_CLIENT_CONFIG, resolveHeliusRpcUrl } from "./forensicsConfig";
 import { CoverageStatus } from "./types";
+import { getTransactionConfig } from "../solana/transactionVersion";
 
 export type ForensicsClientFailureCode =
   | "NOT_CONFIGURED"
@@ -494,7 +495,9 @@ export class SolanaForensicsClient {
   ): Promise<ForensicsClientResult<GetTransactionResult>> {
     return this.rpcCall({
       method: "getTransaction",
-      params: [signature, { maxSupportedTransactionVersion: 0, encoding: "jsonParsed", ...options }],
+      // Centralised: mainnet returns version-1 transactions and the RPC refuses the whole
+      // request rather than degrading, so a pinned 0 here was a hard failure waiting to happen.
+      params: [signature, { ...getTransactionConfig({ encoding: "jsonParsed" }), ...options }],
       schema: GetTransactionResultSchema,
       estimatedCredits: 1,
     });
