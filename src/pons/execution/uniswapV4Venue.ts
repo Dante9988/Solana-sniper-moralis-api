@@ -17,13 +17,20 @@
 import { decodeEventLog, type Hex } from "viem";
 
 import { UNISWAP_V4_POOL_MANAGER_ABI } from "../abiV2";
-import { ROBINHOOD_CHAIN_ID, UNISWAP_V4_ROBINHOOD } from "../quote/protocol";
+import { NATIVE_CURRENCY, ROBINHOOD_CHAIN_ID, UNISWAP_V4_ROBINHOOD } from "../quote/protocol";
 import { quotePonsV2, type PonsQuote, type QuoteOutcome, type QuoteRequest } from "../quote/quoteService";
 import { simulateQuote, type SimulationOutcome } from "../quote/simulationService";
 import { encodeRouterExactInSingle, type PoolKeyHex } from "../quote/v4Quote";
 import { buildErc20Approval, buildPermit2Approval, isNative, readErc20Allowance, readPermit2Allowance } from "./approvals";
 import { ADDRESS_RE, checkBalances, checkChain, checkQuoteStillValid, estimateGasLimit, unsignedTransaction } from "./buildCommon";
-import { EXECUTION_CALLDATA_VERSION, EXECUTION_DEADLINE_SECONDS, PERMIT2_MAX_AMOUNT, UNIVERSAL_ROUTER_ABI } from "./executionProtocol";
+import {
+  ERC20_TRANSFER_ABI,
+  EXECUTION_CALLDATA_VERSION,
+  EXECUTION_DEADLINE_SECONDS,
+  PERMIT2_MAX_AMOUNT,
+  PONS_HOOK_FEE_ABI,
+  UNIVERSAL_ROUTER_ABI,
+} from "./executionProtocol";
 import type {
   ApprovalRequirement,
   BuildOutcome,
@@ -150,6 +157,8 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
       approvals,
       swap,
       poolId: quote.venueState.poolId,
+      outputCurrency: quote.output.currency,
+      hookAddress: poolKey.hooks,
       deadline: deadline.toString(),
       expectedOutput: quote.output.expected,
       minimumOutput: quote.output.minimum,
@@ -160,21 +169,28 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
   }
 
   /**
-   * Read the fill out of PoolManager's Swap event.
+   * Read the fill out of PoolManager's Swap event, then work out what the wallet kept.
    *
    * `amount0`/`amount1` are signed TRADER-side deltas, not pool-side: positive is what the
-   * trader received, negative what they paid. That is the convention ponsV2Adapter.decodeTrade
-   * already relies on to classify a swap as a buy or a sell (`tokenAmountSigned > 0` means
-   * the trader bought), and getting it backwards would report the input as the output.
+   * trader received, negative what they paid. That is the convention
+   * ponsV2Adapter.decodeTrade already relies on to classify a swap as a buy or a sell, and
+   * getting it backwards would report the input as the output. Only the plan's own pool
+   * counts — one transaction can touch several — so the event's indexed `id` is matched.
    *
-   * Only the plan's own pool counts — one transaction can touch several — so the event's
-   * indexed `id` is matched against the pool this plan quoted.
+   * That figure is GROSS. The Pons hook takes its fee from the unspecified leg after the
+   * swap, so the wallet receives less. Net is established from evidence, strongest first:
    *
-   * The output is GROSS. The Pons hook takes its fee from the unspecified leg after the
-   * swap, so the wallet receives slightly less than `actualOutput` says. That is recorded
-   * as measured rather than adjusted by a reconstruction, because the exact split is not
-   * always recoverable (see reconstructHookTake). Swap carries no recipient, so
-   * `matchedWallet` stays false for this venue.
+   *   1. an ERC-20 Transfer of the output currency to this wallet — the most direct
+   *      statement that exists of what the wallet received;
+   *   2. the hook's own HookFeeCollected(poolId, currency, feeAmount, taxAmount), which is
+   *      the only source for a NATIVE output, where no transfer log is emitted at all;
+   *   3. otherwise null.
+   *
+   * Null means unknown and must be surfaced as unknown. Falling back to gross here would
+   * overstate every V4 fill by the hook's cut.
+   *
+   * Swap carries no recipient, so `matchedWallet` is only ever true when a Transfer to this
+   * wallet proved it.
    */
   reconcile(params: { plan: ExecutionPlan; receipt: ReceiptFacts }): ReconciledExecution {
     const { plan, receipt } = params;
@@ -185,7 +201,9 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
       gasUsed: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice?.toString() ?? null,
       actualInput: null,
-      actualOutput: null,
+      grossVenueOutput: null,
+      netWalletOutput: null,
+      hookFeeAmount: null,
       matchedWallet: false,
       failureReason: receipt.status === "success" ? null : "the transaction reverted on chain",
     };
@@ -206,10 +224,67 @@ export class RobinhoodUniswapV4ExecutionVenue implements SpotExecutionVenue {
 
       // One leg is negative (paid by the trader) and one positive (received).
       const paid = args.amount0 < 0n ? args.amount0 : args.amount1;
-      const received = args.amount0 > 0n ? args.amount0 : args.amount1;
-      if (paid >= 0n || received <= 0n) continue;
-      return { ...base, actualInput: (-paid).toString(), actualOutput: received.toString() };
+      const gross = args.amount0 > 0n ? args.amount0 : args.amount1;
+      if (paid >= 0n || gross <= 0n) continue;
+
+      const transferred = transferToWallet(receipt, plan);
+      const hookFee = hookFeeFor(receipt, plan);
+      const net = transferred ?? (hookFee === null ? null : gross - hookFee);
+
+      return {
+        ...base,
+        actualInput: (-paid).toString(),
+        grossVenueOutput: gross.toString(),
+        netWalletOutput: net === null ? null : net.toString(),
+        hookFeeAmount: hookFee === null ? (net === null ? null : (gross - net).toString()) : hookFee.toString(),
+        matchedWallet: transferred !== null,
+      };
     }
     return base;
   }
+}
+
+/**
+ * The output currency actually transferred to this wallet, summed across logs.
+ *
+ * Null for a native output, which emits no transfer log — that case falls through to the
+ * hook's own event. Summing rather than taking the first match is deliberate: a route that
+ * credits the wallet in more than one piece would otherwise under-report.
+ */
+function transferToWallet(receipt: ReceiptFacts, plan: ExecutionPlan): bigint | null {
+  const currency = plan.outputCurrency.toLowerCase();
+  if (currency === NATIVE_CURRENCY) return null;
+
+  let total: bigint | null = null;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== currency) continue;
+    let decoded;
+    try {
+      decoded = decodeEventLog({ abi: ERC20_TRANSFER_ABI, topics: log.topics as [Hex, ...Hex[]], data: log.data as Hex });
+    } catch {
+      continue;
+    }
+    const args = decoded.args as unknown as { to: string; value: bigint };
+    if (String(args.to).toLowerCase() !== plan.walletAddress.toLowerCase()) continue;
+    total = (total ?? 0n) + args.value;
+  }
+  return total;
+}
+
+/** The hook's own declared take for this pool: fee plus creator tax. */
+function hookFeeFor(receipt: ReceiptFacts, plan: ExecutionPlan): bigint | null {
+  const hook = plan.hookAddress ? plan.hookAddress.toLowerCase() : null;
+  for (const log of receipt.logs) {
+    if (hook && log.address.toLowerCase() !== hook) continue;
+    let decoded;
+    try {
+      decoded = decodeEventLog({ abi: PONS_HOOK_FEE_ABI, topics: log.topics as [Hex, ...Hex[]], data: log.data as Hex });
+    } catch {
+      continue;
+    }
+    const args = decoded.args as unknown as { poolId: string; feeAmount: bigint; taxAmount: bigint };
+    if (plan.poolId && String(args.poolId).toLowerCase() !== plan.poolId.toLowerCase()) continue;
+    return args.feeAmount + args.taxAmount;
+  }
+  return null;
 }

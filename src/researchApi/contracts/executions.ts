@@ -137,7 +137,15 @@ export const ExecutionReceiptSchema = z
     gasUsed: DecimalString,
     effectiveGasPrice: DecimalString.nullable(),
     actualInput: DecimalString.nullable().openapi({ description: "From the venue's own event. Null when no recognised event was found — never back-filled from the quote." }),
-    actualOutput: DecimalString.nullable(),
+    grossVenueOutput: DecimalString.nullable().openapi({
+      description:
+        "What the venue's own event reported. On Uniswap V4 this is GROSS of the Pons hook fee, so it exceeds what the wallet received. Never display it as 'you received'.",
+    }),
+    netWalletOutput: DecimalString.nullable().openapi({
+      description:
+        "What the wallet actually received, from its transfer log or from the hook's own fee event. The only figure that may be shown as 'you received'. Null means unknown — show it as unknown rather than falling back to the gross figure.",
+    }),
+    hookFeeAmount: DecimalString.nullable().openapi({ description: "The Pons hook's take. Null on the bonding curve, which has no hook." }),
     matchedWallet: z.boolean().openapi({ description: "The venue's event named this wallet as recipient. Always false on Uniswap V4, whose Swap event carries no recipient." }),
     failureReason: z.string().nullable(),
     reconciledAt: z.string(),

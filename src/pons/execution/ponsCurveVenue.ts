@@ -115,6 +115,8 @@ export class RobinhoodPonsExecutionVenue implements SpotExecutionVenue {
       approvals,
       swap,
       poolId: null,
+      outputCurrency: quote.output.currency,
+      hookAddress: null,
       // The curve has no deadline parameter; its protection is minTokensOut/minQuoteOut.
       deadline: null,
       expectedOutput: quote.output.expected,
@@ -130,6 +132,10 @@ export class RobinhoodPonsExecutionVenue implements SpotExecutionVenue {
    *
    * CurveBuy/CurveSell carry `recipient`, so a transaction that succeeded but paid someone
    * else is detectable — `matchedWallet` says so instead of silently crediting the user.
+   *
+   * The curve has no hook, and its events already report what the recipient received
+   * (ponsV2Adapter relies on the same reading), so gross and net are the same number here
+   * and the hook fee is null rather than zero: "no such thing" is not "nothing".
    */
   reconcile(params: { plan: ExecutionPlan; receipt: ReceiptFacts }): ReconciledExecution {
     const { plan, receipt } = params;
@@ -140,7 +146,9 @@ export class RobinhoodPonsExecutionVenue implements SpotExecutionVenue {
       gasUsed: receipt.gasUsed.toString(),
       effectiveGasPrice: receipt.effectiveGasPrice?.toString() ?? null,
       actualInput: null,
-      actualOutput: null,
+      grossVenueOutput: null,
+      netWalletOutput: null,
+      hookFeeAmount: null,
       matchedWallet: false,
       failureReason: receipt.status === "success" ? null : "the transaction reverted on chain",
     };
@@ -157,11 +165,15 @@ export class RobinhoodPonsExecutionVenue implements SpotExecutionVenue {
       }
       const args = decoded.args as unknown as Record<string, bigint | string>;
       const recipient = String(args.recipient ?? "").toLowerCase();
+      const matchedWallet = recipient === plan.walletAddress;
       if (decoded.eventName === "CurveBuy" && plan.side === "buy") {
-        return { ...base, actualInput: String(args.quoteIn), actualOutput: String(args.tokensOut), matchedWallet: recipient === plan.walletAddress };
+        const out = String(args.tokensOut);
+        // Only a fill that actually named this wallet may be reported as its receipt.
+        return { ...base, actualInput: String(args.quoteIn), grossVenueOutput: out, netWalletOutput: matchedWallet ? out : null, matchedWallet };
       }
       if (decoded.eventName === "CurveSell" && plan.side === "sell") {
-        return { ...base, actualInput: String(args.tokensIn), actualOutput: String(args.quoteOut), matchedWallet: recipient === plan.walletAddress };
+        const out = String(args.quoteOut);
+        return { ...base, actualInput: String(args.tokensIn), grossVenueOutput: out, netWalletOutput: matchedWallet ? out : null, matchedWallet };
       }
     }
     // Confirmed, but the curve emitted nothing we recognise. Reported, never invented.

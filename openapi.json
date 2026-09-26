@@ -5865,13 +5865,31 @@
             "description": "From the venue's own event. Null when no recognised event was found — never back-filled from the quote.",
             "example": "10000000000000000"
           },
-          "actualOutput": {
+          "grossVenueOutput": {
             "type": [
               "string",
               "null"
             ],
             "pattern": "^\\d+$",
-            "description": "Non-negative integer in base units, as a decimal string.",
+            "description": "What the venue's own event reported. On Uniswap V4 this is GROSS of the Pons hook fee, so it exceeds what the wallet received. Never display it as 'you received'.",
+            "example": "10000000000000000"
+          },
+          "netWalletOutput": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "What the wallet actually received, from its transfer log or from the hook's own fee event. The only figure that may be shown as 'you received'. Null means unknown — show it as unknown rather than falling back to the gross figure.",
+            "example": "10000000000000000"
+          },
+          "hookFeeAmount": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^\\d+$",
+            "description": "The Pons hook's take. Null on the bonding curve, which has no hook.",
             "example": "10000000000000000"
           },
           "matchedWallet": {
@@ -5895,7 +5913,9 @@
           "gasUsed",
           "effectiveGasPrice",
           "actualInput",
-          "actualOutput",
+          "grossVenueOutput",
+          "netWalletOutput",
+          "hookFeeAmount",
           "matchedWallet",
           "failureReason",
           "reconciledAt"

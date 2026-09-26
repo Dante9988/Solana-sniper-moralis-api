@@ -98,6 +98,8 @@ function plan(q: PonsQuote, overrides: Partial<ExecutionPlan> = {}): ExecutionPl
     approvals: [],
     swap: { chainId: 4663, to: CURVE, data: "0xdeadbeef", value: q.input.amount, gasLimit: "250000", description: "Buy SMA." },
     poolId: null,
+    outputCurrency: q.output.currency,
+    hookAddress: null,
     deadline: null,
     expectedOutput: q.output.expected,
     minimumOutput: q.output.minimum,
@@ -355,7 +357,9 @@ describe.skipIf(!RUN)("real execution — Postgres + HTTP", () => {
           gasUsed: "150000",
           effectiveGasPrice: "1000000000",
           actualInput: "9900000000000000",
-          actualOutput: "4980",
+          grossVenueOutput: "4980",
+          netWalletOutput: "4980",
+          hookFeeAmount: null,
           matchedWallet: true,
           failureReason: null,
         },
@@ -365,7 +369,7 @@ describe.skipIf(!RUN)("real execution — Postgres + HTTP", () => {
       const res = await request(app).get(`/api/v1/me/executions/${intentId}`).set("Authorization", `Bearer ${await tokenFor(USER_A)}`);
       expect(res.body.execution.state).toBe("CONFIRMED");
       // The chain's numbers, not the quote's.
-      expect(res.body.execution.submissions[0].receipt.actualOutput).toBe("4980");
+      expect(res.body.execution.submissions[0].receipt.netWalletOutput).toBe("4980");
       expect(res.body.execution.expectedOutput).toBe("5000");
     });
 
@@ -378,7 +382,9 @@ describe.skipIf(!RUN)("real execution — Postgres + HTTP", () => {
         gasUsed: "150000",
         effectiveGasPrice: null,
         actualInput: null,
-        actualOutput: null,
+        grossVenueOutput: null,
+        netWalletOutput: null,
+        hookFeeAmount: null,
         matchedWallet: false,
         failureReason: null,
       };
@@ -398,7 +404,9 @@ describe.skipIf(!RUN)("real execution — Postgres + HTTP", () => {
           gasUsed: "150000",
           effectiveGasPrice: null,
           actualInput: null,
-          actualOutput: null,
+          grossVenueOutput: null,
+          netWalletOutput: null,
+          hookFeeAmount: null,
           matchedWallet: false,
           failureReason: null,
         },
@@ -436,7 +444,9 @@ describe.skipIf(!RUN)("real execution — Postgres + HTTP", () => {
           gasUsed: "150000",
           effectiveGasPrice: null,
           actualInput: null,
-          actualOutput: null,
+          grossVenueOutput: null,
+          netWalletOutput: null,
+          hookFeeAmount: null,
           matchedWallet: false,
           failureReason: "the transaction reverted on chain",
         },

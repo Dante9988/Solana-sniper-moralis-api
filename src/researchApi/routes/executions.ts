@@ -77,7 +77,11 @@ function serializeExecution(row: NonNullable<ExecutionRow>) {
             gasUsed: submission.receipt.gasUsed.toFixed(),
             effectiveGasPrice: submission.receipt.effectiveGasPrice?.toFixed() ?? null,
             actualInput: submission.receipt.actualInput?.toFixed() ?? null,
-            actualOutput: submission.receipt.actualOutput?.toFixed() ?? null,
+            // §17: gross and net are separate on the wire too. A client that shows the
+            // gross figure as "you received" would overstate every Uniswap V4 fill.
+            grossVenueOutput: submission.receipt.grossVenueOutput?.toFixed() ?? null,
+            netWalletOutput: submission.receipt.netWalletOutput?.toFixed() ?? null,
+            hookFeeAmount: submission.receipt.hookFeeAmount?.toFixed() ?? null,
             matchedWallet: submission.receipt.matchedWallet,
             failureReason: submission.receipt.failureReason,
             reconciledAt: submission.receipt.reconciledAt.toISOString(),

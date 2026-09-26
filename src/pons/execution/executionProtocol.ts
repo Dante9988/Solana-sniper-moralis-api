@@ -97,6 +97,27 @@ export const UNIVERSAL_ROUTER_ABI = parseAbi([
   "function execute(bytes commands, bytes[] inputs, uint256 deadline) payable",
 ]);
 
+/**
+ * The Pons hook's own fee event — the only authoritative statement of what it took.
+ *
+ * PoolManager's `Swap` reports the swap's GROSS output. The hook then takes its cut from
+ * the unspecified leg afterwards, so the wallet receives less than `Swap` says. For an
+ * ERC-20 output that gap is visible as a second Transfer, but for a native-ETH output
+ * there is no log at all — this event is what makes the net knowable in both cases.
+ *
+ * Verified 2026-09-25 against the hook's Sourcify-verified source
+ * (contracts/src/v2/hooks/PonsV2MemeHook.sol:99, emitted at :483) and against its real
+ * logs on a Robinhood Chain fork.
+ */
+export const PONS_HOOK_FEE_ABI = parseAbi([
+  "event HookFeeCollected(bytes32 indexed poolId, address currency, uint256 feeAmount, uint256 taxAmount)",
+]);
+
+/** ERC-20 Transfer, used to read a token output's net receipt straight off the wire. */
+export const ERC20_TRANSFER_ABI = parseAbi([
+  "event Transfer(address indexed from, address indexed to, uint256 value)",
+]);
+
 /** uint160 max — Permit2's amount field is uint160, not uint256. */
 export const PERMIT2_MAX_AMOUNT = (1n << 160n) - 1n;
 /** uint48 max — Permit2 treats this expiration as "block.timestamp", i.e. immediate. */

@@ -97,6 +97,14 @@ export interface ExecutionPlan {
    * in the same transaction. Null on the curve, which has no pool.
    */
   poolId: string | null;
+  /** Needed at reconcile time to find the wallet's receipt among the transfer logs. */
+  outputCurrency: string;
+  /**
+   * The V4 hook whose fee separates gross from net. Null on the curve, which has none.
+   * Pinned on the plan so reconciliation only trusts the hook the quote was built against,
+   * never an arbitrary contract that emits a look-alike event.
+   */
+  hookAddress: string | null;
   /** Unix seconds. Null on the curve, which has no deadline parameter. */
   deadline: string | null;
   expectedOutput: string;
@@ -128,6 +136,16 @@ export interface BuildParams {
 /**
  * What a confirmed transaction actually did, read back from its receipt and logs rather
  * than assumed from the quote. §2: a hash existing is not success.
+ *
+ * Output is deliberately TWO numbers, because on Uniswap V4 they differ. PoolManager's
+ * `Swap` reports the swap's gross result, and the Pons hook then takes its fee from the
+ * unspecified leg afterwards — so the wallet receives less than `Swap` says. Measured on a
+ * fork: a 3,449,006,522,633,093,919,091 gross buy credited the wallet
+ * 3,414,516,457,406,762,979,901, a 34,490,065,226,330,939,190 difference.
+ *
+ * Showing the gross figure as "you received" would overstate every V4 fill, so the two are
+ * never collapsed into one field. `netWalletOutput` is null when it cannot be established
+ * from evidence, and null must be surfaced as unknown rather than back-filled with gross.
  */
 export interface ReconciledExecution {
   status: "CONFIRMED" | "REVERTED";
@@ -137,7 +155,12 @@ export interface ReconciledExecution {
   effectiveGasPrice: string | null;
   /** Null when the venue's event was not found in the receipt — reported, never guessed. */
   actualInput: string | null;
-  actualOutput: string | null;
+  /** What the venue's own event reported. Gross of any hook fee on Uniswap V4. */
+  grossVenueOutput: string | null;
+  /** What the wallet actually received. The only figure a UI may call "received". */
+  netWalletOutput: string | null;
+  /** The hook's take, when it is knowable. Null on the curve, which has no hook. */
+  hookFeeAmount: string | null;
   /** True when the venue's own trade event named this wallet as the recipient. */
   matchedWallet: boolean;
   failureReason: string | null;

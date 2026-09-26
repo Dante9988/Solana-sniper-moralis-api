@@ -1628,6 +1628,11 @@ model ExecutionIntent {
   /// "BONDING_CURVE" | "UNIVERSAL_ROUTER" | "APPROVAL"
   route                String
   routeTarget          String
+  /// Phase 7E.2 §17 — pinned so reconciliation trusts only the pool and hook this
+  /// quote was built against, never a look-alike event elsewhere in the same
+  /// transaction. Null on the bonding curve, which has neither.
+  poolId               String?
+  hookAddress          String?
   inputCurrency        String
   inputSymbol          String?
   inputDecimals        Int
@@ -1694,9 +1699,14 @@ model SubmittedExecution {
 
 /// Phase 7E.1 §15 — what the chain says happened, decoded from the canonical receipt.
 ///
-/// `actualInput`/`actualOutput` come from the venue's own event (CurveBuy/CurveSell, or
-/// PoolManager's Swap), and stay null when no recognised event was found rather than being
-/// back-filled from the quote. §2: a transaction hash is not a result.
+/// Amounts come from the venue's own event (CurveBuy/CurveSell, or PoolManager's Swap) and
+/// stay null when no recognised event was found rather than being back-filled from the
+/// quote. §2: a transaction hash is not a result.
+///
+/// Phase 7E.2 §17 — output is two columns, because on Uniswap V4 they differ. `Swap`
+/// reports the swap's GROSS result and the Pons hook then takes its fee from the
+/// unspecified leg, so the wallet receives less. Only `netWalletOutput` may ever be shown
+/// as "you received", and a null there means unknown, never "use the gross one".
 model ExecutionReceipt {
   id                String             @id @default(uuid())
   submissionId      String             @unique
@@ -1707,7 +1717,12 @@ model ExecutionReceipt {
   gasUsed           Decimal            @db.Decimal(78, 0)
   effectiveGasPrice Decimal?           @db.Decimal(78, 0)
   actualInput       Decimal?           @db.Decimal(78, 0)
-  actualOutput      Decimal?           @db.Decimal(78, 0)
+  /// What the venue's event reported. Gross of any hook fee on Uniswap V4.
+  grossVenueOutput  Decimal?           @db.Decimal(78, 0)
+  /// What the wallet actually received. Null when it could not be established.
+  netWalletOutput   Decimal?           @db.Decimal(78, 0)
+  /// The hook's take, when knowable. Null on the curve, which has no hook.
+  hookFeeAmount     Decimal?           @db.Decimal(78, 0)
   /// True when the venue's trade event named the intent's wallet as recipient. False is
   /// not necessarily wrong — V4's Swap carries no recipient — so it is reported, not judged.
   matchedWallet     Boolean            @default(false)

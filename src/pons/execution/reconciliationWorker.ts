@@ -49,10 +49,11 @@ export interface ReconciliationTickResult {
 /**
  * Rebuild the plan reconciliation needs from the stored intent.
  *
- * Only the fields `reconcile` reads are reconstructed — route target, side, wallet and
- * pool — because those are what decide which log belongs to this trade. The rest is
- * padded with values that cannot affect the outcome, which is safer than persisting a
- * whole serialized plan that could drift from the type.
+ * Only the fields `reconcile` reads are reconstructed — route target, side, wallet, pool,
+ * hook and output currency — because those are what decide which log belongs to this trade
+ * and what the wallet actually kept. The rest is padded with values that cannot affect the
+ * outcome, which is safer than persisting a whole serialized plan that could drift from
+ * the type.
  */
 function planForReconcile(intent: {
   venue: string;
@@ -62,6 +63,9 @@ function planForReconcile(intent: {
   walletAddress: string;
   side: string;
   tokenAddress: string;
+  outputCurrency: string;
+  poolId: string | null;
+  hookAddress: string | null;
   expectedOutput: { toFixed(): string };
   minimumOutput: { toFixed(): string };
   calldataVersion: string;
@@ -76,7 +80,12 @@ function planForReconcile(intent: {
     tokenAddress: intent.tokenAddress,
     approvals: [],
     swap: { chainId: intent.chainId, to: intent.routeTarget, data: "0x", value: "0", gasLimit: null, description: "" },
-    poolId: null,
+    // Carried from the stored intent, not defaulted: without them a V4 receipt would be
+    // read against the wrong pool and its hook fee would go unfound, so the wallet's net
+    // receipt would silently fall back to the gross figure.
+    poolId: intent.poolId,
+    outputCurrency: intent.outputCurrency,
+    hookAddress: intent.hookAddress,
     deadline: null,
     expectedOutput: intent.expectedOutput.toFixed(),
     minimumOutput: intent.minimumOutput.toFixed(),

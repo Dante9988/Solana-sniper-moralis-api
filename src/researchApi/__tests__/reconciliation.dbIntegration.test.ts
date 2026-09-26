@@ -145,7 +145,10 @@ describe.skipIf(!RUN)("execution reconciliation — Postgres", () => {
     expect(await stateOf(intentId)).toBe("CONFIRMED");
 
     const receipt = await db.executionReceipt.findUniqueOrThrow({ where: { submissionId } });
-    expect(receipt.actualOutput?.toFixed()).toBe("4980"); // not the quoted 5000
+    // The curve has no hook, so what it paid IS what the wallet kept.
+    expect(receipt.netWalletOutput?.toFixed()).toBe("4980"); // not the quoted 5000
+    expect(receipt.grossVenueOutput?.toFixed()).toBe("4980");
+    expect(receipt.hookFeeAmount).toBeNull();
     expect(receipt.matchedWallet).toBe(true);
   });
 
@@ -155,7 +158,8 @@ describe.skipIf(!RUN)("execution reconciliation — Postgres", () => {
 
     expect(await stateOf(intentId)).toBe("REVERTED");
     const receipt = await db.executionReceipt.findUniqueOrThrow({ where: { submissionId } });
-    expect(receipt.actualOutput).toBeNull();
+    expect(receipt.netWalletOutput).toBeNull();
+    expect(receipt.grossVenueOutput).toBeNull();
     expect(receipt.failureReason).toBeTruthy();
   });
 
@@ -167,7 +171,8 @@ describe.skipIf(!RUN)("execution reconciliation — Postgres", () => {
     expect(await stateOf(intentId)).toBe("CONFIRMED");
     const receipt = await db.executionReceipt.findUniqueOrThrow({ where: { submissionId } });
     // Reported as unknown rather than back-filled from the quote.
-    expect(receipt.actualOutput).toBeNull();
+    expect(receipt.netWalletOutput).toBeNull();
+    expect(receipt.grossVenueOutput).toBeNull();
     expect(receipt.actualInput).toBeNull();
   });
 

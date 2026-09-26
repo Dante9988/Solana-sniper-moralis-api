@@ -170,7 +170,7 @@ interface Leg {
   totalGasCost: string;
   txHash: string;
   receiptStatus: string;
-  reconciled: { status: string; actualInput: string | null; actualOutput: string | null; matchedWallet: boolean };
+  reconciled: { status: string; actualInput: string | null; grossVenueOutput: string | null; netWalletOutput: string | null; hookFeeAmount: string | null; matchedWallet: boolean };
 }
 
 const evidence: Leg[] = [];
@@ -393,7 +393,9 @@ describe.skipIf(!RUN)("Phase 7E.1 execution — real Robinhood Chain fork, real 
       reconciled: {
         status: reconciled.status,
         actualInput: reconciled.actualInput,
-        actualOutput: reconciled.actualOutput,
+        grossVenueOutput: reconciled.grossVenueOutput,
+        netWalletOutput: reconciled.netWalletOutput,
+        hookFeeAmount: reconciled.hookFeeAmount,
         matchedWallet: reconciled.matchedWallet,
       },
     };
@@ -427,8 +429,11 @@ describe.skipIf(!RUN)("Phase 7E.1 execution — real Robinhood Chain fork, real 
     // A native buy costs exactly the input plus gas — nothing else may leave the wallet.
     expect(ethSpent).toBe(BUY_AMOUNT + BigInt(leg.totalGasCost));
     expect(received).toBeGreaterThanOrEqual(BigInt(leg.minimumOut));
-    // The curve's own event must agree with the measured balance change.
-    expect(leg.reconciled.actualOutput).toBe(received.toString());
+    // The curve has no hook, so gross and net are the same number, and both must agree
+    // with the measured balance change.
+    expect(leg.reconciled.netWalletOutput).toBe(received.toString());
+    expect(leg.reconciled.grossVenueOutput).toBe(received.toString());
+    expect(leg.reconciled.hookFeeAmount).toBeNull();
     expect(leg.reconciled.actualInput).toBe(BUY_AMOUNT.toString());
     expect(leg.reconciled.matchedWallet).toBe(true);
     // The production builder called buy(uint256,uint256,address).
@@ -460,7 +465,7 @@ describe.skipIf(!RUN)("Phase 7E.1 execution — real Robinhood Chain fork, real 
     // ethBefore is captured before the approval transactions, so their gas counts too.
     const ethReceived = BigInt(leg.ethAfter) - BigInt(leg.ethBefore) + BigInt(leg.totalGasCost);
     expect(ethReceived).toBeGreaterThanOrEqual(BigInt(leg.minimumOut));
-    expect(leg.reconciled.actualOutput).toBe(ethReceived.toString());
+    expect(leg.reconciled.netWalletOutput).toBe(ethReceived.toString());
     expect(leg.selector).toBe("0xd04c6983"); // sell(uint256,uint256,address)
 
     // An exact approval is consumed exactly: nothing is left behind for a later spender.
@@ -483,10 +488,12 @@ describe.skipIf(!RUN)("Phase 7E.1 execution — real Robinhood Chain fork, real 
     expect(BigInt(leg.ethBefore) - BigInt(leg.ethAfter)).toBe(BUY_AMOUNT + BigInt(leg.totalGasCost));
     expect(received).toBeGreaterThanOrEqual(BigInt(leg.minimumOut));
 
-    // PoolManager's Swap is gross of the Pons hook's fee, so the wallet receives slightly
-    // less than the event reports. Asserting the direction of that gap is the honest check:
-    // equality would mean the hook fee had silently vanished.
-    expect(BigInt(leg.reconciled.actualOutput!)).toBeGreaterThanOrEqual(received);
+    // §17. PoolManager's Swap is GROSS of the Pons hook's fee, so it exceeds what the
+    // wallet received — but the NET figure must match the measured balance change to the
+    // wei, because that is the number a user is shown as "you received".
+    expect(leg.reconciled.netWalletOutput).toBe(received.toString());
+    expect(BigInt(leg.reconciled.grossVenueOutput!)).toBeGreaterThan(received);
+    expect(BigInt(leg.reconciled.hookFeeAmount!)).toBe(BigInt(leg.reconciled.grossVenueOutput!) - received);
     expect(leg.reconciled.actualInput).toBe(BUY_AMOUNT.toString());
   }, 180_000);
 
@@ -560,7 +567,8 @@ describe.skipIf(!RUN)("Phase 7E.1 execution — real Robinhood Chain fork, real 
     // And the venue reads the failure back as REVERTED, without inventing amounts.
     const reconciled = curveVenue.reconcile({ plan, receipt: receiptFacts(receipt) });
     expect(reconciled.status).toBe("REVERTED");
-    expect(reconciled.actualOutput).toBeNull();
+    expect(reconciled.grossVenueOutput).toBeNull();
+    expect(reconciled.netWalletOutput).toBeNull();
     expect(reconciled.failureReason).toBeTruthy();
   }, 180_000);
 
@@ -581,7 +589,8 @@ describe.skipIf(!RUN)("Phase 7E.1 execution — real Robinhood Chain fork, real 
 
     const reconciled = v4Venue.reconcile({ plan, receipt: receiptFacts(receipt) });
     expect(reconciled.status).toBe("REVERTED");
-    expect(reconciled.actualOutput).toBeNull();
+    expect(reconciled.grossVenueOutput).toBeNull();
+    expect(reconciled.netWalletOutput).toBeNull();
   }, 180_000);
 
   it("UNISWAP V4 — without the Permit2 approval the swap fails, which is what makes the approval step real", async () => {

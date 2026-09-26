@@ -192,6 +192,8 @@ describe("RobinhoodPonsExecutionVenue.reconcile", () => {
     approvals: [],
     swap: { chainId: 4663, to: CURVE, data: "0x" as const, value: "0", gasLimit: null, description: "" },
     poolId: null,
+    outputCurrency: TOKEN,
+    hookAddress: null,
     deadline: null,
     expectedOutput: "5000",
     minimumOutput: "4950",
@@ -213,7 +215,7 @@ describe("RobinhoodPonsExecutionVenue.reconcile", () => {
     const result = venue.reconcile({ plan, receipt: receipt({ status: "reverted" }) });
     expect(result.status).toBe("REVERTED");
     expect(result.actualInput).toBeNull();
-    expect(result.actualOutput).toBeNull();
+    expect(result.netWalletOutput).toBeNull();
     expect(result.failureReason).toBeTruthy();
   });
 
@@ -221,7 +223,7 @@ describe("RobinhoodPonsExecutionVenue.reconcile", () => {
     const result = venue.reconcile({ plan, receipt: receipt() });
     expect(result.status).toBe("CONFIRMED");
     expect(result.actualInput).toBeNull();
-    expect(result.actualOutput).toBeNull();
+    expect(result.netWalletOutput).toBeNull();
     expect(result.matchedWallet).toBe(false);
   });
 
@@ -235,7 +237,7 @@ describe("RobinhoodPonsExecutionVenue.reconcile", () => {
   it("ignores a look-alike event emitted by a contract that is not this plan's curve", () => {
     const foreign = curveTradeLog({ event: "CurveBuy", recipient: WALLET, amountIn: 1000n, amountOut: 5000n, address: "0x9999999999999999999999999999999999999999" });
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [foreign] }) });
-    expect(result.actualOutput).toBeNull();
+    expect(result.netWalletOutput).toBeNull();
   });
 
   it("reads the real fill out of the curve's own CurveBuy event", () => {
@@ -244,28 +246,31 @@ describe("RobinhoodPonsExecutionVenue.reconcile", () => {
     expect(result.status).toBe("CONFIRMED");
     // The event wins over the quote: spent 990, not the quoted 1000.
     expect(result.actualInput).toBe("990");
-    expect(result.actualOutput).toBe("4980");
+    expect(result.netWalletOutput).toBe("4980");
     expect(result.matchedWallet).toBe(true);
   });
 
-  it("flags a fill that paid someone other than this wallet", () => {
+  it("refuses to credit this wallet for a fill that paid someone else", () => {
     const log = curveTradeLog({ event: "CurveBuy", recipient: "0x8888888888888888888888888888888888888888", amountIn: 990n, amountOut: 4980n });
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [log] }) });
-    expect(result.actualOutput).toBe("4980");
+    // The trade happened, so the venue's own figure is reported...
+    expect(result.grossVenueOutput).toBe("4980");
+    // ...but nothing may be shown to THIS wallet as "you received".
+    expect(result.netWalletOutput).toBeNull();
     expect(result.matchedWallet).toBe(false);
   });
 
   it("does not read a sell event into a buy plan", () => {
     const log = curveTradeLog({ event: "CurveSell", recipient: WALLET, amountIn: 5000n, amountOut: 990n });
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [log] }) });
-    expect(result.actualOutput).toBeNull();
+    expect(result.netWalletOutput).toBeNull();
   });
 
   it("reads a sell fill for a sell plan", () => {
     const log = curveTradeLog({ event: "CurveSell", recipient: WALLET, amountIn: 5000n, amountOut: 990n });
     const result = venue.reconcile({ plan: { ...plan, side: "sell" as const }, receipt: receipt({ logs: [log] }) });
     expect(result.actualInput).toBe("5000");
-    expect(result.actualOutput).toBe("990");
+    expect(result.netWalletOutput).toBe("990");
     expect(result.matchedWallet).toBe(true);
   });
 });

@@ -13,7 +13,14 @@ import { describe, expect, it } from "vitest";
 import { UNISWAP_V4_POOL_MANAGER_ABI } from "../../abiV2";
 import { UNISWAP_V4_ROBINHOOD } from "../../quote/protocol";
 import { encodeRouterExactInSingle } from "../../quote/v4Quote";
-import { ERC20_EXECUTION_ABI, EXECUTION_DEADLINE_SECONDS, PERMIT2_ABI, UNIVERSAL_ROUTER_ABI } from "../executionProtocol";
+import {
+  ERC20_EXECUTION_ABI,
+  ERC20_TRANSFER_ABI,
+  EXECUTION_DEADLINE_SECONDS,
+  PERMIT2_ABI,
+  PONS_HOOK_FEE_ABI,
+  UNIVERSAL_ROUTER_ABI,
+} from "../executionProtocol";
 import { RobinhoodUniswapV4ExecutionVenue } from "../uniswapV4Venue";
 import type { ReceiptFacts } from "../venue";
 import { BLOCK, BLOCK_SECONDS, FakeCaller, POOL_ID, TOKEN, WALLET, curveBuyQuote, fakeProbe, poolBuyQuote, poolSellQuote } from "./testSupport";
@@ -201,6 +208,30 @@ function swapLog(params: { poolId: string; amount0: bigint; amount1: bigint; add
   };
 }
 
+const HOOK = "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044";
+const NATIVE = "0x0000000000000000000000000000000000000000";
+
+/** The hook's own declaration of what it took. Topic derived from the ABI, never pasted. */
+function hookFeeLog(params: { poolId: string; currency: string; fee: bigint; tax: bigint; address?: string }) {
+  return {
+    address: params.address ?? HOOK,
+    topics: [toEventSelector(getAbiItem({ abi: PONS_HOOK_FEE_ABI, name: "HookFeeCollected" })), params.poolId],
+    data: encodeAbiParameters([{ type: "address" }, { type: "uint256" }, { type: "uint256" }], [params.currency as `0x${string}`, params.fee, params.tax]),
+  };
+}
+
+function transferLog(params: { token: string; to: string; value: bigint }) {
+  return {
+    address: params.token,
+    topics: [
+      toEventSelector(getAbiItem({ abi: ERC20_TRANSFER_ABI, name: "Transfer" })),
+      pad(UNISWAP_V4_ROBINHOOD.poolManager as `0x${string}`, { size: 32 }),
+      pad(params.to as `0x${string}`, { size: 32 }),
+    ],
+    data: encodeAbiParameters([{ type: "uint256" }], [params.value]),
+  };
+}
+
 describe("RobinhoodUniswapV4ExecutionVenue.reconcile", () => {
   const plan = {
     venue: "ROBINHOOD_UNISWAP_V4" as const,
@@ -212,6 +243,8 @@ describe("RobinhoodUniswapV4ExecutionVenue.reconcile", () => {
     approvals: [],
     swap: { chainId: 4663, to: ROUTER, data: "0x" as const, value: "0", gasLimit: null, description: "" },
     poolId: POOL_ID,
+    outputCurrency: TOKEN,
+    hookAddress: "0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044",
     deadline: (BLOCK_SECONDS + 600n).toString(),
     expectedOutput: "5000",
     minimumOutput: "4950",
@@ -233,45 +266,125 @@ describe("RobinhoodUniswapV4ExecutionVenue.reconcile", () => {
     // Trader paid 1000 of currency0 (ETH) and received 4980 of currency1 (the token).
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 4980n })] }) });
     expect(result.actualInput).toBe("1000");
-    expect(result.actualOutput).toBe("4980");
+    expect(result.grossVenueOutput).toBe("4980");
   });
 
   it("reads a sell the same way, with the legs reversed", () => {
     const result = venue.reconcile({
-      plan: { ...plan, side: "sell" as const },
+      plan: { ...plan, side: "sell" as const, outputCurrency: NATIVE },
       receipt: receipt({ logs: [swapLog({ poolId: POOL_ID, amount0: 990n, amount1: -5000n })] }),
     });
     expect(result.actualInput).toBe("5000");
-    expect(result.actualOutput).toBe("990");
+    expect(result.grossVenueOutput).toBe("990");
   });
+
+  // --- §17: gross is not net -------------------------------------------------------
+
+  it("prefers the wallet's own transfer log as the net receipt", () => {
+    const logs = [
+      swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 5000n }),
+      transferLog({ token: TOKEN, to: HOOK, value: 50n }), // the hook's cut
+      transferLog({ token: TOKEN, to: WALLET, value: 4950n }), // what the wallet kept
+    ];
+    const result = venue.reconcile({ plan, receipt: receipt({ logs }) });
+    expect(result.grossVenueOutput).toBe("5000");
+    expect(result.netWalletOutput).toBe("4950");
+    expect(result.hookFeeAmount).toBe("50");
+    // A transfer naming this wallet is the one thing that can prove it was paid.
+    expect(result.matchedWallet).toBe(true);
+  });
+
+  it("falls back to the hook's own event for a NATIVE output, which emits no transfer log", () => {
+    const sell = { ...plan, side: "sell" as const, outputCurrency: NATIVE };
+    const logs = [
+      swapLog({ poolId: POOL_ID, amount0: 990n, amount1: -5000n }),
+      hookFeeLog({ poolId: POOL_ID, currency: NATIVE, fee: 9n, tax: 1n }),
+    ];
+    const result = venue.reconcile({ plan: sell, receipt: receipt({ logs }) });
+    expect(result.grossVenueOutput).toBe("990");
+    expect(result.netWalletOutput).toBe("980"); // 990 - (9 + 1)
+    expect(result.hookFeeAmount).toBe("10");
+    // Nothing proved the wallet was paid — only that the pool paid out.
+    expect(result.matchedWallet).toBe(false);
+  });
+
+  it("leaves net UNKNOWN rather than falling back to gross when nothing proves it", () => {
+    const sell = { ...plan, side: "sell" as const, outputCurrency: NATIVE };
+    const result = venue.reconcile({ plan: sell, receipt: receipt({ logs: [swapLog({ poolId: POOL_ID, amount0: 990n, amount1: -5000n })] }) });
+    expect(result.grossVenueOutput).toBe("990");
+    // The whole point of §17: silence must not be read as "the wallet got the gross amount".
+    expect(result.netWalletOutput).toBeNull();
+    expect(result.hookFeeAmount).toBeNull();
+  });
+
+  it("ignores a hook fee event from another pool", () => {
+    const other = "0xcccc000000000000000000000000000000000000000000000000000000000000";
+    const sell = { ...plan, side: "sell" as const, outputCurrency: NATIVE };
+    const logs = [swapLog({ poolId: POOL_ID, amount0: 990n, amount1: -5000n }), hookFeeLog({ poolId: other, currency: NATIVE, fee: 500n, tax: 0n })];
+    const result = venue.reconcile({ plan: sell, receipt: receipt({ logs }) });
+    expect(result.netWalletOutput).toBeNull();
+  });
+
+  it("ignores a look-alike fee event from a contract that is not this plan's hook", () => {
+    const sell = { ...plan, side: "sell" as const, outputCurrency: NATIVE };
+    const logs = [
+      swapLog({ poolId: POOL_ID, amount0: 990n, amount1: -5000n }),
+      hookFeeLog({ poolId: POOL_ID, currency: NATIVE, fee: 900n, tax: 0n, address: "0x9999999999999999999999999999999999999999" }),
+    ];
+    const result = venue.reconcile({ plan: sell, receipt: receipt({ logs }) });
+    expect(result.netWalletOutput).toBeNull();
+  });
+
+  it("ignores a transfer of the output token to somebody else", () => {
+    const logs = [
+      swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 5000n }),
+      transferLog({ token: TOKEN, to: "0x8888888888888888888888888888888888888888", value: 5000n }),
+    ];
+    const result = venue.reconcile({ plan, receipt: receipt({ logs }) });
+    expect(result.netWalletOutput).toBeNull();
+    expect(result.matchedWallet).toBe(false);
+  });
+
+  it("sums several credits to the wallet rather than taking the first", () => {
+    const logs = [
+      swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 5000n }),
+      transferLog({ token: TOKEN, to: WALLET, value: 3000n }),
+      transferLog({ token: TOKEN, to: WALLET, value: 1950n }),
+    ];
+    const result = venue.reconcile({ plan, receipt: receipt({ logs }) });
+    expect(result.netWalletOutput).toBe("4950");
+  });
+
+  // --- pool and emitter scoping ----------------------------------------------------
 
   it("ignores a Swap from a different pool in the same transaction", () => {
     const other = "0xcccc000000000000000000000000000000000000000000000000000000000000";
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [swapLog({ poolId: other, amount0: -1n, amount1: 2n })] }) });
-    expect(result.actualOutput).toBeNull();
+    expect(result.grossVenueOutput).toBeNull();
   });
 
   it("picks this plan's pool out of several Swaps", () => {
     const other = "0xcccc000000000000000000000000000000000000000000000000000000000000";
     const logs = [swapLog({ poolId: other, amount0: -7n, amount1: 8n }), swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 4980n })];
     const result = venue.reconcile({ plan, receipt: receipt({ logs }) });
-    expect(result.actualOutput).toBe("4980");
+    expect(result.grossVenueOutput).toBe("4980");
   });
 
   it("ignores a Swap emitted by something other than the verified PoolManager", () => {
     const log = swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 4980n, address: "0x9999999999999999999999999999999999999999" });
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [log] }) });
-    expect(result.actualOutput).toBeNull();
+    expect(result.grossVenueOutput).toBeNull();
   });
 
   it("reports a revert without amounts", () => {
     const result = venue.reconcile({ plan, receipt: receipt({ status: "reverted" }) });
     expect(result.status).toBe("REVERTED");
-    expect(result.actualOutput).toBeNull();
+    expect(result.grossVenueOutput).toBeNull();
+    expect(result.netWalletOutput).toBeNull();
     expect(result.failureReason).toBeTruthy();
   });
 
-  it("never claims a wallet match, because Swap carries no recipient", () => {
+  it("never claims a wallet match from Swap alone, which carries no recipient", () => {
     const result = venue.reconcile({ plan, receipt: receipt({ logs: [swapLog({ poolId: POOL_ID, amount0: -1000n, amount1: 4980n })] }) });
     expect(result.matchedWallet).toBe(false);
   });
