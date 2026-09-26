@@ -687,6 +687,46 @@
               "null"
             ]
           },
+          "riskClassification": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "ELIGIBLE",
+              "CAUTION",
+              "HIGH_RISK",
+              "UNVERIFIED",
+              null
+            ],
+            "description": "Eligibility for promotion into Trending. ELIGIBLE means the token clears the configured bars, NOT that it is safe — no check here prevents a creator withdrawing liquidity afterwards. UNVERIFIED means there was not enough evidence to classify, which is not the same as HIGH_RISK."
+          },
+          "riskReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Stable codes behind the classification, e.g. LIQUIDITY_RATIO_BELOW_FLOOR."
+          },
+          "liquidityRatioBps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Liquidity as a fraction of valuation, in bps."
+          },
+          "valuationBasis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "FDV",
+              "MARKET_CAP",
+              null
+            ],
+            "description": "FDV unless a circulating-supply basis is genuinely known."
+          },
           "usdSource": {
             "type": [
               "string",
@@ -722,6 +762,10 @@
           "sells1h",
           "traders1h",
           "trendingScore",
+          "riskClassification",
+          "riskReasons",
+          "liquidityRatioBps",
+          "valuationBasis",
           "usdSource"
         ]
       },

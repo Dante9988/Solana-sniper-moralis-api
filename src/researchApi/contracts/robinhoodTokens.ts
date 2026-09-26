@@ -58,6 +58,13 @@ export const TokenMarketSchema = z
     sells1h: z.number().int().nullable(),
     traders1h: z.number().int().nullable(),
     trendingScore: z.string().nullable(),
+    riskClassification: z.enum(["ELIGIBLE", "CAUTION", "HIGH_RISK", "UNVERIFIED"]).nullable().openapi({
+      description:
+        "Eligibility for promotion into Trending. ELIGIBLE means the token clears the configured bars, NOT that it is safe — no check here prevents a creator withdrawing liquidity afterwards. UNVERIFIED means there was not enough evidence to classify, which is not the same as HIGH_RISK.",
+    }),
+    riskReasons: z.array(z.string()).openapi({ description: "Stable codes behind the classification, e.g. LIQUIDITY_RATIO_BELOW_FLOOR." }),
+    liquidityRatioBps: z.number().int().nullable().openapi({ description: "Liquidity as a fraction of valuation, in bps." }),
+    valuationBasis: z.enum(["FDV", "MARKET_CAP"]).nullable().openapi({ description: "FDV unless a circulating-supply basis is genuinely known." }),
     usdSource: z.string().nullable(),
   })
   .openapi("TokenMarket");

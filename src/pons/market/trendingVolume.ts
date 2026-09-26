@@ -20,6 +20,10 @@ import { loadFinality } from "../../candles/candleAggregationService";
 import type { QuoteUsdRateProvider } from "../../candles/usdPricing";
 import { lookupQuoteAsset } from "../usd/chainlinkQuoteUsdRateProvider";
 import { parseDecimal } from "./marketSnapshot";
+import { assessTrendingHealth, type TrendingHealth } from "./trendingCoverage";
+import { loadTrendingConfig, type TrendingConfig } from "./trendingConfig";
+import { classifyEligibility, liquidityRatioBps, type RiskClassification } from "./trendingEligibility";
+import { buildCohort, scoreToken, type TrendingMetrics } from "./trendingRank";
 
 export const MAX_INDEX_LAG_MS = 10 * 60_000;
 export const TRENDING_RULES = { minVolume1hUsd: 500, minNewTokenVolume1hUsd: 1_000, minTrades1h: 10, minTraders1h: 3, minSurge: 1.5, baselineFloorUsd: 50, maxSurge: 10, maxAcceleration: 3 } as const;
@@ -91,19 +95,44 @@ interface Agg {
   buys1h: bigint;
   sells1h: bigint;
   traders1h: bigint;
+  lastTrade: Date | null;
 }
 
-/** Recomputes volume windows and trending scores for every token traded in the last seven hours. */
-export async function computeTrending(db: PrismaClient, usd: QuoteUsdRateProvider, now = new Date()): Promise<{ status: TrendingStatus; scored: number; trending: number }> {
+/**
+ * Recompute volume windows, eligibility and trending rank for every recently traded token.
+ *
+ * Phase 7E.4 made this two passes rather than one. Scores are percentiles within the current
+ * cohort, so no token can be scored until every token's metrics are known — which is exactly
+ * what stops a tiny-baseline surge dominating on raw units.
+ *
+ *   pass 1  read the windows, value them in USD, classify eligibility
+ *   pass 2  build the cohort distribution, score, persist
+ *
+ * Only ELIGIBLE tokens receive a score. Everything else keeps its classification and reasons
+ * so the API can explain an exclusion, but carries no `trendingScore` and therefore cannot
+ * appear in default Trending however busy it looks.
+ */
+export async function computeTrending(
+  db: PrismaClient,
+  usd: QuoteUsdRateProvider,
+  now = new Date(),
+  config: TrendingConfig = loadTrendingConfig()
+): Promise<{ status: TrendingStatus; health: TrendingHealth; scored: number; trending: number; classifications: Record<RiskClassification, number> }> {
+  const health = await assessTrendingHealth(db, config, now);
   const status = await trendingCoverage(db, now);
-  if (!status.available) {
-    // Never leave an old ranking behind when coverage lapses.
+  const classifications: Record<RiskClassification, number> = { ELIGIBLE: 0, CAUTION: 0, HIGH_RISK: 0, UNVERIFIED: 0 };
+
+  if (!health.trendingAvailable) {
+    // Never leave an old ranking behind when the scoring windows lapse.
     await db.tokenMarketSnapshot.updateMany({ where: { chain: "robinhood", trendingScore: { not: null } }, data: { trendingScore: null } });
-    return { status, scored: 0, trending: 0 };
+    return { status, health, scored: 0, trending: 0, classifications };
   }
+
   const t5 = new Date(now.getTime() - 5 * 60_000);
-  const t1h = new Date(now.getTime() - 3_600_000);
-  const t7h = new Date(now.getTime() - 7 * 3_600_000);
+  const t1h = new Date(now.getTime() - config.coverage.rollingWindowMs);
+  const tBaseline = new Date(now.getTime() - config.coverage.rollingWindowMs - config.coverage.baselineWindowMs);
+  const baselineHours = config.coverage.baselineWindowMs / 3_600_000;
+
   const rows = await db.$queryRaw<Agg[]>`
     SELECT "tokenAddress", "quoteAddress",
       COALESCE(SUM("quoteAmount") FILTER (WHERE "sourceTimestamp" > ${t5}), 0)::text AS v5m,
@@ -113,58 +142,152 @@ export async function computeTrending(db: PrismaClient, usd: QuoteUsdRateProvide
       COUNT(*) FILTER (WHERE "sourceTimestamp" > ${t1h}) AS "trades1h",
       COUNT(*) FILTER (WHERE "sourceTimestamp" > ${t1h} AND side = 'buy') AS "buys1h",
       COUNT(*) FILTER (WHERE "sourceTimestamp" > ${t1h} AND side = 'sell') AS "sells1h",
-      COUNT(DISTINCT trader) FILTER (WHERE "sourceTimestamp" > ${t1h}) AS "traders1h"
+      COUNT(DISTINCT trader) FILTER (WHERE "sourceTimestamp" > ${t1h}) AS "traders1h",
+      MAX("sourceTimestamp") AS "lastTrade"
     FROM "ChainTrade"
-    WHERE chain = 'robinhood' AND "canonicalStatus" = 'CANONICAL' AND "sourceTimestamp" > ${t7h} AND "sourceTimestamp" <= ${now}
+    WHERE chain = 'robinhood' AND "canonicalStatus" = 'CANONICAL' AND "sourceTimestamp" > ${tBaseline} AND "sourceTimestamp" <= ${now}
     GROUP BY "tokenAddress", "quoteAddress"`;
+
+  const snapshots = new Map(
+    (
+      await db.tokenMarketSnapshot.findMany({
+        where: { chain: "robinhood", tokenAddress: { in: rows.map((r) => r.tokenAddress) } },
+        select: { tokenAddress: true, marketCapUsd: true, liquidityUsd: true, updatedAt: true, status: true, marketCapChange1hPct: true },
+      })
+    ).map((s) => [s.tokenAddress, s])
+  );
 
   const rates = new Map<string, number | null>();
   const scale = (raw: string, decimals: number) => Number(parseDecimal(raw.split(".")[0], 0)) / 10 ** decimals;
-  let scored = 0;
-  let trending = 0;
-  const touched: string[] = [];
+
+  interface Candidate {
+    row: Agg;
+    metrics: TrendingMetrics;
+    classification: RiskClassification;
+    reasons: string[];
+    ratio: number | null;
+  }
+  const candidates: Candidate[] = [];
+
+  // --- pass 1: value the windows and classify -----------------------------------------
   for (const r of rows) {
     const asset = lookupQuoteAsset(r.quoteAddress);
-    if (!asset) continue; // no verified decimals or rate: never valued
+    if (!asset) continue; // no verified decimals: never valued, never ranked
     if (!rates.has(r.quoteAddress)) {
       const rate = await usd.getHistoricalRate({ chain: "robinhood", quoteAddress: r.quoteAddress, at: now });
       rates.set(r.quoteAddress, rate.status === "AVAILABLE" ? Number(rate.rate.rateUsdPerQuote) : null);
     }
     const rate = rates.get(r.quoteAddress);
     if (rate === null || rate === undefined) continue;
-    const windows: VolumeWindows = {
-      volume5mUsd: scale(r.v5m, asset.decimals) * rate,
-      volume1hUsd: scale(r.v1h, asset.decimals) * rate,
-      baselineHourlyUsd: Number(r.prevTrades) > 0 ? (scale(r.vPrev, asset.decimals) * rate) / 6 : null,
-      trades1h: Number(r.trades1h),
-      traders1h: Number(r.traders1h),
-    };
-    const result = trendingScore(windows);
+
+    const snapshot = snapshots.get(r.tokenAddress) ?? null;
+    const valuationUsd = snapshot?.marketCapUsd ? Number(snapshot.marketCapUsd) : null;
+    const liquidityUsd = snapshot?.liquidityUsd ? Number(snapshot.liquidityUsd) : null;
+    const snapshotAgeMs = snapshot?.updatedAt ? Math.max(0, now.getTime() - snapshot.updatedAt.getTime()) : null;
+    const lastTradeAgeMs = r.lastTrade ? Math.max(0, now.getTime() - new Date(r.lastTrade).getTime()) : null;
+    const ratio = liquidityRatioBps(liquidityUsd, valuationUsd);
+
+    const eligibility = classifyEligibility(
+      {
+        valuationUsd,
+        // Only total supply is known on this chain, so this is FDV and says so (§O).
+        valuationBasis: "FDV",
+        liquidityUsd,
+        trades1h: Number(r.trades1h),
+        traders1h: Number(r.traders1h),
+        snapshotAgeMs,
+        lastTradeAgeMs,
+        routeVerified: snapshot?.status === "OK",
+        tradingUnavailable: false,
+      },
+      config
+    );
+    classifications[eligibility.classification] += 1;
+
+    candidates.push({
+      row: r,
+      classification: eligibility.classification,
+      reasons: eligibility.reasons,
+      ratio,
+      metrics: {
+        volume5mUsd: scale(r.v5m, asset.decimals) * rate,
+        volume1hUsd: scale(r.v1h, asset.decimals) * rate,
+        baselineHourlyUsd: Number(r.prevTrades) > 0 ? (scale(r.vPrev, asset.decimals) * rate) / baselineHours : null,
+        trades1h: Number(r.trades1h),
+        traders1h: Number(r.traders1h),
+        liquidityUsd: liquidityUsd ?? 0,
+        liquidityRatioBps: ratio,
+        valuationChange1h: snapshot?.marketCapChange1hPct ? Number(snapshot.marketCapChange1hPct) / 100 : null,
+        lastTradeAgeMs,
+        snapshotAgeMs,
+      },
+    });
+  }
+
+  // --- pass 2: rank within the eligible cohort ----------------------------------------
+  // Percentiles are taken over ELIGIBLE tokens only. Including the shells would compress
+  // every real token into the top of a distribution made mostly of noise.
+  const eligible = candidates.filter((c) => c.classification === "ELIGIBLE");
+  const cohort = buildCohort(eligible.map((c) => c.metrics));
+
+  let scored = 0;
+  let trending = 0;
+  const touched: string[] = [];
+
+  for (const candidate of candidates) {
+    const isEligible = candidate.classification === "ELIGIBLE";
+    const breakdown = isEligible ? scoreToken(candidate.metrics, cohort, config) : null;
+    const surge =
+      candidate.metrics.baselineHourlyUsd && candidate.metrics.baselineHourlyUsd > 0
+        ? candidate.metrics.volume1hUsd / candidate.metrics.baselineHourlyUsd
+        : null;
+
     const updated = await db.tokenMarketSnapshot.updateMany({
-      where: { chain: "robinhood", tokenAddress: r.tokenAddress },
+      where: { chain: "robinhood", tokenAddress: candidate.row.tokenAddress },
       data: {
-        volume5mUsd: windows.volume5mUsd.toFixed(6),
-        volume1hUsd: windows.volume1hUsd.toFixed(6),
-        volumeBaselineHourlyUsd: windows.baselineHourlyUsd === null ? null : windows.baselineHourlyUsd.toFixed(6),
-        volumeSurge: result.surge === null ? null : Math.min(result.surge, 1e12).toFixed(6),
-        trades1h: windows.trades1h,
-        buys1h: Number(r.buys1h),
-        sells1h: Number(r.sells1h),
-        traders1h: windows.traders1h,
-        trendingScore: result.score === null ? null : result.score.toFixed(6),
+        volume5mUsd: candidate.metrics.volume5mUsd.toFixed(6),
+        volume1hUsd: candidate.metrics.volume1hUsd.toFixed(6),
+        volumeBaselineHourlyUsd: candidate.metrics.baselineHourlyUsd === null ? null : candidate.metrics.baselineHourlyUsd.toFixed(6),
+        volumeSurge: surge === null ? null : Math.min(surge, 1e12).toFixed(6),
+        trades1h: candidate.metrics.trades1h,
+        buys1h: Number(candidate.row.buys1h),
+        sells1h: Number(candidate.row.sells1h),
+        traders1h: candidate.metrics.traders1h,
+        // Only an ELIGIBLE token carries a score, so nothing else can reach default Trending.
+        trendingScore: breakdown === null ? null : breakdown.finalScore.toFixed(6),
+        scoreComponents: breakdown === null ? undefined : (breakdown as unknown as object),
+        riskClassification: candidate.classification,
+        riskReasons: candidate.reasons,
+        liquidityRatioBps: candidate.ratio,
+        valuationBasis: "FDV",
         trendingComputedAt: now,
       },
     });
     if (updated.count > 0) {
-      touched.push(r.tokenAddress);
+      touched.push(candidate.row.tokenAddress);
       scored += 1;
-      if (result.score !== null) trending += 1;
+      if (breakdown !== null && breakdown.finalScore > 0) trending += 1;
     }
   }
+
   // Tokens that stopped trading drop out of the ranking and their windows reset.
   await db.tokenMarketSnapshot.updateMany({
     where: { chain: "robinhood", trendingComputedAt: { not: null }, tokenAddress: { notIn: touched } },
-    data: { trendingScore: null, volume5mUsd: "0", volume1hUsd: "0", volumeSurge: null, trades1h: 0, buys1h: 0, sells1h: 0, traders1h: 0, trendingComputedAt: now },
+    data: {
+      trendingScore: null,
+      scoreComponents: undefined,
+      riskClassification: "CAUTION",
+      riskReasons: ["STALE_LAST_TRADE"],
+      volume5mUsd: "0",
+      volume1hUsd: "0",
+      volumeSurge: null,
+      trades1h: 0,
+      buys1h: 0,
+      sells1h: 0,
+      traders1h: 0,
+      trendingComputedAt: now,
+    },
   });
-  return { status, scored, trending };
+
+  return { status, health, scored, trending, classifications };
 }

@@ -94,6 +94,12 @@ export function serializeMarket(s: TokenMarketSnapshot | null | undefined) {
     sells1h: s.sells1h,
     traders1h: s.traders1h,
     trendingScore: decimalToString(s.trendingScore),
+    // Phase 7E.4 §10 — the evidence behind an exclusion, so a UI can explain rather than
+    // silently drop a token the user was looking for. Never a "safe" boolean.
+    riskClassification: s.riskClassification ?? null,
+    riskReasons: Array.isArray(s.riskReasons) ? (s.riskReasons as string[]) : [],
+    liquidityRatioBps: s.liquidityRatioBps ?? null,
+    valuationBasis: s.valuationBasis ?? null,
     usdSource: ok ? s.usdRateSource : null,
   };
 }
@@ -282,8 +288,18 @@ export function createRobinhoodTokensRouter(
       if (lifecycle === "almost-bonded") conds.push(Prisma.sql`d.graduated = false AND s.status = 'OK' AND s.graduated = false AND s."bondingProgressBps" > 0`);
       const marketFreshAfter = new Date(Date.now() - 5 * 60_000);
       const activityFreshAfter = new Date(Date.now() - 2 * 60_000);
+      /*
+       * Phase 7E.4 §3 — default Trending is ELIGIBLE only.
+       *
+       * The liquidity floor that used to live here is now one of several gates inside the
+       * eligibility classifier, which also applies a valuation floor and a liquidity/value
+       * ratio — the single cleanest shell detector on this chain, where the median traded
+       * token has $2.28 of liquidity behind a $4,500 valuation. Only an ELIGIBLE token is
+       * given a score at all, so this condition is belt and braces rather than the only
+       * thing standing between a shell and the front page.
+       */
       if (lifecycle === "trending" || sort === "trending") conds.push(Prisma.sql`
-        s."trendingScore" > 0 AND s.status = 'OK' AND s."liquidityUsd" >= 1000
+        s."trendingScore" > 0 AND s.status = 'OK' AND s."riskClassification" = 'ELIGIBLE'
         AND s."blockTimestamp" >= ${marketFreshAfter} AND s."trendingComputedAt" >= ${activityFreshAfter}`);
       const marketFiltered = [filters.fdvMin, filters.fdvMax, filters.liquidityMin, filters.liquidityMax].some(v => v !== undefined);
       const activityFiltered = [filters.volume5mMin, filters.volume1hMin, filters.txns1hMin, filters.buys1hMin, filters.sells1hMin, filters.traders1hMin].some(v => v !== undefined);
