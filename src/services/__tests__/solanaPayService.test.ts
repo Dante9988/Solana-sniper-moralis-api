@@ -84,7 +84,7 @@ describe("solanaPayService: intents", () => {
   it("buildTransactionForAccount never touches a private key — it only forwards the caller-declared public account to jupiterService", async () => {
     vi.mocked(jupiterService.buildBuySwapTransaction).mockResolvedValue({
       transactionBase64: "base64tx",
-      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9 },
+      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9, minimumOut: '0', priceImpactPct: null },
     });
 
     const { intentId } = createBuyIntent(MINT, 0.5);
@@ -97,7 +97,7 @@ describe("solanaPayService: intents", () => {
   it("is one-time-use: a second build attempt against the same intentId fails once the first build has succeeded", async () => {
     vi.mocked(jupiterService.buildBuySwapTransaction).mockResolvedValue({
       transactionBase64: "base64tx",
-      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9 },
+      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9, minimumOut: '0', priceImpactPct: null },
     });
 
     const { intentId } = createBuyIntent(MINT, 0.5);
@@ -117,7 +117,7 @@ describe("solanaPayService: intents", () => {
 
     vi.mocked(jupiterService.buildBuySwapTransaction).mockResolvedValueOnce({
       transactionBase64: "base64tx-retry",
-      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9 },
+      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9, minimumOut: '0', priceImpactPct: null },
     });
     const retried = await buildTransactionForAccount(intentId, ACCOUNT);
     expect(retried.transaction).toBe("base64tx-retry");
@@ -142,7 +142,7 @@ describe("solanaPayService: intents", () => {
   it("the account posted by the wallet can only select whose transaction is built - it cannot change the intent's mint, amount, or side", async () => {
     vi.mocked(jupiterService.buildSellSwapTransaction).mockResolvedValue({
       transactionBase64: "sell-tx",
-      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9 },
+      quote: { inAmount: "1", outAmount: "2", outputDecimals: 9, minimumOut: '0', priceImpactPct: null },
     });
 
     const { intentId } = createSellIntent(MINT, 40);
