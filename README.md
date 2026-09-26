@@ -11,6 +11,7 @@ The backend for [OnlyPump](https://github.com/Dante9988/only-pump-me). It has tw
 
 | Document | Read it for |
 |---|---|
+| [AGENTS.md](./AGENTS.md) | Permanent PR evidence requirements, artifact review, and completion gate |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | How everything works today, phase by phase (Robinhood/Pons: §19–§21, §23–§26) |
 | [RUNBOOK.md](./RUNBOOK.md) | Running the API, workers and frontend locally |
 | [docs/phase-7d3-2-quote-verification.md](./docs/phase-7d3-2-quote-verification.md) | Why quotes can be trusted: sources, contract identities, fork evidence |
