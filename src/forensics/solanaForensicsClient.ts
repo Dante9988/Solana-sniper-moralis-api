@@ -32,6 +32,7 @@ import {
 import { RequestBudget } from "./requestBudget";
 import { ForensicsClientRuntimeConfig, RESOLVED_FORENSICS_CLIENT_CONFIG, resolveHeliusRpcUrl } from "./forensicsConfig";
 import { CoverageStatus } from "./types";
+import { getTransactionConfig } from "../solana/transactionVersion";
 
 export type ForensicsClientFailureCode =
   | "NOT_CONFIGURED"
@@ -490,11 +491,19 @@ export class SolanaForensicsClient {
    */
   async getTransaction(
     signature: string,
-    options: { commitment?: "confirmed" | "finalized"; maxSupportedTransactionVersion?: number } = {}
+    options: { commitment?: "confirmed" | "finalized" } = {}
   ): Promise<ForensicsClientResult<GetTransactionResult>> {
     return this.rpcCall({
       method: "getTransaction",
-      params: [signature, { maxSupportedTransactionVersion: 0, encoding: "jsonParsed", ...options }],
+      // Centralised: mainnet returns version-1 transactions and the RPC refuses the whole
+      // request rather than degrading, so a pinned 0 here was a hard failure waiting to happen.
+      //
+      // `maxSupportedTransactionVersion` is deliberately NOT part of `options`. It used to be, and
+      // because `options` is spread last a caller could silently override the centralised value —
+      // which is precisely the hidden path pinned to 0 that this phase set out to eliminate. No
+      // caller ever passed it (the only one, launchTransactionAnalyzer.ts, passes `{}`), so the
+      // ability to is removed rather than documented.
+      params: [signature, { ...options, ...getTransactionConfig({ encoding: "jsonParsed" }) }],
       schema: GetTransactionResultSchema,
       estimatedCredits: 1,
     });

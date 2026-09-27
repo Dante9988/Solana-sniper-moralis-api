@@ -24,15 +24,7 @@ export async function start(ctx: Context): Promise<void> {
   }
 }
 
-// Helper function to get formatted balance
-async function getFormattedBalance(walletAddress: string): Promise<string> {
-  try {
-    // This would be replaced with actual balance fetching
-    const solBalance = 0.25; // Mock SOL balance
-    const usdValue = solBalance * 103; // Mock SOL price of $103
-    return `${solBalance.toFixed(2)} SOL ($${usdValue.toFixed(2)} USD)`;
-  } catch (error) {
-    console.error('Error getting balance:', error);
-    return '0.00 SOL ($0.00 USD)';
-  }
-} 
+// A local `getFormattedBalance` used to live here, returning a hardcoded 0.25 SOL at a made-up
+// $103/SOL — a fabricated balance AND a fabricated price. Nothing in this file ever called it, so
+// it is deleted rather than repointed. The real implementation, which reads the balance on chain and
+// reports no USD figure (Phase 7E.4.3 §10), is exported from ../showWalletMenu. 

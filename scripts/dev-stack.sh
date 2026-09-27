@@ -13,7 +13,11 @@
 #   scripts/dev-stack.sh status
 #   scripts/dev-stack.sh logs <service>
 #
-# Services: api, pons, candles
+# Services: api, pons, candles, solana, solana-candles
+#
+# Phase 7E.4.4 — `solana` is the Pump.fun/PumpSwap ingestion worker (needs SOLANA_RPC_ENDPOINT in
+# .env) and `solana-candles` keeps Solana candles and activity windows current. Both start at the
+# chain head on a first run, like the Pons workers in live-head mode.
 #
 # NOT started here, deliberately:
 #   postgres  — owned by Docker/your host, see RUNBOOK.md
@@ -28,13 +32,15 @@ RUN_DIR="${ROOT}/.run"
 LOG_DIR="${RUN_DIR}/logs"
 mkdir -p "${LOG_DIR}"
 
-ALL_SERVICES=(api pons candles)
+ALL_SERVICES=(api pons candles solana solana-candles)
 
 service_cmd() {
   case "$1" in
     api)     echo "npx ts-node src/researchApi/server.ts" ;;
     pons)    echo "npx ts-node src/pons/scripts/ponsWorkerMain.ts" ;;
     candles) echo "npx ts-node src/candles/scripts/candlesWorkerMain.ts" ;;
+    solana)  echo "env SOLANA_DISCOVERY_ENABLED=true npx ts-node src/solana/scripts/solanaWorkerMain.ts" ;;
+    solana-candles) echo "env SOLANA_CANDLE_INTERVAL_MS=2000 npx ts-node src/solana/scripts/solanaCandleTick.ts" ;;
     bot)     echo "npx ts-node src/index.ts" ;;
     *)       echo "" ;;
   esac
@@ -46,6 +52,8 @@ service_script() {
     api)     echo "src/researchApi/server.ts" ;;
     pons)    echo "src/pons/scripts/ponsWorkerMain.ts" ;;
     candles) echo "src/candles/scripts/candlesWorkerMain.ts" ;;
+    solana)  echo "src/solana/scripts/solanaWorkerMain.ts" ;;
+    solana-candles) echo "src/solana/scripts/solanaCandleTick.ts" ;;
     bot)     echo "src/index.ts" ;;
     *)       echo "" ;;
   esac

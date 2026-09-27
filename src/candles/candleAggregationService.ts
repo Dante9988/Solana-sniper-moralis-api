@@ -24,6 +24,7 @@ import { TRADE_CHECKPOINT_SOURCE } from "../pons/tradeListener";
 import { TRADE_V2_CHECKPOINT_SOURCE } from "../pons/tradeV2Listener";
 import { CURVE_TRADE_CHECKPOINT_SOURCE } from "../pons/curveTradeListener";
 import { DISCOVERY_V2_CHECKPOINT_SOURCE } from "../pons/discoveryV2Listener";
+import { PUMPFUN_CHECKPOINT_SOURCE } from "../solana/pumpfunIngestionEngine";
 import { recomputeCandlesFromTimestamp } from "./recompute";
 import type { QuoteUsdRateProvider } from "./usdPricing";
 import type { FinalityInputs } from "./finality";
@@ -70,8 +71,21 @@ export interface CandleAggregationTickSummary {
 export const TRADE_SOURCES_BY_VENUE: Record<string, readonly string[]> = {
   pons: [TRADE_CHECKPOINT_SOURCE],
   pons_v2: [TRADE_V2_CHECKPOINT_SOURCE, CURVE_TRADE_CHECKPOINT_SOURCE],
+  // Phase 7E.4.3 — one Solana listener produces both discoveries and trades from the same pass
+  // over a transaction, so a second cursor could only ever disagree with the first.
+  pumpfun: [PUMPFUN_CHECKPOINT_SOURCE],
 };
-const DISCOVERY_SOURCES = [DISCOVERY_CHECKPOINT_SOURCE, DISCOVERY_V2_CHECKPOINT_SOURCE];
+
+/**
+ * Discovery streams whose unresolved-reorg flag blocks finalizing a bucket, per chain.
+ *
+ * Keyed by chain because these are absolute source names: asking for `robinhood:pons:discovery`
+ * while aggregating Solana would consult an unrelated stream's health.
+ */
+const DISCOVERY_SOURCES_BY_CHAIN: Record<string, readonly string[]> = {
+  robinhood: [DISCOVERY_CHECKPOINT_SOURCE, DISCOVERY_V2_CHECKPOINT_SOURCE],
+  solana: [PUMPFUN_CHECKPOINT_SOURCE],
+};
 
 // The worker is single-replica, but its fleet and watched loops run concurrently.
 // Claim before the first await and release after checkpoint/publish, not just writes.
@@ -92,7 +106,7 @@ export async function loadFinality(db: PrismaClient, chain = "robinhood"): Promi
   const required = [...new Set(venuesPresent.flatMap((v) => TRADE_SOURCES_BY_VENUE[v] ?? []))];
   const [trades, discoveries] = await Promise.all([
     Promise.all(required.map((source) => store.getFinalityState(source))),
-    Promise.all(DISCOVERY_SOURCES.map((source) => store.getFinalityState(source))),
+    Promise.all((DISCOVERY_SOURCES_BY_CHAIN[chain] ?? []).map((source) => store.getFinalityState(source))),
   ]);
 
   let confirmed: Date | null = required.length > 0 ? new Date(8.64e15) : null;
@@ -219,6 +233,17 @@ async function processInvalidations(deps: CandleAggregationServiceDeps, finality
   return { processed, bucketsRecomputed, candlesWritten };
 }
 
+/**
+ * Whether this chain's addresses may be compared case-insensitively.
+ *
+ * True for EVM chains, whose addresses are hex and stored lowercase throughout this repository.
+ * False for Solana, whose base58 addresses are case sensitive — folding one changes which mint it
+ * refers to, or more usually refers to no mint at all.
+ */
+function chainFoldsAddressCase(chain: string): boolean {
+  return chain !== "solana";
+}
+
 async function processForward(deps: CandleAggregationServiceDeps, finality: FinalityInputs, errors: string[]): Promise<{ tokensProcessed: number; bucketsRecomputed: number; candlesWritten: number }> {
   // Only tokens with canonical trades past their candle checkpoint (or never aggregated). Taking the
   // first N discovered tokens instead, as before, re-checked the same handful forever once there were
@@ -226,7 +251,15 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
   // `restrictToTokens: []` means the watched set is empty — there is genuinely nothing to do,
   // which is different from "no restriction". Returning early here keeps the fast loop free.
   if (deps.restrictToTokens?.length === 0) return { tokensProcessed: 0, bucketsRecomputed: 0, candlesWritten: 0 };
-  const restricted = deps.restrictToTokens ? deps.restrictToTokens.map((a) => a.toLowerCase()) : null;
+  // Phase 7E.4.3 §11 — address case folding is a per-chain fact, not a universal one.
+  //
+  // EVM addresses are case-insensitive and every writer in this repository stores them lowercase,
+  // so folding is safe and historically necessary there. Solana addresses are base58 and CASE
+  // SENSITIVE: `lower("...pump")` matches no mint that has a capital letter in it, which is most of
+  // them. Left as it was, the join below silently returned zero Solana tokens, so no Solana candle
+  // could ever be produced — found by the pipeline test in src/solana/__tests__.
+  const foldAddressCase = chainFoldsAddressCase(deps.chain);
+  const restricted = deps.restrictToTokens ? deps.restrictToTokens.map((a) => (foldAddressCase ? a.toLowerCase() : a)) : null;
 
   type Token = { tokenAddress: string; quoteAddress: string; venue: string };
   const tokens = restricted ? await deps.db.$queryRaw<Token[]>`
@@ -234,7 +267,7 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
     FROM "DiscoveredToken" d
     JOIN LATERAL (
       SELECT "sourceHeight", "sourceIndex" FROM "ChainTrade" t
-      WHERE t.chain = d.chain AND t."tokenAddress" = lower(d."tokenAddress")
+      WHERE t.chain = d.chain AND t."tokenAddress" = (CASE WHEN ${foldAddressCase} THEN lower(d."tokenAddress") ELSE d."tokenAddress" END)
         AND t."canonicalStatus" = 'CANONICAL' AND t."sourceTimestamp" IS NOT NULL
       ORDER BY "sourceHeight" DESC, "sourceIndex" DESC LIMIT 1
     ) latest ON true
@@ -248,10 +281,10 @@ async function processForward(deps: CandleAggregationServiceDeps, finality: Fina
       SELECT DISTINCT ON ("tokenAddress") "tokenAddress", "sourceHeight", "sourceIndex"
       FROM "ChainTrade"
       WHERE chain = ${deps.chain} AND "canonicalStatus" = 'CANONICAL' AND "sourceTimestamp" IS NOT NULL
-        AND (${restricted}::text[] IS NULL OR lower("tokenAddress") = ANY(${restricted}::text[]))
+        AND (${restricted}::text[] IS NULL OR (CASE WHEN ${foldAddressCase} THEN lower("tokenAddress") ELSE "tokenAddress" END) = ANY(${restricted}::text[]))
       ORDER BY "tokenAddress", "sourceHeight" DESC, "sourceIndex" DESC
     ) latest
-    JOIN "DiscoveredToken" d ON d.chain = ${deps.chain} AND lower(d."tokenAddress") = latest."tokenAddress" AND d."canonicalStatus" = 'CANONICAL'
+    JOIN "DiscoveredToken" d ON d.chain = ${deps.chain} AND (CASE WHEN ${foldAddressCase} THEN lower(d."tokenAddress") ELSE d."tokenAddress" END) = latest."tokenAddress" AND d."canonicalStatus" = 'CANONICAL'
     LEFT JOIN "CandleAggregationCheckpoint" c ON c.chain = ${deps.chain} AND c."tokenAddress" = d."tokenAddress"
     WHERE c."tokenAddress" IS NULL
        OR latest."sourceHeight" > c."lastSourceHeight"

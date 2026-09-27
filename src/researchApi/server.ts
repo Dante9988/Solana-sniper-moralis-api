@@ -26,6 +26,7 @@ import { createJobsRouter } from "./routes/jobs";
 import { createMeRouter } from "./routes/me";
 import { createRealtimeTicketsRouter } from "./routes/realtimeTickets";
 import { createRobinhoodTokensRouter } from "./routes/robinhoodTokens";
+import { createSolanaTokensRouter, createTokenCatalogRouter } from "./routes/solanaTokens";
 import { createCalloutsRouter } from "./routes/callouts";
 import { createExecutionsRouter } from "./routes/executions";
 import { createPaperTradingRouter } from "./routes/paperTrading";
@@ -105,6 +106,11 @@ export function createApiServer(db: PrismaClient, config: ApiConfig, overrides: 
   app.use("/api/v1", createMarketsRouter(config, deps));
   app.use("/api/v1/media", createMediaRouter(db, config));
   app.use("/api/v1/tokens/robinhood", createRobinhoodTokensRouter(db, config, deps));
+  // Phase 7E.4.4 — Solana discovery and the chain-neutral list. Both before the generic
+  // /tokens/:mint router: "/tokens" alone and "/tokens/solana/..." never match its routes, but
+  // keeping the specific paths first keeps intent obvious.
+  app.use("/api/v1/tokens/solana", createSolanaTokensRouter(db, config, deps));
+  app.use("/api/v1", createTokenCatalogRouter(db, config, deps));
   app.use("/api/v1/tokens", createTokensRouter(db, config, deps, eventBus));
   app.use("/api/v1/callouts", createCalloutsRouter(db, config, deps));
   app.use("/api/v1/jobs", createJobsRouter(db, config, deps));

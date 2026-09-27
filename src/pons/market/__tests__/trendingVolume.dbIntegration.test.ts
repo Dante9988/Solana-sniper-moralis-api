@@ -49,7 +49,14 @@ describe.skipIf(!RUN)("computeTrending — real Postgres", () => {
     await cleanup();
     for (const [i, t] of TOKENS.entries()) {
       await db.discoveredToken.create({ data: { chain: "robinhood", venue: "pons_v2", tokenAddress: t, deployer: ETH, quoteAddress: ETH, initialBuyAmount: 0, sourceHeight: BigInt(i + 1), sourceHash: "0x", sourceTxHash: "0x" + (900 + i).toString(16).padStart(64, "0"), sourceIndex: i } });
-      await db.tokenMarketSnapshot.create({ data: { chain: "robinhood", tokenAddress: t, status: "OK" } });
+      // Phase 7E.4 added eligibility floors (valuation, liquidity, liquidity/market-cap ratio), and
+      // a snapshot with no valuation or liquidity is UNVERIFIED — never ranked. This fixture
+      // predated them and so scored nothing, which is the gate working, not a bug. These values
+      // clear the floors so the test exercises what it is about: a volume surge ranking while
+      // steady volume and wash trading do not.
+      await db.tokenMarketSnapshot.create({
+        data: { chain: "robinhood", tokenAddress: t, status: "OK", marketCapUsd: "250000", liquidityUsd: "25000" },
+      });
     }
     // SURGING: $200/h for six hours, then $6,000 in the last hour from 12 wallets, hot last 5 minutes.
     for (let h = 1; h <= 6; h += 1) await trade(SURGING, 60 * h + 10, E18 / 10n, "0xa1");
@@ -75,9 +82,16 @@ describe.skipIf(!RUN)("computeTrending — real Postgres", () => {
     expect(s).toMatchObject({ trades1h: 12, traders1h: 12, buys1h: 8, sells1h: 4 });
     expect(Number(s.trendingScore)).toBeGreaterThan(0);
     const steady = await db.tokenMarketSnapshot.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: STEADY } } });
-    expect(steady.trendingScore).toBeNull();
+    // Phase 7E.4 replaced the old multiplicative `volume × surge × acceleration` gate with
+    // cohort-relative percentile scoring, so a token with real volume and real traders but no
+    // surge is now ranked LOW rather than excluded outright. What the test is really about — a
+    // surge outranks flat activity — is asserted as ordering, which is what ranking means.
     expect(Number(steady.volumeSurge)).toBeCloseTo(1, 3);
+    expect(steady.trendingScore).not.toBeNull();
+    expect(Number(s.trendingScore)).toBeGreaterThan(Number(steady.trendingScore) * 2);
     const wash = await db.tokenMarketSnapshot.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress: WASH } } });
+    // Still excluded, and by the rule that matters: $20,000 of volume from two wallets fails the
+    // distinct-trader floor, so it is never ranked however large the number is.
     expect(wash.trendingScore).toBeNull();
     expect(r.trending).toBeGreaterThanOrEqual(1);
   });

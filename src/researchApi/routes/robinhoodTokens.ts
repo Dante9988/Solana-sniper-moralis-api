@@ -7,7 +7,7 @@
  * rate limiting, error envelope, validateMint-style param validation).
  */
 
-import { DiscoveredToken, ChainTrade, PrismaClient, Prisma, type TokenMarketSnapshot } from "@prisma/client";
+import { PrismaClient } from "@prisma/client";
 import { createBackfillRunner, type BackfillResult, type BackfillRunner } from "../../pons/backfill/tokenTradeBackfill";
 import { Router } from "express";
 import { ApiConfig } from "../config";
@@ -19,216 +19,21 @@ import {
   RobinhoodTokenListQuerySchema,
   RobinhoodTradeListQuerySchema,
 } from "../contracts/robinhoodTokens";
-import { CandleQuerySchema } from "../contracts/candles";
 import { computeIngestionHealth } from "../../pons/sourceHealth";
 import { loadPonsHealthThresholds, PonsHealthThresholds } from "../../pons/config";
-import { computeCandleHealth, CandleHealthStatus } from "../../candles/health";
 import { loadCandleHealthThresholds, CandleHealthThresholds } from "../../candles/config";
-import { resolutionIdToDb, CandleResolutionId } from "../../candles/resolutions";
 import { NullQuoteUsdRateProvider } from "../../candles/usdPricing";
+import { listTokens, serializeTokens, serializeTrade, TokenListError } from "../tokenCatalog";
+import { sendCandles } from "../candleResponse";
 import { createPoolEvidenceProvider, type PoolEvidenceProvider } from "../poolEvidenceProvider";
 import { toPoolEvidenceJson, toPoolEvidenceUnavailableJson } from "../../presentation/toPoolEvidenceJson";
-import { enqueueTokenLogos, logoStatuses, logoUrlFor, type ImageStatus } from "../../media/tokenImageCache";
-import { logger } from "../lib/logger";
-import { lookupQuoteAsset } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
-import { formatScaled } from "../../pons/market/marketSnapshot";
-import { trendingCoverage } from "../../pons/market/trendingVolume";
 
-/**
- * Prisma.Decimal#toString() renders large integers in scientific notation
- * (e.g. "1e+27") — confirmed empirically by
- * discoveryListener.dbIntegration.test.ts. #toFixed() with no argument is
- * the correct method for a full, non-exponential decimal-safe digit
- * string. Every Decimal crossing into JSON in this file must go through
- * this helper, never a bare .toString().
- */
-function decimalToString(value: Prisma.Decimal | null): string | null {
-  return value === null ? null : value.toFixed();
-}
-
-function quoteAssetRef(address: string) {
-  const asset = lookupQuoteAsset(address);
-  return asset
-    ? { identified: true, symbol: asset.symbol, name: asset.name, decimals: asset.decimals, kind: asset.kind as "native" | "wrapped-native" | "stablecoin" | "stock-token", usdFeed: asset.feed?.name ?? null }
-    : { identified: false, symbol: null, name: null, decimals: null, kind: null, usdFeed: null };
-}
-
-const TEN = 10n;
-
-/** Phase 7D.4 — the live snapshot in whole units. Never a bare Decimal.toString() (exponent form). */
-export function serializeMarket(s: TokenMarketSnapshot | null | undefined) {
-  if (!s) return null;
-  const big = (d: Prisma.Decimal | null) => (d === null ? null : BigInt(d.toFixed(0)));
-  const whole = (raw: bigint | null, decimals: number | null) => (raw === null || decimals === null ? null : formatScaled(raw, decimals));
-  const priceX36 = big(s.priceQuoteX36);
-  const priceQuote =
-    priceX36 === null || s.tokenDecimals === null || s.quoteDecimals === null
-      ? null
-      : formatScaled((priceX36 * TEN ** BigInt(s.tokenDecimals)) / TEN ** BigInt(s.quoteDecimals), 36);
-  const ok = s.status === "OK";
-  return {
-    status: s.status as "PENDING" | "OK" | "FAILED" | "UNSUPPORTED",
-    reason: s.status === "OK" ? null : s.status === "PENDING" ? "not read yet" : s.lastError,
-    venue: (s.venue as "PONS_V2_BONDING_CURVE" | "UNISWAP_V4_POOL" | null) ?? null,
-    blockNumber: s.blockNumber?.toString() ?? null,
-    asOf: s.blockTimestamp?.toISOString() ?? null,
-    priceQuote: ok ? priceQuote : null,
-    priceUsd: ok ? decimalToString(s.priceUsd) : null,
-    marketCapQuote: ok ? whole(big(s.marketCapQuote), s.quoteDecimals) : null,
-    marketCapUsd: ok ? decimalToString(s.marketCapUsd) : null,
-    liquidityQuote: ok ? whole(big(s.liquidityQuote), s.quoteDecimals) : null,
-    liquidityUsd: ok ? decimalToString(s.liquidityUsd) : null,
-    liquidityBasis: !ok ? null : s.venue === "UNISWAP_V4_POOL" ? ("POOL_FULL_RANGE_EQUIVALENT" as const) : ("CURVE_REAL_QUOTE" as const),
-    bondingProgressPct: ok && s.bondingProgressBps !== null ? s.bondingProgressBps / 100 : null,
-    quoteRaised: ok ? whole(big(s.quoteRaised), s.quoteDecimals) : null,
-    graduationThreshold: ok ? whole(big(s.graduationThreshold), s.quoteDecimals) : null,
-    readyToGraduate: ok && s.readyToGraduate,
-    marketCapChange1hUsd: ok ? decimalToString(s.marketCapChange1hUsd) : null,
-    marketCapChange1hPct: ok ? decimalToString(s.marketCapChange1hPct) : null,
-    volume5mUsd: decimalToString(s.volume5mUsd),
-    volume1hUsd: decimalToString(s.volume1hUsd),
-    volumeBaselineHourlyUsd: decimalToString(s.volumeBaselineHourlyUsd),
-    volumeSurge: decimalToString(s.volumeSurge),
-    trades1h: s.trades1h,
-    buys1h: s.buys1h,
-    sells1h: s.sells1h,
-    traders1h: s.traders1h,
-    trendingScore: decimalToString(s.trendingScore),
-    usdSource: ok ? s.usdRateSource : null,
-  };
-}
-
-function serializeToken(row: DiscoveredToken, logoStatus: ImageStatus = row.logoUrl ? "PENDING" : "NONE", market: TokenMarketSnapshot | null = null) {
-  return {
-    chain: row.chain,
-    venue: row.venue,
-    tokenAddress: row.tokenAddress,
-    deployer: row.deployer,
-    poolAddress: row.poolAddress,
-    curveAddress: row.curveAddress,
-    quoteAddress: row.quoteAddress,
-    quoteAsset: quoteAssetRef(row.quoteAddress),
-    // Phase 7D §1 — name()/symbol() are guaranteed by the ERC-20 standard
-    // and enrich alongside supply; logo/description/socials are decoded
-    // from the launch transaction itself (never contract storage — see
-    // abiV2.ts) and may legitimately be unavailable (richMetadataStatus)
-    // for a launch routed through an unverified intermediary.
-    name: row.name,
-    symbol: row.symbol,
-    // The launcher's own URL, kept for provenance. Clients must render `logo.url` instead:
-    // it is served from OnlyPump's origin, byte-verified, and never contacts a third party.
-    logoUrl: row.logoUrl,
-    logo: {
-      url: row.logoUrl ? logoUrlFor(row.tokenAddress) : null,
-      status: logoStatus,
-    },
-    description: row.description,
-    socials: {
-      website: row.socialWebsite,
-      twitter: row.socialTwitter,
-      telegram: row.socialTelegram,
-      discord: row.socialDiscord,
-      farcaster: row.socialFarcaster,
-    },
-    richMetadataStatus: row.richMetadataStatus,
-    // Phase 7B.5A §4/§9 — null while enrichment is still PENDING (batched,
-    // bounded-concurrency getLaunchedToken() retried on later discovery
-    // ticks). Never a fabricated default.
-    supply: decimalToString(row.supply),
-    enrichmentStatus: row.enrichmentStatus,
-    initialBuyAmount: decimalToString(row.initialBuyAmount)!,
-    sourceHeight: row.sourceHeight.toString(),
-    sourceHash: row.sourceHash,
-    sourceTxHash: row.sourceTxHash,
-    sourceIndex: row.sourceIndex,
-    observedAt: row.observedAt.toISOString(),
-    graduated: row.graduated,
-    graduationPairedPrincipal: decimalToString(row.graduationPairedPrincipal),
-    graduationThreshold: decimalToString(row.graduationThreshold),
-    graduationCheckedAt: row.graduationCheckedAt?.toISOString() ?? null,
-    // Phase 7D §2 — event-sourced V2 graduation (never polled — see
-    // graduationPairedPrincipal/graduationThreshold above for V1's
-    // poll-only equivalents, which stay null for V2 rows).
-    graduationPositionId: decimalToString(row.graduationPositionId),
-    graduationTokenAmount: decimalToString(row.graduationTokenAmount),
-    graduationPairTokenAmount: decimalToString(row.graduationPairTokenAmount),
-    poolId: row.poolId,
-    market: serializeMarket(market),
-  };
-}
-
-async function snapshotsFor(db: PrismaClient, addresses: string[]): Promise<Map<string, TokenMarketSnapshot>> {
-  if (addresses.length === 0) return new Map();
-  try {
-    const rows = await db.tokenMarketSnapshot.findMany({ where: { chain: "robinhood", tokenAddress: { in: addresses.map((a) => a.toLowerCase()) } } });
-    return new Map(rows.map((r) => [r.tokenAddress, r]));
-  } catch (err) {
-    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "market snapshots unavailable");
-    return new Map();
-  }
-}
-
-function serializeTrade(row: ChainTrade) {
-  return {
-    chain: row.chain,
-    venue: row.venue,
-    tokenAddress: row.tokenAddress,
-    poolAddress: row.poolAddress,
-    poolId: row.poolId,
-    side: row.side,
-    tokenAmount: decimalToString(row.tokenAmount)!,
-    quoteAmount: decimalToString(row.quoteAmount)!,
-    quoteAddress: row.quoteAddress,
-    priceQuote: decimalToString(row.priceQuote)!,
-    trader: row.trader,
-    sourceHeight: row.sourceHeight.toString(),
-    sourceHash: row.sourceHash,
-    sourceTxHash: row.sourceTxHash,
-    sourceIndex: row.sourceIndex,
-    observedAt: row.observedAt.toISOString(),
-  };
-}
-
-/**
- * Logo status is decoration: a cache failure must never fail a token read. Enqueueing is
- * fire-and-forget for the same reason.
- */
-async function logoStatusesSafely(db: PrismaClient, rows: DiscoveredToken[]): Promise<Map<string, ImageStatus>> {
-  const tokens = rows.map((r) => ({ tokenAddress: r.tokenAddress, logoUrl: r.logoUrl }));
-  enqueueTokenLogos(db, tokens).catch((err) => logger.warn({ err: (err as Error).message }, "[token-images] enqueue failed"));
-  try {
-    return await logoStatuses(db, tokens);
-  } catch (err) {
-    logger.warn({ err: (err as Error).message }, "[token-images] status lookup failed");
-    return new Map();
-  }
-}
+// Phase 7E.4.4 — serialization and the discovery query moved to ../tokenCatalog (shared by every
+// chain); re-exported so existing importers keep working.
+export { serializeMarket } from "../tokenCatalog";
 
 const PRICING_BASIS =
   "Normalized (decimal-adjusted) execution price = normalized quote amount / normalized token amount, using each token's verified on-chain decimals() (never assumed) — see ARCHITECTURE.md §21.4.";
-const UNIQUE_TRADER_SEMANTICS =
-  "Distinct observed ChainTrade.trader values in this bucket — the swap recipient/router-facing address, not a verified ultimate economic trader. See ARCHITECTURE.md §21.7.";
-
-function toFreshness(candleStatus: CandleHealthStatus, sourceStatus: string): string {
-  // Freshness reflects the worse of candle-aggregation health and
-  // upstream Pons ingestion health — a live candle worker over a degraded
-  // trade feed is not genuinely "live" data.
-  const rank: Record<string, number> = { LIVE: 0, LAGGING: 1, DEGRADED: 2, REORG_RECOVERY: 3, UNAVAILABLE: 4 };
-  const worst = rank[candleStatus] >= rank[sourceStatus] ? candleStatus : (sourceStatus as CandleHealthStatus);
-  switch (worst) {
-    case "LIVE":
-      return "live";
-    case "LAGGING":
-      return "lagging";
-    case "DEGRADED":
-      return "degraded";
-    case "REORG_RECOVERY":
-      return "reorg_recovery";
-    default:
-      return "unavailable";
-  }
-}
-
 export function createRobinhoodTokensRouter(
   db: PrismaClient,
   config: ApiConfig,
@@ -266,93 +71,9 @@ export function createRobinhoodTokensRouter(
         sendError(res, "BAD_REQUEST", "invalid query parameters", req.requestId);
         return;
       }
-      const filters = parsed.data;
-      const { limit, cursor, lifecycle, q } = filters;
-      for (const [min, max] of [[filters.fdvMin, filters.fdvMax], [filters.liquidityMin, filters.liquidityMax]]) {
-        if (min !== undefined && max !== undefined && new Prisma.Decimal(min).gt(max)) {
-          return sendError(res, "BAD_REQUEST", "minimum must not exceed maximum", req.requestId);
-        }
-      }
-      const sort = parsed.data.sort ?? (lifecycle === "almost-bonded" ? "progress" : lifecycle === "trending" ? "trending" : "new");
-
-      // Phase 7D.4 — filters and orderings over the token and its live snapshot, in one query.
-      const conds: Prisma.Sql[] = [Prisma.sql`d.chain = 'robinhood'`, Prisma.sql`d."canonicalStatus" = 'CANONICAL'`];
-      if (lifecycle === "graduated") conds.push(Prisma.sql`d.graduated = true`);
-      if (lifecycle === "bonding") conds.push(Prisma.sql`d.graduated = false`);
-      if (lifecycle === "almost-bonded") conds.push(Prisma.sql`d.graduated = false AND s.status = 'OK' AND s.graduated = false AND s."bondingProgressBps" > 0`);
-      const marketFreshAfter = new Date(Date.now() - 5 * 60_000);
-      const activityFreshAfter = new Date(Date.now() - 2 * 60_000);
-      if (lifecycle === "trending" || sort === "trending") conds.push(Prisma.sql`
-        s."trendingScore" > 0 AND s.status = 'OK' AND s."liquidityUsd" >= 1000
-        AND s."blockTimestamp" >= ${marketFreshAfter} AND s."trendingComputedAt" >= ${activityFreshAfter}`);
-      const marketFiltered = [filters.fdvMin, filters.fdvMax, filters.liquidityMin, filters.liquidityMax].some(v => v !== undefined);
-      const activityFiltered = [filters.volume5mMin, filters.volume1hMin, filters.txns1hMin, filters.buys1hMin, filters.sells1hMin, filters.traders1hMin].some(v => v !== undefined);
-      if (marketFiltered) conds.push(Prisma.sql`s.status = 'OK' AND s."blockTimestamp" >= ${marketFreshAfter}`);
-      if (activityFiltered) conds.push(Prisma.sql`s."trendingComputedAt" >= ${activityFreshAfter}`);
-      const numericFilters: Array<[string | number | undefined, Prisma.Sql, "min" | "max"]> = [
-        [filters.fdvMin, Prisma.sql`s."marketCapUsd"`, "min"], [filters.fdvMax, Prisma.sql`s."marketCapUsd"`, "max"],
-        [filters.liquidityMin, Prisma.sql`s."liquidityUsd"`, "min"], [filters.liquidityMax, Prisma.sql`s."liquidityUsd"`, "max"],
-        [filters.volume5mMin, Prisma.sql`s."volume5mUsd"`, "min"], [filters.volume1hMin, Prisma.sql`s."volume1hUsd"`, "min"],
-        [filters.txns1hMin, Prisma.sql`s."trades1h"`, "min"], [filters.buys1hMin, Prisma.sql`s."buys1h"`, "min"],
-        [filters.sells1hMin, Prisma.sql`s."sells1h"`, "min"], [filters.traders1hMin, Prisma.sql`s."traders1h"`, "min"],
-      ];
-      for (const [value, column, bound] of numericFilters) if (value !== undefined) {
-        conds.push(bound === "min" ? Prisma.sql`${column} >= ${String(value)}::numeric` : Prisma.sql`${column} <= ${String(value)}::numeric`);
-      }
-      if (q) {
-        if (/^0x[0-9a-fA-F]{2,40}$/.test(q)) conds.push(Prisma.sql`d."tokenAddress" LIKE ${q.toLowerCase() + "%"}`);
-        else conds.push(Prisma.sql`(d.name ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"} OR d.symbol ILIKE ${"%" + q.replace(/[\\%_]/g, "\\$&") + "%"})`);
-      }
-      const where = Prisma.join(conds, " AND ");
-      const order = {
-        new: Prisma.sql`d."observedAt" DESC, d."tokenAddress" DESC`,
-        marketCap: Prisma.sql`s."marketCapUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
-        liquidity: Prisma.sql`s."liquidityUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
-        progress: Prisma.sql`s."bondingProgressBps" DESC NULLS LAST, s."quoteRaised" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
-        change1h: Prisma.sql`s."marketCapChange1hUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
-        volume1h: Prisma.sql`s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
-        trending: Prisma.sql`s."trendingScore" DESC NULLS LAST, s."volume1hUsd" DESC NULLS LAST, d."observedAt" DESC, d."tokenAddress" DESC`,
-      }[sort];
-      // "new" pages by time so rows discovered meanwhile don't shift pages; other orders page by offset.
-      let offset = 0;
-      if (cursor) {
-        if (sort === "new") {
-          const [at, address] = (cursor.startsWith("t:") ? cursor.slice(2) : cursor).split("|");
-          if (Number.isNaN(Date.parse(at)) || (address !== undefined && !/^0x[0-9a-f]{40}$/.test(address))) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
-          conds.push(address === undefined ? Prisma.sql`d."observedAt" < ${new Date(at)}`
-            : Prisma.sql`(d."observedAt", d."tokenAddress") < (${new Date(at)}, ${address})`);
-        } else {
-          const m = /^o:(\d{1,6})$/.exec(cursor);
-          if (!m) return sendError(res, "BAD_REQUEST", "invalid cursor", req.requestId);
-          offset = Number(m[1]);
-        }
-      }
-      const from = Prisma.sql`FROM "DiscoveredToken" d LEFT JOIN "TokenMarketSnapshot" s ON s.chain = d.chain AND s."tokenAddress" = d."tokenAddress"`;
-      const [ids, counted] = await Promise.all([
-        db.$queryRaw<Array<{ tokenAddress: string; observedAt: Date }>>`SELECT d."tokenAddress", d."observedAt" ${from} WHERE ${Prisma.join(conds, " AND ")} ORDER BY ${order} OFFSET ${offset} LIMIT ${limit}`,
-        db.$queryRaw<Array<{ n: bigint }>>`SELECT count(*)::bigint AS n ${from} WHERE ${where}`,
-      ]);
-      const total = Number(counted[0]?.n ?? 0);
-      const found = await db.discoveredToken.findMany({ where: { chain: "robinhood", tokenAddress: { in: ids.map((r) => r.tokenAddress) } } });
-      const byAddress = new Map(found.map((r) => [r.tokenAddress, r]));
-      const rows = ids.map((r) => byAddress.get(r.tokenAddress)).filter((r): r is DiscoveredToken => Boolean(r));
-
-      const last = ids[ids.length - 1];
-      const nextCursor = ids.length < limit || !last ? null : sort === "new" ? `t:${last.observedAt.toISOString()}|${last.tokenAddress}` : `o:${offset + ids.length}`;
-      const [statuses, snapshots, trending] = await Promise.all([
-        logoStatusesSafely(db, rows),
-        snapshotsFor(db, rows.map((r) => r.tokenAddress)),
-        lifecycle === "trending" ? trendingCoverage(db, new Date()) : Promise.resolve(undefined),
-      ]);
-
-      res.json({
-        ...(trending ? { trending } : {}),
-        tokens: rows.map((row) => serializeToken(row, statuses.get(row.tokenAddress.toLowerCase()), snapshots.get(row.tokenAddress.toLowerCase()) ?? null)),
-        nextCursor,
-        total,
-        observedAt: new Date().toISOString(),
-      });
+      res.json(await listTokens(db, ["robinhood"], parsed.data));
     } catch (err) {
+      if (err instanceof TokenListError) return sendError(res, "BAD_REQUEST", err.message, req.requestId);
       next(err);
     }
   });
@@ -380,9 +101,9 @@ export function createRobinhoodTokensRouter(
         take: limit,
       });
 
-      const [statuses, snapshots] = await Promise.all([logoStatusesSafely(db, [token]), snapshotsFor(db, [token.tokenAddress])]);
+      const [serialized] = await serializeTokens(db, [token]);
       res.json({
-        token: serializeToken(token, statuses.get(token.tokenAddress.toLowerCase()), snapshots.get(token.tokenAddress.toLowerCase()) ?? null),
+        token: serialized,
         trades: trades.map(serializeTrade),
         observedAt: new Date().toISOString(),
       });
@@ -491,106 +212,13 @@ export function createRobinhoodTokensRouter(
 
   router.get("/:tokenAddress/candles", readAuth, readLimiter, validateRobinhoodAddress, async (req, res, next) => {
     try {
-      const parsed = CandleQuerySchema.safeParse(req.query);
-      if (!parsed.success) {
-        sendError(res, "BAD_REQUEST", "invalid query parameters", req.requestId);
-        return;
-      }
-      const { resolution, from, to, limit, cursor, direction } = parsed.data;
-      if (from !== undefined && to !== undefined && from > to) {
-        sendError(res, "BAD_REQUEST", "'from' must not be after 'to'", req.requestId);
-        return;
-      }
-
-      const tokenAddress = req.normalizedTokenAddress!;
-      const token = await db.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: "robinhood", tokenAddress } } });
-      if (!token || token.canonicalStatus !== "CANONICAL") {
-        sendError(res, "NOT_FOUND", "token has not been discovered", req.requestId);
-        return;
-      }
-
-      /**
-       * Phase 7D.6.3 — asking for a token's candles is watching it.
-       *
-       * The watched-token loop refreshes these every couple of seconds; everything else waits
-       * for the fleet pass, which measured 40s median and 83s at worst. Registering the watch
-       * on the WebSocket subscribe alone left signed-out visitors polling a token nobody was
-       * refreshing — fresh requests for stale rows. Best-effort on purpose: a failure here
-       * costs freshness, never the response.
-       */
-      void db.candleWatch
-        .upsert({
-          where: { chain_tokenAddress: { chain: "robinhood", tokenAddress } },
-          create: { chain: "robinhood", tokenAddress, lastSeenAt: new Date() },
-          update: { lastSeenAt: new Date() },
-        })
-        .catch(() => undefined);
-
-      const resolutionDb = resolutionIdToDb(resolution as CandleResolutionId);
-      const effectiveFrom = cursor !== undefined && direction === "forward" ? Math.max(cursor, from ?? 0) : from;
-      const effectiveTo = cursor !== undefined && direction === "backward" ? Math.min(cursor, to ?? Infinity) : to;
-      const snapshotStartedAt = new Date().toISOString();
-
-      const rows = await db.marketCandle.findMany({
-        where: {
-          chain: "robinhood",
-          tokenAddress,
-          resolution: resolutionDb,
-          bucketStart: {
-            ...(effectiveFrom !== undefined ? { gte: new Date(effectiveFrom * 1000) } : {}),
-            ...(effectiveTo !== undefined ? { lt: new Date(effectiveTo * 1000) } : {}),
-          },
-        },
-        // Ascending by bucketStart — a documented, deterministic order
-        // suitable for chart rendering and cursor-forward backfill merging
-        // (phase7b5b.txt §12: "Return chart history in a documented order
-        // suitable for deterministic merging/backfill").
-        orderBy: { bucketStart: direction === "backward" ? "desc" : "asc" },
-        take: limit + 1,
-      });
-
-      const truncated = rows.length > limit;
-      const selected = truncated ? rows.slice(0, limit) : rows;
-      const page = direction === "backward" ? selected.reverse() : selected;
-      const nextCursor = truncated ? direction === "backward"
-        ? Math.floor(page[0].bucketStart.getTime() / 1000)
-        : Math.floor(page[page.length - 1].bucketStart.getTime() / 1000) + 1 : null;
-
-      const [candleHealth, sourceHealth] = await Promise.all([
-        computeCandleHealth(db, "robinhood", candleHealthThresholds),
-        computeIngestionHealth(db, healthThresholds),
-      ]);
-
-      res.json({
+      await sendCandles(db, req, res, {
         chain: "robinhood",
-        venue: token.venue,
-        tokenAddress,
-        quoteAddress: token.quoteAddress,
-        resolution,
-        candles: page.map((c) => ({
-          startTime: Math.floor(c.bucketStart.getTime() / 1000),
-          open: c.open.toFixed(),
-          high: c.high.toFixed(),
-          low: c.low.toFixed(),
-          close: c.close.toFixed(),
-          volumeToken: c.volumeToken.toFixed(),
-          volumeQuote: c.volumeQuote.toFixed(),
-          volumeUsd: c.volumeUsd ? c.volumeUsd.toFixed() : null,
-          trades: c.tradeCount,
-          uniqueTraders: c.uniqueTraders,
-          status: c.status === "FINAL" ? "final" : "provisional",
-          updatedAt: c.updatedAt.toISOString(),
-        })),
-        nextCursor,
-        observedAt: snapshotStartedAt,
-        freshness: toFreshness(candleHealth.status, sourceHealth.status),
+        tokenAddress: req.normalizedTokenAddress!,
+        candleHealthThresholds,
+        sourceStatus: async () => (await computeIngestionHealth(db, healthThresholds)).status,
         pricingBasis: PRICING_BASIS,
-        uniqueTraderSemantics: UNIQUE_TRADER_SEMANTICS,
-        usd: {
-          available: page.some((c) => c.volumeUsd !== null),
-          provider: null,
-          note: `USD pricing is not available in this environment — ${new NullQuoteUsdRateProvider().name}.`,
-        },
+        usdNote: `USD pricing is not available in this environment — ${new NullQuoteUsdRateProvider().name}.`,
       });
     } catch (err) {
       next(err);

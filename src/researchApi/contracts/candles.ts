@@ -47,7 +47,7 @@ export const CandleFreshnessSchema = z.enum(["live", "lagging", "degraded", "reo
 
 export const CandleHistoryResponseSchema = z
   .object({
-    chain: z.literal("robinhood"),
+    chain: z.enum(["robinhood", "solana"]),
     venue: z.string(),
     tokenAddress: z.string(),
     quoteAddress: z.string(),

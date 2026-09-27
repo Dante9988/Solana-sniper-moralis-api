@@ -24,6 +24,7 @@ import { findEvents, RawTransactionLike } from '../eventWalker';
 import { normalizeTradeEvent } from '../normalizeTrade';
 import { eventIdentityOf, eventIdentityKey } from '../eventIdentity';
 import { PUMP_PROGRAM_ID, PUMPSWAP_PROGRAM_ID } from '../discriminators';
+import { getTransactionConfig } from '../../solana/transactionVersion';
 
 const WSS = process.env.HELIUS_WSS_URI;
 const HTTPS_URL = process.env.HELIUS_HTTPS_URI;
@@ -96,7 +97,7 @@ async function drainQueue() {
 async function processOne(signature: string, notifiedAtMs: number) {
   const r = await rawRpc('getTransaction', [
     signature,
-    { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+    getTransactionConfig({ encoding: 'jsonParsed', commitment: 'confirmed' }),
   ]);
   if (r.status === 429) {
     rateLimited++;

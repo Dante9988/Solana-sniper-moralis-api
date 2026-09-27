@@ -2,9 +2,26 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import axios from 'axios';
 import { PrismaClient, Wallet, UserConfig } from '@prisma/client';
 
-// Jupiter API endpoints
-const JUPITER_QUOTE_API = 'https://quote-api.jup.ag/v6/quote';
-const JUPITER_SWAP_API = 'https://quote-api.jup.ag/v6/swap';
+/**
+ * Jupiter API endpoints.
+ *
+ * `quote-api.jup.ag` was retired and no longer resolves at all — verified 2026-09-26, when
+ * it returned DNS ENOTFOUND while `lite-api.jup.ag` and `api.jup.ag` both answered with live
+ * quotes from the same machine seconds apart. Every call in this file was dead until then.
+ *
+ * `lite-api` is the keyless tier; `api.jup.ag` is the keyed one and is used automatically
+ * when `JUPITER_API_KEY` is set. `JUPITER_API_BASE` overrides both.
+ */
+const JUPITER_API_BASE =
+  process.env.JUPITER_API_BASE?.trim() ||
+  (process.env.JUPITER_API_KEY?.trim() ? 'https://api.jup.ag/swap/v1' : 'https://lite-api.jup.ag/swap/v1');
+const JUPITER_QUOTE_API = `${JUPITER_API_BASE}/quote`;
+const JUPITER_SWAP_API = `${JUPITER_API_BASE}/swap`;
+
+/** Present only on the keyed tier; `lite-api` takes no key. */
+const JUPITER_HEADERS: Record<string, string> = process.env.JUPITER_API_KEY?.trim()
+  ? { 'x-api-key': process.env.JUPITER_API_KEY.trim() }
+  : {};
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
@@ -18,6 +35,13 @@ const DEFAULT_TAKE_PROFIT_PCT = 50;
 const DEFAULT_STOP_LOSS_PCT = 15;
 const DEFAULT_AUTO_SELL = false;
 
+/**
+ * 5%. High for a liquid pair and ordinary for a memecoin, which is what this service is for.
+ * Callers may pass their own; it is named rather than repeated so it can be found and argued
+ * with, instead of sitting as a literal in two places.
+ */
+const DEFAULT_SLIPPAGE_BPS = 500;
+
 // Database client
 const prisma = new PrismaClient();
 
@@ -27,8 +51,20 @@ export interface BuiltSwapTransaction {
   quote: {
     inAmount: string;
     outAmount: string;
+    /**
+     * Read from the output mint on chain.
+     *
+     * Jupiter's quote response does NOT carry decimals — verified against the live API on
+     * 2026-09-26, whose keys are inputMint, inAmount, outputMint, outAmount,
+     * otherAmountThreshold, swapMode, slippageBps, platformFee, priceImpactPct, routePlan…
+     * The previous code read a field that was never there and fell back to `?? 9`, so every
+     * amount was formatted as if it had nine decimals. USDC has six.
+     */
     outputDecimals: number;
-    price?: number;
+    /** `otherAmountThreshold`: the least the swap may deliver at this slippage. */
+    minimumOut: string;
+    /** Jupiter's own price-impact estimate, as a fraction. */
+    priceImpactPct: string | null;
   };
 }
 
@@ -46,8 +82,90 @@ interface UserPreferences {
 export class JupiterService {
   private connection: Connection;
 
+  /**
+   * Decimals for a mint, read on chain and cached.
+   *
+   * Jupiter does not return them, so without this every amount would have to assume a value.
+   * A wrong assumption is not a rounding error: nine-vs-six decimals misreports a balance by
+   * a thousand times.
+   */
+  private static readonly decimalsCache = new Map<string, number>();
+
+  private async mintDecimals(mint: string): Promise<number> {
+    const cached = JupiterService.decimalsCache.get(mint);
+    if (cached !== undefined) return cached;
+    const info = await this.connection.getParsedAccountInfo(new PublicKey(mint));
+    const data = info.value?.data;
+    const decimals =
+      data && typeof data === 'object' && 'parsed' in data ? (data.parsed as { info?: { decimals?: number } })?.info?.decimals : undefined;
+    if (typeof decimals !== 'number') throw new Error(`Could not read decimals for mint ${mint}`);
+    JupiterService.decimalsCache.set(mint, decimals);
+    return decimals;
+  }
+
+  /**
+   * One quote + one unsigned swap, shared by buy and sell.
+   *
+   * Both sides had their own copy of this before, which is how the same three bugs — a dead
+   * host, a field name Jupiter ignores, and invented decimals — existed twice.
+   */
+  private async quoteAndBuild(params: {
+    inputMint: string;
+    outputMint: string;
+    amountRaw: string;
+    slippageBps: number;
+    ownerAddress: string;
+  }): Promise<BuiltSwapTransaction> {
+    const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
+      params: {
+        inputMint: params.inputMint,
+        outputMint: params.outputMint,
+        amount: params.amountRaw,
+        slippageBps: params.slippageBps,
+      },
+      headers: JUPITER_HEADERS,
+    });
+    const quote = quoteResponse.data;
+    if (!quote?.outAmount) throw new Error('Failed to get quote from Jupiter');
+
+    const swapResponse = await axios.post(
+      JUPITER_SWAP_API,
+      {
+        quoteResponse: quote,
+        userPublicKey: params.ownerAddress,
+        // The current parameter name. The old `wrapUnwrapSOL` is silently ignored by the
+        // live API — it still returns 200, so the mistake was invisible.
+        wrapAndUnwrapSol: true,
+      },
+      { headers: JUPITER_HEADERS }
+    );
+    const swap = swapResponse.data;
+    if (!swap?.swapTransaction) throw new Error('Failed to generate swap transaction');
+    // Jupiter simulates before returning. A route that already failed must not be handed to
+    // a wallet as if it were ready to sign.
+    if (swap.simulationError) {
+      const detail = typeof swap.simulationError === 'string' ? swap.simulationError : JSON.stringify(swap.simulationError);
+      throw new Error(`Jupiter could not simulate this swap: ${detail}`);
+    }
+
+    return {
+      transactionBase64: swap.swapTransaction,
+      quote: {
+        inAmount: quote.inAmount,
+        outAmount: quote.outAmount,
+        outputDecimals: await this.mintDecimals(params.outputMint),
+        minimumOut: quote.otherAmountThreshold ?? quote.outAmount,
+        priceImpactPct: quote.priceImpactPct ?? null,
+      },
+    };
+  }
+
   constructor() {
-    this.connection = new Connection(process.env.RPC_ENDPOINT || process.env.HELIUS_HTTPS_URI || 'https://api.mainnet-beta.solana.com');
+    // Alchemy first: Helius is not configured on this deployment, and the public endpoint is
+    // rate-limited hard enough to be a liability for anything user-facing.
+    this.connection = new Connection(
+      process.env.SOLANA_RPC_ENDPOINT || process.env.RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com'
+    );
   }
 
   /**
@@ -164,33 +282,13 @@ export class JupiterService {
     solAmount: number,
     opts: { slippageBps?: number; useJito?: boolean } = {}
   ): Promise<BuiltSwapTransaction> {
-    const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
-      params: {
-        inputMint: SOL_MINT,
-        outputMint: tokenAddress,
-        amount: Math.floor(solAmount * 1e9),
-        slippageBps: opts.slippageBps ?? 500,
-      }
+    return this.quoteAndBuild({
+      inputMint: SOL_MINT,
+      outputMint: tokenAddress,
+      amountRaw: String(Math.floor(solAmount * 1e9)),
+      slippageBps: opts.slippageBps ?? DEFAULT_SLIPPAGE_BPS,
+      ownerAddress,
     });
-    if (!quoteResponse.data) throw new Error('Failed to get quote from Jupiter');
-
-    const swapResponse = await axios.post(JUPITER_SWAP_API, {
-      quoteResponse: quoteResponse.data,
-      userPublicKey: ownerAddress,
-      wrapUnwrapSOL: true,
-      useJitoTip: opts.useJito ?? false,
-    });
-    if (!swapResponse.data?.swapTransaction) throw new Error('Failed to generate swap transaction');
-
-    return {
-      transactionBase64: swapResponse.data.swapTransaction,
-      quote: {
-        inAmount: quoteResponse.data.inAmount,
-        outAmount: quoteResponse.data.outAmount,
-        outputDecimals: quoteResponse.data.outputDecimals ?? 9,
-        price: quoteResponse.data.price,
-      },
-    };
   }
 
   /**
@@ -210,33 +308,13 @@ export class JupiterService {
     const sellAmountRaw = (tokenBalanceRaw * BigInt(Math.round(percentage * 100))) / 10000n;
     if (sellAmountRaw <= 0n) throw new Error('Invalid sell amount.');
 
-    const quoteResponse = await axios.get(JUPITER_QUOTE_API, {
-      params: {
-        inputMint: tokenAddress,
-        outputMint: SOL_MINT,
-        amount: sellAmountRaw.toString(),
-        slippageBps: opts.slippageBps ?? 500,
-      }
+    return this.quoteAndBuild({
+      inputMint: tokenAddress,
+      outputMint: SOL_MINT,
+      amountRaw: sellAmountRaw.toString(),
+      slippageBps: opts.slippageBps ?? DEFAULT_SLIPPAGE_BPS,
+      ownerAddress,
     });
-    if (!quoteResponse.data) throw new Error('Failed to get quote from Jupiter');
-
-    const swapResponse = await axios.post(JUPITER_SWAP_API, {
-      quoteResponse: quoteResponse.data,
-      userPublicKey: ownerAddress,
-      wrapUnwrapSOL: true,
-      useJitoTip: opts.useJito ?? false,
-    });
-    if (!swapResponse.data?.swapTransaction) throw new Error('Failed to generate swap transaction');
-
-    return {
-      transactionBase64: swapResponse.data.swapTransaction,
-      quote: {
-        inAmount: quoteResponse.data.inAmount,
-        outAmount: quoteResponse.data.outAmount,
-        outputDecimals: quoteResponse.data.outputDecimals ?? 9,
-        price: quoteResponse.data.price,
-      },
-    };
   }
 
   /**

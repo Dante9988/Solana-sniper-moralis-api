@@ -17,6 +17,7 @@ import {
 } from "./types";
 import { insertHolding, insertNewToken, removeHolding, selectTokenByMint, selectTokenByNameAndCreator } from "./tracker/db";
 import nacl from 'tweetnacl';
+import { SOLANA_MAX_SUPPORTED_TRANSACTION_VERSION } from "./solana/transactionVersion";
 
 // Load environment variables from the .env file
 dotenv.config();
@@ -140,9 +141,11 @@ export async function fetchTokenMintFromTx(signature: string, connection: Connec
         metrics.attempts++;
         try {
             const startTxFetch = performance.now();
-            const tx = await connection.getTransaction(signature, { 
+            const tx = await connection.getTransaction(signature, {
                 commitment: "confirmed" as Finality,
-                maxSupportedTransactionVersion: 0
+                // Centralised. Mainnet returns version-1 transactions and the RPC refuses the
+                // whole request for an unsupported version rather than returning nothing.
+                maxSupportedTransactionVersion: SOLANA_MAX_SUPPORTED_TRANSACTION_VERSION,
             });
             metrics.txFetch = performance.now() - startTxFetch;
 

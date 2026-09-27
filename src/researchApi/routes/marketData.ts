@@ -18,6 +18,7 @@ import { FailoverChainClient } from "../../pons/failoverChainClient";
 import { fetchTokenMarketData, type MarketDataOutcome } from "../../pons/market/marketDataService";
 import { serializeMarket } from "./robinhoodTokens";
 import { ChainlinkQuoteUsdRateProvider } from "../../pons/usd/chainlinkQuoteUsdRateProvider";
+import { solanaIngestionHealth } from "./solanaTokens";
 
 export const MARKET_DATA_CACHE_MS = 10_000;
 
@@ -72,28 +73,60 @@ export function createMarketDataRouter(db: PrismaClient, config: ApiConfig, deps
   });
   // Phase 7D.4 §1 — what discovery exists, so the UI labels unsupported chains and providers
   // instead of rendering an empty result that looks like "no tokens".
-  router.get("/discovery/chains", readAuth, limiter, (_req, res) => {
-    res.json({
-      chains: [
-        {
-          chain: "robinhood",
-          discovery: "AVAILABLE",
-          providers: [{ id: "pons", label: "PONS", status: "AVAILABLE", reason: null }],
-          reason: null,
-        },
-        {
-          chain: "solana",
-          discovery: "UNAVAILABLE",
-          providers: [
-            { id: "pumpfun", label: "Pump.fun", status: "UNAVAILABLE", reason: "Solana launch discovery is not connected in this deployment." },
-            { id: "launchlab", label: "LaunchLab", status: "UNAVAILABLE", reason: "Not integrated." },
-            { id: "bonkfun", label: "Bonk.fun", status: "UNAVAILABLE", reason: "Not integrated." },
-          ],
-          reason: "Solana launch discovery is not connected in this deployment.",
-        },
-      ],
-    });
+  // Phase 7E.4.4 — Solana's entry is measured, not declared: it follows the Pump.fun worker's own
+  // checkpoint, so a stopped worker shows up here as DEGRADED/UNAVAILABLE rather than "live".
+  router.get("/discovery/chains", readAuth, limiter, async (_req, res, next) => {
+    try {
+      res.json({
+        chains: [
+          {
+            chain: "robinhood",
+            discovery: "AVAILABLE",
+            providers: [{ id: "pons", label: "PONS", status: "AVAILABLE", reason: null }],
+            reason: null,
+          },
+          await solanaDiscoveryCapability(db),
+        ],
+      });
+    } catch (err) {
+      next(err);
+    }
   });
 
   return router;
+}
+
+const LAUNCHLAB_BUILDING = "Raydium LaunchLab is being integrated; its tokens are not indexed yet.";
+
+/**
+ * Phase 7E.4.4 — Solana discovery capability, from the Pump.fun worker's measured health.
+ *
+ * Pump.fun and PumpSwap are one worker (PumpSwap follows each graduated token's pool), so they share
+ * a status. A stopped worker with tokens already indexed is DEGRADED — those tokens are real and
+ * still served, but nothing new is arriving — and UNAVAILABLE only when nothing was ever indexed.
+ */
+export async function solanaDiscoveryCapability(db: PrismaClient, now: Date = new Date()) {
+  const [health, indexed] = await Promise.all([
+    solanaIngestionHealth(db, now),
+    db.discoveredToken.count({ where: { chain: "solana", canonicalStatus: "CANONICAL" }, take: 1 }).catch(() => 0),
+  ]);
+  const live = health.status === "LIVE" || health.status === "LAGGING";
+  const status = live ? "AVAILABLE" : indexed > 0 ? "DEGRADED" : "UNAVAILABLE";
+  const reason = live
+    ? null
+    : health.lastSuccessAt
+      ? `Solana ingestion last committed ${health.secondsSinceLastSuccess ?? "?"}s ago and is not running now; already-indexed tokens are still shown, new ones will not appear.`
+      : "Solana ingestion is not running in this deployment.";
+  return {
+    chain: "solana" as const,
+    discovery: status,
+    providers: [
+      { id: "pumpfun", label: "Pump.fun", status, reason },
+      { id: "pumpswap", label: "PumpSwap", status, reason: reason ?? "Graduated Pump.fun tokens keep trading here; each token is followed through its own pool." },
+      { id: "launchlab", label: "LaunchLab", status: "IN_DEVELOPMENT" as const, reason: LAUNCHLAB_BUILDING },
+      { id: "bonkfun", label: "Bonk.fun", status: "UNAVAILABLE" as const, reason: "Not integrated." },
+    ],
+    reason,
+    lastIngestedAt: health.lastSuccessAt,
+  };
 }
