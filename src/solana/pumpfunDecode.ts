@@ -13,14 +13,52 @@
 import { findEvents } from "../pump/eventWalker";
 import type { DecodedEventEnvelope, RawTransactionLike } from "../pump/eventWalker";
 import { eventIdentityKey, eventIdentityOf } from "../pump/eventIdentity";
-import { PUMP_PROGRAM_ID } from "../pump/discriminators";
-import { decodePumpCompleteEvent, decodePumpCreateEvent, decodeCompletePumpAmmMigrationEvent, decodePumpTradeEvent } from "../pump/eventDecoder";
+import { PUMPSWAP_PROGRAM_ID, PUMP_PROGRAM_ID } from "../pump/discriminators";
+import { decodePumpCompleteEvent, decodePumpCreateEvent, decodeCompletePumpAmmMigrationEvent, decodePumpSwapBuyEvent, decodePumpSwapSellEvent, decodePumpTradeEvent } from "../pump/eventDecoder";
 import type { NormalizedLifecycleTransition, NormalizedTokenDiscovered, NormalizedTradeExecuted } from "../discovery/types";
+import { normalizeTradeEvent } from "../pump/normalizeTrade";
 import { pumpfunAdapter } from "./pumpfunAdapter";
 import type { RawPumpfunEvent, SolanaBlockRef } from "./pumpfunAdapter";
 
-/** Event names this step maps. Anything else in the transaction is counted, not dropped silently. */
+/** Pump.fun bonding-curve events this step maps. Anything else is counted, never dropped silently. */
 const MAPPED_PUMP_EVENTS = new Set(["CreateEvent", "TradeEvent", "CompleteEvent", "CompletePumpAmmMigrationEvent"]);
+
+/**
+ * PumpSwap events this step maps (§14).
+ *
+ * Trades only. `CreatePoolEvent` and `InitBoostEvent` are deliberately NOT mapped: graduation is
+ * established from Pump.fun's own `CompletePumpAmmMigrationEvent`, which names the pool it creates in
+ * that same transaction, and a PumpSwap pool creation on its own proves nothing about a Pump.fun
+ * token — anyone can create a PumpSwap pool. They stay in `unmappedEventNames`, visible in the
+ * counters rather than silently ignored.
+ */
+const MAPPED_PUMPSWAP_EVENTS = new Set(["BuyEvent", "SellEvent"]);
+
+function isMapped(envelope: DecodedEventEnvelope): boolean {
+  if (envelope.emittingProgram === PUMP_PROGRAM_ID) return MAPPED_PUMP_EVENTS.has(envelope.eventName);
+  if (envelope.emittingProgram === PUMPSWAP_PROGRAM_ID) return MAPPED_PUMPSWAP_EVENTS.has(envelope.eventName);
+  return false;
+}
+
+/** The quote mint of one trade event, for the decimals a caller must resolve before decoding. */
+function tradeQuoteMintOf(envelope: DecodedEventEnvelope, tx: RawTransactionLike): string | null {
+  if (envelope.emittingProgram === PUMP_PROGRAM_ID && envelope.eventName === "TradeEvent") {
+    return decodePumpTradeEvent(envelope.payload).quoteMint;
+  }
+  if (envelope.emittingProgram === PUMPSWAP_PROGRAM_ID && MAPPED_PUMPSWAP_EVENTS.has(envelope.eventName)) {
+    // PumpSwap's event payload carries no mint, so the quote mint comes from the enclosing call's
+    // accounts — the same resolution normalizeTrade.ts performs, reused rather than duplicated.
+    const trade = normalizeTradeEvent(envelope, tx, EPOCH_PLACEHOLDER);
+    return trade?.quoteMint ?? null;
+  }
+  return null;
+}
+
+/**
+ * `normalizeTradeEvent` requires an `observedAt` it only copies through. Resolving a quote mint does
+ * not care about it, and passing the real one would make this helper's result look time-dependent.
+ */
+const EPOCH_PLACEHOLDER = "1970-01-01T00:00:00.000Z";
 
 export interface DecodedPumpfunBatch {
   readonly signature: string;
@@ -46,10 +84,17 @@ export function mintsNeedingDecimals(tx: RawTransactionLike): { tokenMints: stri
   const tokenMints = new Set<string>();
   const quoteMints = new Set<string>();
   for (const envelope of findEvents(tx)) {
-    if (envelope.eventName !== "CreateEvent" || envelope.emittingProgram !== PUMP_PROGRAM_ID) continue;
-    const event = decodePumpCreateEvent(envelope.payload);
-    tokenMints.add(event.mint);
-    quoteMints.add(event.quoteMint);
+    if (envelope.eventName === "CreateEvent" && envelope.emittingProgram === PUMP_PROGRAM_ID) {
+      const event = decodePumpCreateEvent(envelope.payload);
+      tokenMints.add(event.mint);
+      quoteMints.add(event.quoteMint);
+      continue;
+    }
+    // §14 — every trade's own quote mint, too. One token can trade against different quote assets
+    // over its life (native SOL on the curve, whatever its PumpSwap pool uses afterwards), and a
+    // trade whose quote scale differs from the token's must be caught, which needs its decimals.
+    const quoteMint = tradeQuoteMintOf(envelope, tx);
+    if (quoteMint) quoteMints.add(quoteMint);
   }
   return { tokenMints: [...tokenMints], quoteMints: [...quoteMints] };
 }
@@ -85,7 +130,7 @@ export function decodePumpfunTransaction(params: DecodePumpfunParams): DecodedPu
   const unmappedEventNames: string[] = [];
 
   for (const envelope of envelopes) {
-    if (envelope.emittingProgram !== PUMP_PROGRAM_ID || !MAPPED_PUMP_EVENTS.has(envelope.eventName)) {
+    if (!isMapped(envelope)) {
       unmappedEventNames.push(`${envelope.emittingProgram}:${envelope.eventName}`);
       continue;
     }
@@ -97,7 +142,7 @@ export function decodePumpfunTransaction(params: DecodePumpfunParams): DecodedPu
       block,
       observedAt,
       confidence,
-      ...resolveDecimalsFor(envelope, decimals),
+      ...resolveDecimalsFor(envelope, tx, decimals),
     };
 
     const token = pumpfunAdapter.decodeTokenDiscovered(raw);
@@ -115,17 +160,26 @@ export function decodePumpfunTransaction(params: DecodePumpfunParams): DecodedPu
   return { signature, slot: block.slot, blockTime: block.blockTime, discovered, trades, lifecycle, identities, unmappedEventNames };
 }
 
-/** Looks up the two decimals a create needs. Both null for every other event — they are unused. */
+/**
+ * Looks up the decimals one event needs: both for a create, the quote asset's for a trade.
+ *
+ * A trade's token decimals are deliberately left null — they are already recorded on the token's own
+ * row from its create, and re-reading them per trade would be a mint lookup per trade.
+ */
 function resolveDecimalsFor(
   envelope: DecodedEventEnvelope,
+  tx: RawTransactionLike,
   decimals: ReadonlyMap<string, number | null>
 ): { tokenDecimals: number | null; quoteDecimals: number | null } {
-  if (envelope.eventName !== "CreateEvent") return { tokenDecimals: null, quoteDecimals: null };
-  const event = decodePumpCreateEvent(envelope.payload);
-  return {
-    tokenDecimals: decimals.get(event.mint) ?? null,
-    quoteDecimals: decimals.get(event.quoteMint) ?? null,
-  };
+  if (envelope.eventName === "CreateEvent" && envelope.emittingProgram === PUMP_PROGRAM_ID) {
+    const event = decodePumpCreateEvent(envelope.payload);
+    return {
+      tokenDecimals: decimals.get(event.mint) ?? null,
+      quoteDecimals: decimals.get(event.quoteMint) ?? null,
+    };
+  }
+  const quoteMint = tradeQuoteMintOf(envelope, tx);
+  return { tokenDecimals: null, quoteDecimals: quoteMint === null ? null : decimals.get(quoteMint) ?? null };
 }
 
 /**
@@ -133,6 +187,17 @@ function resolveDecimalsFor(
  * debugging. Deliberately not used by the ingestion path — nothing downstream parses this.
  */
 export function describeEvent(envelope: DecodedEventEnvelope): string {
+  if (envelope.emittingProgram === PUMPSWAP_PROGRAM_ID) {
+    if (envelope.eventName === "BuyEvent") {
+      const e = decodePumpSwapBuyEvent(envelope.payload);
+      return `PumpSwap BuyEvent pool=${e.pool} baseOut=${e.baseAmountOut} userQuoteIn=${e.userQuoteAmountIn} user=${e.user}`;
+    }
+    if (envelope.eventName === "SellEvent") {
+      const e = decodePumpSwapSellEvent(envelope.payload);
+      return `PumpSwap SellEvent pool=${e.pool} baseIn=${e.baseAmountIn} userQuoteOut=${e.userQuoteAmountOut} user=${e.user}`;
+    }
+    return `PumpSwap ${envelope.eventName}`;
+  }
   if (envelope.emittingProgram !== PUMP_PROGRAM_ID) return `${envelope.eventName}`;
   switch (envelope.eventName) {
     case "CreateEvent": {

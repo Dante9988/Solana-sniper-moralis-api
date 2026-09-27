@@ -11,7 +11,9 @@ import fs from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 
-import { findEvents } from "../../pump/eventWalker";
+import bs58 from "bs58";
+
+import { findEvents, resolveTopLevelCallAccounts } from "../../pump/eventWalker";
 import type { RawTransactionLike } from "../../pump/eventWalker";
 import { eventIdentityKey, eventIdentityOf } from "../../pump/eventIdentity";
 import { decodeSolanaSourceIndex, encodeSolanaSourceIndex, pumpfunAdapter } from "../pumpfunAdapter";
@@ -28,6 +30,9 @@ function loadFixture(name: string): RawTransactionLike {
 const CREATE_FIXTURE = "pump_create_and_dev_buy_with_completion.json";
 const MIGRATE_FIXTURE = "pump_migrate_v2_atomic_pool_creation.json";
 const FAILED_FIXTURE = "pumpswap_sell_FAILED_slippage.json";
+/** A real PumpSwap Buy against the SAME mint the create fixture launches — see fixtures/SOURCE.md. */
+const PUMPSWAP_BUY_FIXTURE = "pumpswap_buy.json";
+const PUMPSWAP_SELL_FIXTURE = "pumpswap_sell_via_arb_route.json";
 
 const MINT = "bKU4TGmXxaMmcjL2htnSKfRT9Voig9KmPvo8Scupump";
 const BLOCK = { slot: 444127554, blockhash: "FixtureBlockhash11111111111111111111111111111", blockTime: 1788487825 };
@@ -270,5 +275,118 @@ describe("event identity", () => {
     const first = findEvents(loadFixture(CREATE_FIXTURE)).map((e) => eventIdentityKey(eventIdentityOf(e)));
     const second = findEvents(loadFixture(CREATE_FIXTURE)).map((e) => eventIdentityKey(eventIdentityOf(e)));
     expect(second).toEqual(first);
+  });
+});
+
+describe("PumpSwap trades (§14)", () => {
+  const WSOL = "So11111111111111111111111111111111111111112";
+
+  it("maps a BuyEvent onto the canonical trade, naming its pool", () => {
+    const buy = rawEventsFor(PUMPSWAP_BUY_FIXTURE, new Map([[WSOL, 9]])).find((r) => r.envelope.eventName === "BuyEvent")!;
+    const trade = pumpfunAdapter.decodeTrade({ ...buy, quoteDecimals: 9 })!;
+
+    expect(trade.chain).toBe("solana");
+    expect(trade.venue).toBe("pumpswap");
+    expect(trade.side).toBe("buy");
+    // The pool comes off the event payload, so it needs no account-list resolution.
+    expect(trade.poolAddress).toBe("D3XknHGytS2yLQNxAJ5EcMjEAT11JKRY6EM5E4jNwFPF");
+    expect(trade.quoteAddress).toBe(WSOL);
+    expect(trade.quoteDecimals).toBe(9);
+    expect(trade.tokenAmount).toMatch(/^\d+$/);
+    expect(trade.quoteAmount).toMatch(/^\d+$/);
+    expect(trade.priceUsd).toBeNull();
+  });
+
+  it("is the SAME token as the bonding-curve create — one identity across the lifecycle", () => {
+    // Both fixtures are real mainnet transactions for mint bKU4TGm…Scupump: one launching it on the
+    // curve, one trading it on PumpSwap. §4/§14: a token that migrates is still the same token.
+    const create = rawEventsFor(CREATE_FIXTURE).find((r) => r.envelope.eventName === "CreateEvent")!;
+    const curveTrade = rawEventsFor(CREATE_FIXTURE).find((r) => r.envelope.eventName === "TradeEvent")!;
+    const poolTrade = rawEventsFor(PUMPSWAP_BUY_FIXTURE).find((r) => r.envelope.eventName === "BuyEvent")!;
+
+    const token = pumpfunAdapter.decodeTokenDiscovered(create)!;
+    expect(pumpfunAdapter.decodeTrade(curveTrade)!.tokenAddress).toBe(token.tokenAddress);
+    expect(pumpfunAdapter.decodeTrade(poolTrade)!.tokenAddress).toBe(token.tokenAddress);
+    // Only the venue differs.
+    expect(pumpfunAdapter.decodeTrade(curveTrade)!.venue).toBe("pump");
+    expect(pumpfunAdapter.decodeTrade(poolTrade)!.venue).toBe("pumpswap");
+  });
+
+  it("maps a SellEvent from a multi-hop route", () => {
+    const sell = rawEventsFor(PUMPSWAP_SELL_FIXTURE).find((r) => r.envelope.eventName === "SellEvent")!;
+    const trade = pumpfunAdapter.decodeTrade(sell)!;
+    expect(trade.venue).toBe("pumpswap");
+    expect(trade.side).toBe("sell");
+    expect(trade.poolAddress).toBeTruthy();
+    expect(BigInt(trade.tokenAmount)).toBeGreaterThan(0n);
+  });
+
+  it("produces NO lifecycle transition — graduation never comes from a trade", () => {
+    // The rule §14 is built around: seeing PumpSwap activity is not proof of a proven migration.
+    for (const fixture of [PUMPSWAP_BUY_FIXTURE, PUMPSWAP_SELL_FIXTURE]) {
+      for (const raw of rawEventsFor(fixture)) {
+        expect(pumpfunAdapter.decodeLifecycle(raw), `${fixture} ${raw.envelope.eventName}`).toBeNull();
+      }
+    }
+  });
+
+  it("decodes a PumpSwap transaction into trades only", () => {
+    const batch = decodePumpfunTransaction({
+      tx: loadFixture(PUMPSWAP_BUY_FIXTURE),
+      block: BLOCK,
+      observedAt: OBSERVED_AT,
+      confidence: "final",
+      decimals: new Map([[WSOL, 9]]),
+    });
+    expect(batch.trades.length).toBeGreaterThan(0);
+    expect(batch.discovered).toHaveLength(0);
+    expect(batch.lifecycle).toHaveLength(0);
+    expect(batch.trades.every((t) => t.venue === "pumpswap")).toBe(true);
+    expect(batch.trades[0].quoteDecimals).toBe(9);
+  });
+
+  it("asks for the quote decimals of a PumpSwap trade, not just a create's", () => {
+    // Needed for the scale guard: one token can trade against different quote assets over its life.
+    const needed = mintsNeedingDecimals(loadFixture(PUMPSWAP_BUY_FIXTURE));
+    expect(needed.quoteMints).toContain(WSOL);
+    expect(needed.tokenMints).toHaveLength(0);
+  });
+
+  it("reports an unresolved quote scale as null rather than assuming 9", () => {
+    const batch = decodePumpfunTransaction({
+      tx: loadFixture(PUMPSWAP_BUY_FIXTURE),
+      block: BLOCK,
+      observedAt: OBSERVED_AT,
+      confidence: "final",
+      decimals: new Map(),
+    });
+    expect(batch.trades[0].quoteDecimals).toBeNull();
+  });
+
+  it("yields nothing from a FAILED PumpSwap sell, whose logs still say \"Instruction: Sell\"", () => {
+    const batch = decodePumpfunTransaction({
+      tx: loadFixture(FAILED_FIXTURE),
+      block: BLOCK,
+      observedAt: OBSERVED_AT,
+      confidence: "final",
+      decimals: new Map([[WSOL, 9]]),
+    });
+    expect(batch.trades).toHaveLength(0);
+  });
+
+  it("applies the buy/sell account layout only to a buy or sell instruction", () => {
+    // resolveTopLevelCallAccounts used to match on program id alone, so any other PumpSwap
+    // instruction's account order would have been read as if it were buy's.
+    const tx = loadFixture(PUMPSWAP_BUY_FIXTURE);
+    const buyOuter = tx.transaction.message.instructions.findIndex(
+      (ix) => ix.programId === "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA" && ix.data
+    );
+    expect(buyOuter).toBeGreaterThanOrEqual(0);
+    expect(resolveTopLevelCallAccounts(tx, buyOuter)).not.toBeNull();
+
+    // Same accounts, same program, a different instruction: refused rather than mis-read.
+    const tampered = JSON.parse(JSON.stringify(tx)) as RawTransactionLike;
+    tampered.transaction.message.instructions[buyOuter].data = bs58.encode(Buffer.alloc(16, 7));
+    expect(resolveTopLevelCallAccounts(tampered, buyOuter)).toBeNull();
   });
 });

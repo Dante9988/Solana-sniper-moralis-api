@@ -174,6 +174,8 @@ export class PumpfunIngestionEngine {
     metrics.increment("persisted", persisted.tokensCreated + persisted.tradesPersisted + persisted.lifecyclePersisted);
     metrics.increment("duplicate", persisted.tradesDuplicate + persisted.lifecycleDuplicate);
     metrics.increment("tradesForUnknownToken", persisted.tradesForUnknownToken);
+    metrics.increment("tradesQuoteScaleMismatch", persisted.tradesQuoteScaleMismatch);
+    metrics.increment("pumpSwapTradesWithoutGraduation", persisted.pumpSwapTradesWithoutGraduation);
     if (persisted.tradesPersisted > 0) metrics.recordEvent("trade");
     if (persisted.tokensCreated > 0) metrics.recordEvent("create");
     for (const transition of batch.lifecycle) {
@@ -188,6 +190,50 @@ export class PumpfunIngestionEngine {
     await this.advanceCheckpoint(tx.slot, block.blockhash);
 
     return { status: "PERSISTED", batch };
+  }
+
+  /**
+   * Finds and processes the transaction that created `mint`, so a token we learned about late gets a
+   * canonical row.
+   *
+   * Why this is needed: trades are only persisted for a mint that already has a `DiscoveredToken`
+   * row, because nothing downstream can price a trade whose token has no verified decimals. Starting
+   * at the chain head means every token that existed beforehand is unknown — and a graduated token's
+   * PumpSwap trades are, by definition, all from such a token. Without this, `tradesForUnknownToken`
+   * simply grows forever and no migrated token ever gets a chart.
+   *
+   * How it finds the create, verified against mainnet on 2026-09-26 for mint 35ynznV9…U2i7u: a mint
+   * address IS in the node's signature index (7,510 signatures over 8 pages), and its OLDEST
+   * signature is exactly its CreateEvent transaction — the create is the first thing that ever
+   * touches the mint. So this pages to the end and processes that one transaction through the same
+   * `processSignature` path as everything else.
+   *
+   * Bounded: `maxPages` caps the walk, and a mint whose create cannot be reached is reported rather
+   * than retried forever.
+   */
+  async backfillTokenCreate(mint: string, maxPages = 20): Promise<{ status: "BACKFILLED" | "NOT_FOUND" | "FAILED"; reason?: string }> {
+    let before: string | undefined;
+    let oldest: string | null = null;
+
+    for (let page = 0; page < maxPages; page += 1) {
+      const result = await this.deps.rpc.getSignaturesForAddress(mint, { limit: 1_000, before, commitment: "confirmed" });
+      if (result.status !== "OK") return { status: "FAILED", reason: result.reason };
+      if (result.data.length === 0) break;
+      oldest = result.data[result.data.length - 1].signature;
+      before = oldest;
+      // A short page is the end of this mint's history.
+      if (result.data.length < 1_000) break;
+    }
+
+    if (!oldest) return { status: "NOT_FOUND", reason: `no signatures indexed for mint ${mint}` };
+
+    const outcome = await this.processSignature(oldest, "historical backfill");
+    if (outcome.status === "PERSISTED" && outcome.batch.discovered.some((token) => token.tokenAddress === mint)) {
+      return { status: "BACKFILLED" };
+    }
+    // The oldest reachable transaction was not this mint's create — either the page cap was hit, or
+    // the mint was not created by Pump.fun at all. Either way, do not pretend.
+    return { status: "NOT_FOUND", reason: `oldest reachable transaction for ${mint} carried no CreateEvent for it` };
   }
 
   private async blockIdentity(slot: number): Promise<{ blockhash: string; blockTime: number | null } | null> {

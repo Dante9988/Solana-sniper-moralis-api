@@ -27,6 +27,9 @@ const RUN_DB_TESTS = process.env.SOLANA_RUN_DB_TESTS === "true";
 const FIXTURES = path.join(__dirname, "../../pump/__tests__/fixtures/mainnet");
 const CREATE_FIXTURE = "pump_create_and_dev_buy_with_completion.json";
 const MIGRATE_FIXTURE = "pump_migrate_v2_atomic_pool_creation.json";
+/** A real PumpSwap Buy against the SAME mint CREATE_FIXTURE launches. */
+const PUMPSWAP_BUY_FIXTURE = "pumpswap_buy.json";
+const WSOL = "So11111111111111111111111111111111111111112";
 
 const CHAIN = "solana";
 const MINT = "bKU4TGmXxaMmcjL2htnSKfRT9Voig9KmPvo8Scupump";
@@ -59,7 +62,7 @@ describe.skipIf(!RUN_DB_TESTS)("Pump.fun persistence — real Postgres", () => {
   const mints = new Set<string>();
 
   async function cleanup(): Promise<void> {
-    for (const fixture of [CREATE_FIXTURE, MIGRATE_FIXTURE]) {
+    for (const fixture of [CREATE_FIXTURE, MIGRATE_FIXTURE, PUMPSWAP_BUY_FIXTURE]) {
       for (const batch of [batchFor(fixture)]) {
         for (const row of [...batch.discovered, ...batch.trades, ...batch.lifecycle]) mints.add(row.tokenAddress);
       }
@@ -292,5 +295,111 @@ describe.skipIf(!RUN_DB_TESTS)("Pump.fun persistence — real Postgres", () => {
     expect(trade.sourceIndex).not.toBe(
       completed.outerInstructionIndex * 4096 + completed.innerPosition + 1
     );
+  });
+
+  it("keeps ONE token row across both venues — a migrated token is not a new token", async () => {
+    // Two real mainnet transactions for mint bKU4TGm…Scupump: its bonding-curve launch, and a
+    // PumpSwap trade of it. §4/§14: only venue and lifecycle change.
+    await persistPumpfunBatch({ db: prisma, batch: batchFor(CREATE_FIXTURE), source: "live stream" });
+    const pool = await persistPumpfunBatch({ db: prisma, batch: batchFor(PUMPSWAP_BUY_FIXTURE), source: "live stream" });
+
+    expect(pool.tokensCreated).toBe(0);
+    expect(pool.tradesPersisted).toBeGreaterThan(0);
+    expect(await prisma.discoveredToken.count({ where: { chain: CHAIN, tokenAddress: MINT } })).toBe(1);
+
+    const trades = await prisma.chainTrade.findMany({ where: { chain: CHAIN, tokenAddress: MINT }, orderBy: { venue: "asc" } });
+    expect(trades.map((t) => t.venue)).toEqual(["pump", "pumpswap"]);
+    // Both trades hang off the same token address; the pool one names its pool, the curve one cannot.
+    expect(trades.find((t) => t.venue === "pumpswap")!.poolAddress).toBe("D3XknHGytS2yLQNxAJ5EcMjEAT11JKRY6EM5E4jNwFPF");
+    expect(trades.find((t) => t.venue === "pump")!.poolAddress).toBeNull();
+  });
+
+  it("does not graduate a token because PumpSwap trades appeared", async () => {
+    await persistPumpfunBatch({ db: prisma, batch: batchFor(CREATE_FIXTURE), source: "live stream" });
+    const before = await prisma.tokenLifecycleState.findUniqueOrThrow({ where: { mint: MINT } });
+
+    const result = await persistPumpfunBatch({ db: prisma, batch: batchFor(PUMPSWAP_BUY_FIXTURE), source: "live stream" });
+
+    const after = await prisma.tokenLifecycleState.findUniqueOrThrow({ where: { mint: MINT } });
+    // Unchanged. Graduation comes only from a migration event that named a pool.
+    expect(after.state).toBe(before.state);
+    expect(after.pumpswapPool).toBeNull();
+    expect((await prisma.discoveredToken.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: MINT } } })).graduated).toBe(false);
+    // The discrepancy is reported rather than resolved by inference.
+    expect(result.pumpSwapTradesWithoutGraduation).toBeGreaterThan(0);
+    expect(result.lifecyclePersisted).toBe(0);
+  });
+
+  it("stops counting the discrepancy once a migration event has proven the pool", async () => {
+    const migration = batchFor(MIGRATE_FIXTURE, "final");
+    const graduatedMint = migration.lifecycle.find((l) => l.phase === "pumpswap")!.tokenAddress;
+    await persistPumpfunBatch({ db: prisma, batch: migration, source: "live stream" });
+
+    // A PumpSwap trade of that now-proven-graduated mint.
+    const trade = { ...batchFor(PUMPSWAP_BUY_FIXTURE).trades[0], tokenAddress: graduatedMint };
+    await prisma.discoveredToken.create({
+      data: {
+        chain: CHAIN, venue: "pumpfun", tokenAddress: graduatedMint, deployer: "d", quoteAddress: WSOL,
+        supply: "1", initialBuyAmount: "0", tokenDecimals: 6, quoteDecimals: 9,
+        sourceHeight: 1n, sourceHash: "h", sourceTxHash: "grad-create", sourceIndex: 0,
+      },
+    });
+    const result = await persistPumpfunBatch({
+      db: prisma,
+      batch: { ...batchFor(PUMPSWAP_BUY_FIXTURE), discovered: [], lifecycle: [], trades: [trade] },
+      source: "live stream",
+    });
+
+    expect(result.tradesPersisted).toBe(1);
+    expect(result.pumpSwapTradesWithoutGraduation).toBe(0);
+  });
+
+  it("refuses a trade whose quote asset has a different decimal scale than the token's", async () => {
+    await persistPumpfunBatch({ db: prisma, batch: batchFor(CREATE_FIXTURE), source: "live stream" });
+    const tradesBefore = await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: MINT } });
+
+    // A PumpSwap pool quoted in a 6-decimal asset — a real shape on mainnet. The token's row says 9.
+    const base = batchFor(PUMPSWAP_BUY_FIXTURE).trades[0];
+    const result = await persistPumpfunBatch({
+      db: prisma,
+      batch: {
+        ...batchFor(PUMPSWAP_BUY_FIXTURE),
+        discovered: [],
+        lifecycle: [],
+        trades: [{ ...base, quoteAddress: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", quoteDecimals: 6 }],
+      },
+      source: "live stream",
+    });
+
+    // Refused, not stored: the aggregator would have valued it at the token's 9-decimal scale and
+    // reported a figure a thousand times too small.
+    expect(result.tradesQuoteScaleMismatch).toBe(1);
+    expect(result.tradesPersisted).toBe(0);
+    expect(await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: MINT } })).toBe(tradesBefore);
+  });
+
+  it("accepts wrapped SOL against a native-SOL token row — same asset, same scale", async () => {
+    // This is the normal graduated case and must NOT be refused: the curve reports the native
+    // sentinel as its quote mint, the PumpSwap pool reports wrapped SOL. Different address, both 9.
+    await persistPumpfunBatch({ db: prisma, batch: batchFor(CREATE_FIXTURE), source: "live stream" });
+    const token = await prisma.discoveredToken.findUniqueOrThrow({ where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: MINT } } });
+    expect(token.quoteAddress).toBe("11111111111111111111111111111111");
+    expect(token.quoteDecimals).toBe(9);
+
+    const result = await persistPumpfunBatch({ db: prisma, batch: batchFor(PUMPSWAP_BUY_FIXTURE), source: "live stream" });
+    expect(result.tradesQuoteScaleMismatch).toBe(0);
+    expect(result.tradesPersisted).toBe(1);
+    const pumpswap = await prisma.chainTrade.findFirstOrThrow({ where: { chain: CHAIN, tokenAddress: MINT, venue: "pumpswap" } });
+    expect(pumpswap.quoteAddress).toBe(WSOL);
+  });
+
+  it("is idempotent for PumpSwap trades too", async () => {
+    await persistPumpfunBatch({ db: prisma, batch: batchFor(CREATE_FIXTURE), source: "live stream" });
+    const first = await persistPumpfunBatch({ db: prisma, batch: batchFor(PUMPSWAP_BUY_FIXTURE), source: "live stream" });
+    const second = await persistPumpfunBatch({ db: prisma, batch: batchFor(PUMPSWAP_BUY_FIXTURE), source: "historical backfill" });
+    expect(first.tradesPersisted).toBe(1);
+    expect(second.tradesPersisted).toBe(0);
+    expect(second.tradesDuplicate).toBe(1);
+    expect(await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: MINT, venue: "pumpswap" } })).toBe(1);
   });
 });

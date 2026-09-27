@@ -12,13 +12,15 @@
  * Read-only throughout: no transaction is signed, nothing is written to a database.
  */
 
+import WebSocket from "ws";
 import { describe, expect, it } from "vitest";
 
-import { PUMP_PROGRAM_ID } from "../../pump/discriminators";
+import { PUMPSWAP_PROGRAM_ID, PUMP_PROGRAM_ID } from "../../pump/discriminators";
 import { findEvents } from "../../pump/eventWalker";
 import type { RawTransactionLike } from "../../pump/eventWalker";
 import { eventIdentityKey, eventIdentityOf } from "../../pump/eventIdentity";
 import { decodePumpfunTransaction, mintsNeedingDecimals } from "../pumpfunDecode";
+import { RECOVERY_STRATEGY } from "../pumpfunListener";
 import { SolanaRpc, resolveSolanaRpcEndpoint } from "../rpc";
 import { SolanaDecimalsCache, NATIVE_SOL_DECIMALS, NATIVE_SOL_QUOTE_SENTINEL } from "../solanaDecimals";
 
@@ -164,4 +166,133 @@ describe.skipIf(!RUN_LIVE)("Pump.fun live validation", () => {
     }
     if (!sawRefusal) console.warn("[live] no versioned transaction in this sample; the refusal path was not exercised");
   }, 60_000);
+
+  it("decodes live PumpSwap trades from the SUBSCRIPTION, with their pool and their own quote asset", async () => {
+    // Deliberately sourced from `logsSubscribe`, not `getSignaturesForAddress`: the PumpSwap program
+    // is not in this node's signature index (see the test above), while the live filter sees it fine.
+    // This is exactly the split the listener is built around.
+    const socket = new WebSocket(rpc!.wsUrl);
+    await new Promise<void>((resolve, reject) => {
+      socket.once("open", () => resolve());
+      socket.once("error", reject);
+    });
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [PUMPSWAP_PROGRAM_ID] }, { commitment: "confirmed" }] }));
+
+    const observed: string[] = [];
+    socket.on("message", (data: Buffer) => {
+      const message = JSON.parse(data.toString()) as { method?: string; params?: { result: { value: { signature: string; err: unknown } } } };
+      if (message.method !== "logsNotification" || !message.params) return;
+      if (message.params.result.value.err) return;
+      if (observed.length < 30) observed.push(message.params.result.value.signature);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    socket.close();
+
+    expect(observed.length, "the subscription delivered no PumpSwap activity").toBeGreaterThan(0);
+    // The RPC lags the notification by ~3s, the same gap the listener retries through.
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+
+    const cache = new SolanaDecimalsCache(rpc!);
+    let trades = 0;
+    const pools = new Set<string>();
+    const quoteScales = new Map<string, number | null>();
+
+    for (const signature of observed.slice(0, 15)) {
+      const fetched = await rpc!.getTransaction(signature, "confirmed");
+      if (fetched.status !== "OK" || !fetched.data) continue;
+      const tx = fetched.data as unknown as RawTransactionLike;
+      if (findEvents(tx).length === 0) continue;
+      const block = await rpc!.getBlockIdentity(tx.slot, "confirmed");
+      if (block.status !== "OK" || !block.data) continue;
+
+      const needed = mintsNeedingDecimals(tx);
+      const batch = decodePumpfunTransaction({
+        tx,
+        block: { slot: tx.slot, blockhash: block.data.blockhash, blockTime: block.data.blockTime ?? tx.blockTime },
+        observedAt: new Date().toISOString(),
+        confidence: "provisional",
+        decimals: await cache.resolveAll([...needed.tokenMints, ...needed.quoteMints]),
+      });
+
+      for (const trade of batch.trades.filter((t) => t.venue === "pumpswap")) {
+        trades += 1;
+        expect(trade.poolAddress, trade.provenance.sourceTxHash).toBeTruthy();
+        expect(trade.tokenAmount).toMatch(/^\d+$/);
+        expect(trade.quoteAmount).toMatch(/^\d+$/);
+        pools.add(trade.poolAddress!);
+        quoteScales.set(trade.quoteAddress, trade.quoteDecimals ?? null);
+      }
+      // Graduation is never inferred from PumpSwap activity — a trade produces no lifecycle row.
+      expect(batch.lifecycle).toHaveLength(0);
+    }
+
+    expect(trades, "no live PumpSwap trade decoded").toBeGreaterThan(0);
+    // PumpSwap quote assets genuinely vary in scale, which is why the persistence guard exists.
+    console.log(`[live] pumpswap trades=${trades} pools=${pools.size} quoteScales=${JSON.stringify(Object.fromEntries(quoteScales))}`);
+    for (const scale of quoteScales.values()) expect(scale === null || (scale >= 0 && scale <= 18)).toBe(true);
+  }, 120_000);
+
+  it("pins which addresses this node indexes for signature recovery", async () => {
+    // The finding that shaped PumpSwap recovery. An unindexed address returns an EMPTY LIST, not an
+    // error, so a program-wide walk would read it as "already caught up" and never notice the gap.
+    const counts: Record<string, number> = {};
+    for (const [label, address] of [
+      ["pumpfunProgram", PUMP_PROGRAM_ID],
+      ["pumpswapProgram", PUMPSWAP_PROGRAM_ID],
+      ["wrappedSolMint", "So11111111111111111111111111111111111111112"],
+    ] as const) {
+      const page = await rpc!.getSignaturesForAddress(address, { limit: 5, commitment: "confirmed" });
+      counts[label] = page.status === "OK" ? page.data.length : -1;
+    }
+    console.log(`[live] signature index: ${JSON.stringify(counts)}`);
+
+    // Pump.fun must stay indexed — its recovery depends on it, and the listener warns loudly at
+    // startup if this ever stops being true.
+    expect(counts.pumpfunProgram).toBeGreaterThan(0);
+    // PumpSwap is expected to be unindexed here, which is why it is recovered per pool. Asserted as
+    // a report rather than a hard expectation: if a provider starts indexing it, that is good news,
+    // not a failure — but the per-pool strategy must keep working either way.
+    if (counts.pumpswapProgram > 0) {
+      console.warn("[live] the PumpSwap program is now indexed; per-pool recovery remains correct but is no longer the only option");
+    }
+    expect(RECOVERY_STRATEGY[PUMP_PROGRAM_ID]).toBe("byProgramId");
+    expect(RECOVERY_STRATEGY[PUMPSWAP_PROGRAM_ID]).toBe("byKnownPool");
+  }, 60_000);
+
+  it("finds a graduated token's PumpSwap trades through its pool, which IS indexed", async () => {
+    // The pool a real migration named during the 7E.4.3 live run.
+    const POOL = "3oP7CokyBZjwA14iTjaTSHitmF5UWkWaGjZqp5Xxentt";
+    const MINT = "35ynznV9r2RVSXYDrZtfsngvLRrkD3iGKjzv5c3U2i7u";
+
+    const page = await rpc!.getSignaturesForAddress(POOL, { limit: 20, commitment: "confirmed" });
+    expect(page.status).toBe("OK");
+    if (page.status !== "OK") return;
+    expect(page.data.length, "the pool's signatures must be indexed for per-pool recovery to work").toBeGreaterThan(0);
+
+    const cache = new SolanaDecimalsCache(rpc!);
+    let trades = 0;
+    for (const ref of page.data.filter((s) => !s.err).slice(0, 8)) {
+      const fetched = await rpc!.getTransaction(ref.signature, "confirmed");
+      if (fetched.status !== "OK" || !fetched.data) continue;
+      const tx = fetched.data as unknown as RawTransactionLike;
+      const block = await rpc!.getBlockIdentity(tx.slot, "confirmed");
+      if (block.status !== "OK" || !block.data) continue;
+      const needed = mintsNeedingDecimals(tx);
+      const batch = decodePumpfunTransaction({
+        tx,
+        block: { slot: tx.slot, blockhash: block.data.blockhash, blockTime: block.data.blockTime ?? tx.blockTime },
+        observedAt: new Date().toISOString(),
+        confidence: "final",
+        decimals: await cache.resolveAll([...needed.tokenMints, ...needed.quoteMints]),
+      });
+      for (const trade of batch.trades.filter((t) => t.venue === "pumpswap" && t.tokenAddress === MINT)) {
+        trades += 1;
+        expect(trade.poolAddress).toBe(POOL);
+        // Same mint as the bonding-curve token — one identity across the migration.
+        expect(trade.tokenAddress).toBe(MINT);
+      }
+    }
+    expect(trades, "no PumpSwap trade of the graduated mint decoded through its pool").toBeGreaterThan(0);
+    console.log(`[live] graduated mint ${MINT}: ${trades} PumpSwap trades via pool ${POOL}`);
+  }, 120_000);
 });

@@ -12,7 +12,7 @@
 
 import WebSocket from "ws";
 
-import { PUMP_PROGRAM_ID } from "../../pump/discriminators";
+import { PUMPSWAP_PROGRAM_ID, PUMP_PROGRAM_ID } from "../../pump/discriminators";
 import { findEvents } from "../../pump/eventWalker";
 import { decodePumpfunTransaction, describeEvent, mintsNeedingDecimals } from "../pumpfunDecode";
 import { SolanaRpc, resolveSolanaRpcEndpoint } from "../rpc";
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const endpoint = resolveSolanaRpcEndpoint();
   if (!endpoint) throw new Error("SOLANA_RPC_ENDPOINT is not set");
   const rpc = new SolanaRpc(endpoint);
-  console.log(`[capture] host=${rpc.host} window=${RUN_SECONDS}s program=${PUMP_PROGRAM_ID}`);
+  console.log(`[capture] host=${rpc.host} window=${RUN_SECONDS}s programs=${[PUMP_PROGRAM_ID, PUMPSWAP_PROGRAM_ID].join(",")}`);
 
   const finalizedSlot = await rpc.getSlot("finalized");
   const confirmedSlot = await rpc.getSlot("confirmed");
@@ -92,10 +92,9 @@ async function main(): Promise<void> {
 
     // Print the first two examples of each event kind: raw decode plus the canonical row.
     for (const envelope of envelopes) {
-      if (envelope.emittingProgram !== PUMP_PROGRAM_ID) continue;
-      const shown = samplesShown.get(envelope.eventName) ?? 0;
+      const shown = samplesShown.get(`${envelope.emittingProgram}:${envelope.eventName}`) ?? 0;
       if (shown >= 2) continue;
-      samplesShown.set(envelope.eventName, shown + 1);
+      samplesShown.set(`${envelope.emittingProgram}:${envelope.eventName}`, shown + 1);
       console.log(`\n--- ${envelope.eventName} sig=${signature} slot=${tx.slot} blockTime=${tx.blockTime} outer=${envelope.outerInstructionIndex} inner=${envelope.innerPosition}`);
       console.log(`    decoded: ${describeEvent(envelope)}`);
       const token = batch.discovered.find((d) => describeEvent(envelope).includes(d.tokenAddress));
@@ -131,7 +130,10 @@ async function main(): Promise<void> {
     socket.once("open", () => resolve());
     socket.once("error", reject);
   });
-  socket.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [PUMP_PROGRAM_ID] }, { commitment: "confirmed" }] }));
+  // Both programs (§14): a graduated token's trades no longer mention the bonding-curve program.
+  [PUMP_PROGRAM_ID, PUMPSWAP_PROGRAM_ID].forEach((program, index) => {
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: index + 1, method: "logsSubscribe", params: [{ mentions: [program] }, { commitment: "confirmed" }] }));
+  });
 
   socket.on("message", (data) => {
     const message = JSON.parse(data.toString()) as { method?: string; params?: { result: { value: { signature: string; err: unknown } } } };

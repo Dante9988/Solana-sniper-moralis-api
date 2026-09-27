@@ -41,6 +41,14 @@ export interface SolanaIngestionCountersSnapshot {
   blockIdentityMissing: number;
   /** Trades for a mint with no DiscoveredToken row (created before observation began). */
   tradesForUnknownToken: number;
+  /** Trades refused because their quote asset has a different decimal scale than the token's (§14). */
+  tradesQuoteScaleMismatch: number;
+  /** PumpSwap trades for a token whose graduation this backend never observed (§14). */
+  pumpSwapTradesWithoutGraduation: number;
+  /** Tokens whose create transaction was found and persisted after the fact (§14). */
+  createsBackfilled: number;
+  /** Tokens whose create could not be reached, so their trades stay unstorable. */
+  createBackfillUnresolved: number;
   /** Recognized events this build does not map yet (PumpSwap's, until §14). */
   unmappedEvents: number;
   /** Notifications dropped because the fetch queue was full; recovery covers the gap. */
@@ -75,6 +83,10 @@ export class SolanaIngestionMetrics {
     deferredToRecovery: 0,
     blockIdentityMissing: 0,
     tradesForUnknownToken: 0,
+    tradesQuoteScaleMismatch: 0,
+    pumpSwapTradesWithoutGraduation: 0,
+    createsBackfilled: 0,
+    createBackfillUnresolved: 0,
     unmappedEvents: 0,
     queueOverflowed: 0,
   };

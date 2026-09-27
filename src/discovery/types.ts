@@ -95,6 +95,16 @@ export interface NormalizedTradeExecuted {
   /** Computed at aggregation time, not by the adapter — never populated here. */
   readonly priceUsd: DecimalString | null;
   readonly trader: string;
+  /**
+   * Phase 7E.4.3 §14 — the quote asset's verified decimals, when the ingestion path resolved them.
+   *
+   * Additive and optional. It exists because one token can trade against DIFFERENT quote assets over
+   * its life: a Pump.fun token is quoted in native SOL (9) on its bonding curve, and its PumpSwap
+   * pool after graduation could be quoted in a 6-decimal asset — both observed on mainnet
+   * 2026-09-26. Downstream aggregation values every trade of a token at the scale recorded on the
+   * token, so a trade arriving at a different scale must be caught rather than silently mis-valued.
+   */
+  readonly quoteDecimals?: number | null;
   readonly provenance: ChainProvenance;
   readonly observedAt: string;
 }

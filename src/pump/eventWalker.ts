@@ -169,6 +169,24 @@ export function resolveTopLevelCallAccounts(
 ): string[] | null {
   const ix = tx.transaction.message.instructions[outerInstructionIndex];
   if (!ix || ix.programId !== PUMPSWAP_PROGRAM_ID) return null;
-  if (ix.accounts && ix.accounts.length > 0) return ix.accounts;
-  return null;
+  if (!ix.accounts || ix.accounts.length === 0) return null;
+  // Phase 7E.4.3 §14 — the caller applies PUMPSWAP_BUY_ACCOUNTS/PUMPSWAP_SELL_ACCOUNTS positions to
+  // whatever comes back, so the instruction must actually BE a buy or a sell. Matching the program
+  // alone was not enough: any other PumpSwap instruction (create_pool, deposit, withdraw) would have
+  // had its own account order read as if it were buy's, silently yielding some unrelated account as
+  // the mint. Reachable when a buy/sell is nested under another PumpSwap instruction and stack
+  // reconstruction cannot see it.
+  //
+  // Verified against live mainnet 2026-09-26: every outer PumpSwap instruction that produced a
+  // Buy/SellEvent this way did carry the buy or sell discriminator, so this rejects nothing that
+  // works today — it removes the possibility, not a current behaviour.
+  if (!ix.data) return null;
+  let discriminator: Buffer;
+  try {
+    discriminator = Buffer.from(bs58.decode(ix.data)).subarray(0, 8);
+  } catch {
+    return null;
+  }
+  if (!CALL_DISCRIMINATORS.some((candidate) => discriminator.equals(candidate))) return null;
+  return ix.accounts;
 }

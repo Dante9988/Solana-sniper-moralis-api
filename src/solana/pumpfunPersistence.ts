@@ -61,6 +61,16 @@ export interface PersistPumpfunResult {
   readonly tradesDuplicate: number;
   /** Trades whose mint has no DiscoveredToken row — counted, never silently dropped. */
   readonly tradesForUnknownToken: number;
+  /**
+   * §14 — trades whose quote asset has a different decimal scale than the one recorded on the token.
+   * Refused, because the candle pipeline values every trade of a token at the token's recorded scale.
+   */
+  readonly tradesQuoteScaleMismatch: number;
+  /**
+   * §14 — PumpSwap trades for a token this backend has never seen graduate. The trade is stored (it
+   * is real), but the lifecycle is NOT advanced from it. Surfaces the gap instead of inferring.
+   */
+  readonly pumpSwapTradesWithoutGraduation: number;
   readonly lifecyclePersisted: number;
   readonly lifecycleDuplicate: number;
   readonly lifecycleStateAdvanced: number;
@@ -74,6 +84,8 @@ const EMPTY: PersistPumpfunResult = {
   tradesPersisted: 0,
   tradesDuplicate: 0,
   tradesForUnknownToken: 0,
+  tradesQuoteScaleMismatch: 0,
+  pumpSwapTradesWithoutGraduation: 0,
   lifecyclePersisted: 0,
   lifecycleDuplicate: 0,
   lifecycleStateAdvanced: 0,
@@ -118,7 +130,7 @@ export async function persistPumpfunBatch(params: PersistPumpfunParams): Promise
       }
       const known = await tx.discoveredToken.findUnique({
         where: { chain_tokenAddress: { chain: trade.chain, tokenAddress: trade.tokenAddress } },
-        select: { id: true },
+        select: { id: true, quoteAddress: true, quoteDecimals: true },
       });
       if (!known) {
         // The token was created before this listener started observing. Its trades are real, but
@@ -127,6 +139,35 @@ export async function persistPumpfunBatch(params: PersistPumpfunParams): Promise
         result.tradesForUnknownToken += 1;
         continue;
       }
+
+      // §14 — a migrated token keeps its identity, but its PumpSwap pool need not use the quote asset
+      // its bonding curve did. Observed on mainnet 2026-09-26: PumpSwap pools quoted in wrapped SOL
+      // (9 decimals) and in several 6-decimal assets. The candle pipeline reads ONE `quoteDecimals`
+      // off the token's row and applies it to every trade of that token, so a trade at a different
+      // scale would be mis-valued by a factor of 10^(difference) — silently, and in the chart.
+      //
+      // Refused rather than stored, because a stored row would be picked up by the aggregator. The
+      // counter is what makes it visible. Trades that merely name a different ADDRESS at the same
+      // scale (native SOL vs wrapped SOL, both 9) are fine and pass: they are the same asset.
+      if (
+        trade.quoteAddress !== known.quoteAddress &&
+        trade.quoteDecimals != null &&
+        known.quoteDecimals != null &&
+        trade.quoteDecimals !== known.quoteDecimals
+      ) {
+        result.tradesQuoteScaleMismatch += 1;
+        continue;
+      }
+
+      if (trade.venue === "pumpswap") {
+        const lifecycle = await tx.tokenLifecycleState.findUnique({ where: { mint: trade.tokenAddress }, select: { state: true } });
+        // A PumpSwap trade means the token must have migrated — but this backend only calls a token
+        // graduated when a migration event proved it and named the pool. Seeing the trade first (we
+        // started observing after the migration) is a coverage gap, reported as one. Inferring
+        // graduation from a trade is exactly what §14 forbids, so the state is left alone.
+        if (lifecycle?.state !== "pumpswap") result.pumpSwapTradesWithoutGraduation += 1;
+      }
+
       const written = await upsertChainTrade(tx, trade, blockTime);
       if (written) result.tradesPersisted += 1;
       else result.tradesDuplicate += 1;

@@ -21,8 +21,10 @@ import {
   decodeCompletePumpAmmMigrationEvent,
   decodePumpCompleteEvent,
   decodePumpCreateEvent,
+  decodePumpSwapBuyEvent,
+  decodePumpSwapSellEvent,
 } from "../pump/eventDecoder";
-import { PUMP_PROGRAM_ID } from "../pump/discriminators";
+import { PUMPSWAP_PROGRAM_ID, PUMP_PROGRAM_ID } from "../pump/discriminators";
 import type { DecodedEventEnvelope, RawTransactionLike } from "../pump/eventWalker";
 import { normalizeTradeEvent } from "../pump/normalizeTrade";
 import { decodePumpTradeEvent } from "../pump/eventDecoder";
@@ -111,6 +113,11 @@ export interface RawPumpfunEvent {
   readonly observedAt: string;
   /** Resolved by the listener from the mint account. Null when it could not be read. */
   readonly tokenDecimals: number | null;
+  /**
+   * The quote asset's decimals for THIS event. For a create it is the curve's quote mint; for a
+   * trade it is that trade's own quote mint, which after graduation can be a different asset
+   * entirely (§14). Null when the read failed — never defaulted.
+   */
   readonly quoteDecimals: number | null;
   /** §8 — whether the containing slot is finalized yet. */
   readonly confidence: "provisional" | "final";
@@ -148,6 +155,21 @@ function initialBuyAmountFor(raw: RawPumpfunEvent, mint: string): string {
       a.env.outerInstructionIndex - b.env.outerInstructionIndex || a.env.innerPosition - b.env.innerPosition
     );
   return buys.length > 0 ? buys[0].decoded.tokenAmount : "0";
+}
+
+/**
+ * The pool a PumpSwap trade happened in, straight off its own event's `pool` field.
+ *
+ * Read from the event payload rather than from the instruction's account list, because the payload
+ * is unambiguous: the account-list route needs the enclosing call resolved and its layout applied,
+ * while `pool` is a decoded field of the event itself. Null for a bonding-curve trade, which has no
+ * pool to name.
+ */
+function pumpSwapPoolOf(envelope: DecodedEventEnvelope): string | null {
+  if (envelope.emittingProgram !== PUMPSWAP_PROGRAM_ID) return null;
+  if (envelope.eventName === "BuyEvent") return decodePumpSwapBuyEvent(envelope.payload).pool;
+  if (envelope.eventName === "SellEvent") return decodePumpSwapSellEvent(envelope.payload).pool;
+  return null;
 }
 
 /**
@@ -213,10 +235,13 @@ export class PumpfunAdapter implements ChainAdapter<RawPumpfunEvent, RawPumpfunE
     return {
       kind: "tradeExecuted",
       chain: SOLANA_CHAIN,
+      // "pump" on the bonding curve, "pumpswap" after graduation. The TOKEN is unchanged (§4/§14):
+      // only the venue a given trade happened on differs, and `tokenAddress` below is the same mint
+      // in both cases, so no second identity is ever created for a migrated token.
       venue: trade.venue,
       tokenAddress: trade.mint,
-      // The bonding curve has no pool; a PumpSwap trade's pool is named by its own event (§14).
-      poolAddress: null,
+      // A bonding curve has no pool. A PumpSwap trade does, and its own event names it.
+      poolAddress: pumpSwapPoolOf(raw.envelope),
       side: trade.side,
       tokenAmount: trade.tokenAmount,
       quoteAmount: trade.quoteAmount,
@@ -225,6 +250,7 @@ export class PumpfunAdapter implements ChainAdapter<RawPumpfunEvent, RawPumpfunE
       // Computed at candle-aggregation time against a dated rate, never here (§10).
       priceUsd: null,
       trader: trade.trader,
+      quoteDecimals: raw.quoteDecimals,
       provenance: provenanceOf(raw),
       observedAt: raw.observedAt,
     };

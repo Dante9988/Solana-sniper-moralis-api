@@ -101,13 +101,13 @@ describe.skipIf(!RUN_DB_TESTS)("Pump.fun trades through the existing candle pipe
   }
 
   /** `tokenAmount`/`quoteAmount` are raw base units, exactly as a TradeEvent reports them. */
-  function trade(params: { slot: number; index: number; tokenAmount: string; quoteAmount: string; side?: "buy" | "sell"; trader?: string; signature?: string }): NormalizedTradeExecuted {
+  function trade(params: { slot: number; index: number; tokenAmount: string; quoteAmount: string; side?: "buy" | "sell"; trader?: string; signature?: string; venue?: "pump" | "pumpswap" }): NormalizedTradeExecuted {
     return {
       kind: "tradeExecuted",
       chain: CHAIN,
-      venue: "pump",
+      venue: params.venue ?? "pump",
       tokenAddress: MINT,
-      poolAddress: null,
+      poolAddress: params.venue === "pumpswap" ? "PoolTest111111111111111111111111111111111111" : null,
       side: params.side ?? "buy",
       tokenAmount: params.tokenAmount,
       quoteAmount: params.quoteAmount,
@@ -362,5 +362,60 @@ describe.skipIf(!RUN_DB_TESTS)("Pump.fun trades through the existing candle pipe
     // Must not throw — in particular must not reach for the EVM client, which would throw loudly.
     await runCandleAggregationTick(deps());
     expect(await prisma.marketCandle.count({ where: { chain: CHAIN, tokenAddress: MINT } })).toBe(0);
+  });
+
+  it("feeds bonding-curve and PumpSwap trades into ONE candle series for the same token (§14)", async () => {
+    const at = Math.floor(BASE.getTime() / 1000);
+    // Two curve trades, then two PumpSwap trades of the same mint in the same minute. A migrated
+    // token is still one token, so its chart must be continuous across the venue change.
+    await seed(
+      [
+        trade({ slot: 100, index: 0, tokenAmount: "1000000", quoteAmount: "20000000" }),
+        trade({ slot: 100, index: 1, tokenAmount: "1000000", quoteAmount: "30000000" }),
+        trade({ slot: 101, index: 0, tokenAmount: "2000000", quoteAmount: "80000000", venue: "pumpswap", trader: "TraderTestBBBB1111111111111111111111111111" }),
+        trade({ slot: 101, index: 1, tokenAmount: "1000000", quoteAmount: "10000000", venue: "pumpswap", side: "sell", trader: "TraderTestCCCC1111111111111111111111111111" }),
+      ],
+      at
+    );
+
+    const stored = await prisma.chainTrade.findMany({ where: { chain: CHAIN, tokenAddress: MINT }, orderBy: [{ sourceHeight: "asc" }, { sourceIndex: "asc" }] });
+    expect(stored.map((t) => t.venue)).toEqual(["pump", "pump", "pumpswap", "pumpswap"]);
+
+    await runCandleAggregationTick(deps());
+
+    for (const resolution of ["M1", "M5"] as const) {
+      const candle = await prisma.marketCandle.findFirstOrThrow({ where: { chain: CHAIN, tokenAddress: MINT, resolution } });
+      // One bar, all four trades — no split by venue, no second token.
+      expect(candle.tradeCount, resolution).toBe(4);
+      expect(candle.uniqueTraders, resolution).toBe(3);
+      // 1 + 1 + 2 + 1 whole tokens; 0.02 + 0.03 + 0.08 + 0.01 whole SOL.
+      expect(candle.volumeToken.toFixed(), resolution).toBe("5");
+      expect(candle.volumeQuote.toFixed(), resolution).toBe("0.14");
+      // Open is the first curve trade's price, close the last PumpSwap trade's — continuous.
+      expect(candle.open.toFixed(), resolution).toBe("0.02");
+      expect(candle.close.toFixed(), resolution).toBe("0.01");
+      expect(candle.high.toFixed(), resolution).toBe("0.04");
+    }
+
+    expect(await prisma.marketCandle.count({ where: { chain: CHAIN, tokenAddress: MINT, resolution: "M1" } })).toBe(1);
+  });
+
+  it("does not double count when a PumpSwap trade is replayed", async () => {
+    const at = Math.floor(BASE.getTime() / 1000);
+    const one = trade({ slot: 101, index: 0, tokenAmount: "2000000", quoteAmount: "80000000", venue: "pumpswap", signature: "psw-replayed" });
+    await seed([one], at);
+    for (const source of ["live stream", "historical backfill", "block reconciliation"] as const) {
+      await persistPumpfunBatch({
+        db: prisma,
+        batch: { signature: one.provenance.sourceTxHash, slot: 101, blockTime: at, discovered: [], trades: [one], lifecycle: [], identities: [], unmappedEventNames: [] },
+        source,
+      });
+    }
+    expect(await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: MINT } })).toBe(1);
+
+    await runCandleAggregationTick(deps());
+    const candle = await prisma.marketCandle.findFirstOrThrow({ where: { chain: CHAIN, tokenAddress: MINT, resolution: "M1" } });
+    expect(candle.tradeCount).toBe(1);
+    expect(candle.volumeQuote.toFixed()).toBe("0.08");
   });
 });
