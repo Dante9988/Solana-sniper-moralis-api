@@ -27,11 +27,20 @@
 import { PrismaClient } from "@prisma/client";
 
 import { runCandleAggregationTick } from "../../candles/candleAggregationService";
+import { recordCandleWorkerFailure, recordCandleWorkerRunState } from "../../candles/health";
 import { NullQuoteUsdRateProvider } from "../../candles/usdPricing";
 import type { ChainReader } from "../../pons/chainClient";
 import { PUMPFUN_VENUE, SOLANA_CHAIN } from "../pumpfunAdapter";
+import { refreshSolanaMarketActivity } from "../solanaMarketActivity";
 
 const TICKS = Number(process.env.SOLANA_CANDLE_TICKS ?? 1);
+/**
+ * Phase 7E.4.4 — when set, run forever at this interval instead of a fixed number of ticks. This is
+ * how `scripts/dev-stack.sh start solana-candles` runs it, so a live Solana chart keeps moving. Each
+ * tick also refreshes the Solana activity windows and records worker health for chain `solana`, so
+ * the API's freshness for a Solana chart is measured, not assumed.
+ */
+const INTERVAL_MS = Number(process.env.SOLANA_CANDLE_INTERVAL_MS ?? 0);
 
 const noEvmClient = new Proxy({} as ChainReader, {
   get(_target, property) {
@@ -41,27 +50,60 @@ const noEvmClient = new Proxy({} as ChainReader, {
   },
 });
 
+async function tickOnce(db: PrismaClient) {
+  return runCandleAggregationTick({
+    db,
+    chainClient: noEvmClient,
+    chain: SOLANA_CHAIN,
+    venue: PUMPFUN_VENUE,
+    usdRateProvider: new NullQuoteUsdRateProvider(),
+    maxInvalidationTokensPerTick: 50,
+    maxForwardTokensPerTick: 100,
+    tradePageCap: 5_000,
+    logger: {
+      info: () => {},
+      warn: (message, fields) => console.log(`[solana:candles] warn ${message} ${JSON.stringify(fields ?? {})}`),
+      error: (message, fields) => console.log(`[solana:candles] error ${message} ${JSON.stringify(fields ?? {})}`),
+    },
+  });
+}
+
 async function main(): Promise<void> {
   const db = new PrismaClient();
+
+  if (INTERVAL_MS > 0) {
+    let stopping = false;
+    const stop = () => {
+      stopping = true;
+    };
+    process.on("SIGINT", stop);
+    process.on("SIGTERM", stop);
+    console.log(`[solana:candles] looping every ${INTERVAL_MS}ms`);
+    while (!stopping) {
+      try {
+        const summary = await tickOnce(db);
+        await recordCandleWorkerRunState(db, SOLANA_CHAIN, summary);
+        const activity = await refreshSolanaMarketActivity(db);
+        if (summary.tokensProcessed > 0 || summary.invalidationsProcessed > 0) {
+          console.log(`[solana:candles] ${JSON.stringify({ ...summary, activityTokens: activity.tokensUpdated })}`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`[solana:candles] tick failed: ${message}`);
+        await recordCandleWorkerFailure(db, SOLANA_CHAIN, message).catch(() => undefined);
+      }
+      await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
+    }
+    await db.$disconnect();
+    return;
+  }
+
   for (let tick = 1; tick <= Math.max(1, TICKS); tick += 1) {
-    const summary = await runCandleAggregationTick({
-      db,
-      chainClient: noEvmClient,
-      chain: SOLANA_CHAIN,
-      venue: PUMPFUN_VENUE,
-      usdRateProvider: new NullQuoteUsdRateProvider(),
-      maxInvalidationTokensPerTick: 50,
-      maxForwardTokensPerTick: 100,
-      tradePageCap: 5_000,
-      logger: {
-        info: () => {},
-        warn: (message, fields) => console.log(`[solana:candles] warn ${message} ${JSON.stringify(fields ?? {})}`),
-        error: (message, fields) => console.log(`[solana:candles] error ${message} ${JSON.stringify(fields ?? {})}`),
-      },
-    });
+    const summary = await tickOnce(db);
     console.log(`[solana:candles] tick ${tick} ${JSON.stringify(summary)}`);
     if (summary.tokensProcessed === 0 && summary.invalidationsProcessed === 0) break;
   }
+  await refreshSolanaMarketActivity(db);
   await db.$disconnect();
 }
 

@@ -11,6 +11,11 @@ import { ErrorEnvelopeSchema } from "./errors";
 import { HealthResponseSchema, JobKeyParamSchema, MeResponseSchema, MintParamSchema, ReadyResponseSchema, ScanAcceptedResponseSchema } from "./common";
 import { CreateChallengeRequestSchema, CreateChallengeResponseSchema, VerifiedWalletListSchema, VerifiedWalletSchema, VerifyChallengeRequestSchema } from "./wallets";
 import { RobinhoodTokenListQuerySchema, DiscoveryChainsResponseSchema,
+  TokenListQuerySchema,
+  TokenListResponseSchema,
+  TokenDetailResponseSchema,
+  SolanaMintParamSchema,
+  SolanaStatusResponseSchema,
   RobinhoodTokenAddressParamSchema,
   RobinhoodTokenDetailResponseSchema,
   RobinhoodTokenListResponseSchema,
@@ -149,6 +154,91 @@ registry.registerPath({
     200: { description: "Discovered token list", content: { "application/json": { schema: RobinhoodTokenListResponseSchema } } },
     400: errorResponse,
     401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens",
+  summary:
+    "Phase 7E.4.4 — discovered tokens across chains (chain=all|robinhood|solana) in ONE server-side filter → eligibility → ordering → pagination. A chain that cannot honestly answer a request (Solana under a USD filter, a cross-chain USD ordering, or Trending) is left out and listed in excludedChains with the reason.",
+  tags: ["discovery"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { query: TokenListQuerySchema },
+  responses: {
+    200: { description: "Discovered token list", content: { "application/json": { schema: TokenListResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/solana",
+  summary: "Phase 7E.4.4 — discovered Solana tokens (Pump.fun, graduating onto PumpSwap). Same filters and response as /api/v1/tokens; values in SOL, no USD.",
+  tags: ["solana"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { query: RobinhoodTokenListQuerySchema },
+  responses: {
+    200: { description: "Discovered Solana tokens", content: { "application/json": { schema: TokenListResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/solana/status",
+  summary: "Phase 7E.4.4 — Solana (Pump.fun/PumpSwap) ingestion health from the worker's own checkpoint.",
+  tags: ["solana"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Ingestion health", content: { "application/json": { schema: SolanaStatusResponseSchema } } },
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/solana/{mint}",
+  summary: "Phase 7E.4.4 — one discovered Solana token with its latest canonical trades (raw base units; scale by tokenDecimals/quoteDecimals). The mint is case-sensitive.",
+  tags: ["solana"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: SolanaMintParamSchema },
+  responses: {
+    200: { description: "Token detail with trades", content: { "application/json": { schema: TokenDetailResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/solana/{mint}/market",
+  summary: "Phase 7E.4.4 — the terminal's market data for a Solana token, in the same shape as Robinhood's: last price and FDV in SOL, rolling windows with coverage, recent trades. Every USD field is null: no trusted SOL/USD rate is configured.",
+  tags: ["solana"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: SolanaMintParamSchema },
+  responses: {
+    200: { description: "Market data, or an explicit unavailable reason", content: { "application/json": { schema: TokenMarketDataResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/v1/tokens/solana/{mint}/candles",
+  summary: "Phase 7E.4.4 — materialized OHLCV candles for a Solana token, same contract as Robinhood's. Quoted in SOL; volumeUsd is null.",
+  tags: ["solana", "candles"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: SolanaMintParamSchema, query: CandleQuerySchema },
+  responses: {
+    200: { description: "Candle history", content: { "application/json": { schema: CandleHistoryResponseSchema } } },
+    400: errorResponse,
+    401: errorResponse,
+    404: errorResponse,
   },
 });
 

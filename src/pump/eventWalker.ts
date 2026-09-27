@@ -43,6 +43,8 @@ export interface RawTransactionLike {
   meta: {
     err: unknown;
     innerInstructions: RawInnerInstructionGroup[] | null;
+    /** Phase 7E.4.4 — token balances after the transaction, as getTransaction returns them. */
+    postTokenBalances?: Array<{ owner?: string; mint: string; uiTokenAmount: { amount: string } }> | null;
   };
 }
 

@@ -1524,6 +1524,16 @@ model TokenMarketSnapshot {
   buys1h                  Int?
   sells1h                 Int?
   traders1h               Int?
+  /// Phase 7E.4.4 — trade volume in quote base units, for chains with no trusted USD rate (Solana).
+  /// Kept separate from the USD columns so a missing rate can never be papered over.
+  volume5mQuote           Decimal?  @db.Decimal(78, 0)
+  volume1hQuote           Decimal?  @db.Decimal(78, 0)
+  /// Phase 7E.4.4 — when the activity window above was last computed for a chain that has no
+  /// Trending pass (trendingComputedAt stays null there, which is what keeps it out of Trending).
+  activityComputedAt      DateTime?
+  /// Phase 7E.4.4 — Solana: the canonical sourceIndex of the event behind this state, so two events
+  /// in one slot are ordered and a replayed older one can never overwrite a newer state.
+  observationIndex        Int?
   trendingScore           Decimal?  @db.Decimal(38, 6)
   trendingComputedAt      DateTime?
   unchangedReads          Int       @default(0)

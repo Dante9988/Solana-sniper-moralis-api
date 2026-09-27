@@ -72,6 +72,7 @@ describe.skipIf(!RUN_DB_TESTS)("Pump.fun persistence — real Postgres", () => {
     await prisma.discoveredToken.deleteMany({ where: { chain: CHAIN, tokenAddress: { in: list } } });
     await prisma.pumpLifecycleEvent.deleteMany({ where: { mint: { in: list } } });
     await prisma.tokenLifecycleState.deleteMany({ where: { mint: { in: list } } });
+    await prisma.tokenMarketSnapshot.deleteMany({ where: { chain: CHAIN, tokenAddress: { in: list } } });
   }
 
   beforeAll(cleanup);
@@ -401,5 +402,65 @@ describe.skipIf(!RUN_DB_TESTS)("Pump.fun persistence — real Postgres", () => {
     expect(second.tradesPersisted).toBe(0);
     expect(second.tradesDuplicate).toBe(1);
     expect(await prisma.chainTrade.count({ where: { chain: CHAIN, tokenAddress: MINT, venue: "pumpswap" } })).toBe(1);
+  });
+
+  describe("Phase 7E.4.4 — market snapshot from the trade's own curve/pool state", () => {
+    function batchAt(fixture: string, slot: number): DecodedPumpfunBatch {
+      return decodePumpfunTransaction({
+        tx: loadFixture(fixture),
+        block: { slot, blockhash: BLOCKHASH, blockTime: BLOCK_TIME },
+        observedAt: new Date().toISOString(),
+        confidence: "provisional",
+        decimals: new Map([[MINT, 6], ["11111111111111111111111111111111", 9], [WSOL, 9]]),
+      });
+    }
+    const snapshot = () => prisma.tokenMarketSnapshot.findUnique({ where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: MINT } } });
+
+    it("writes the curve state with the trade, and marks a sold-out curve ready — not graduated", async () => {
+      const result = await persistPumpfunBatch({ db: prisma, batch: batchAt(CREATE_FIXTURE, SLOT), source: "live stream" });
+      expect(result.marketSnapshotsWritten).toBe(1);
+      const s = await snapshot();
+      expect(s!.status).toBe("OK");
+      expect(s!.venue).toBe("PUMPFUN_BONDING_CURVE");
+      expect(s!.bondingProgressBps).toBe(10_000);
+      expect(s!.quoteRaised!.toFixed()).toBe("85005359057");
+      expect(s!.liquidityQuote!.toFixed()).toBe("85005359057");
+      expect(s!.readyToGraduate).toBe(true);
+      expect(s!.graduated).toBe(false);
+      // No USD anywhere: there is no trusted SOL/USD rate.
+      expect(s!.priceUsd).toBeNull();
+      expect(s!.marketCapUsd).toBeNull();
+      expect(s!.liquidityUsd).toBeNull();
+      const token = await prisma.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: MINT } } });
+      expect(token!.graduated).toBe(false);
+    });
+
+    it("graduates the SAME token only on the proven migration, with its pool", async () => {
+      await persistPumpfunBatch({ db: prisma, batch: batchAt(CREATE_FIXTURE, SLOT), source: "live stream" });
+      await persistPumpfunBatch({ db: prisma, batch: batchAt(MIGRATE_FIXTURE, SLOT + 1), source: "live stream" });
+      const token = await prisma.discoveredToken.findUnique({ where: { chain_tokenAddress: { chain: CHAIN, tokenAddress: MINT } } });
+      const state = await prisma.tokenLifecycleState.findUnique({ where: { mint: MINT } });
+      expect(state!.state).toBe("pumpswap");
+      expect(token!.graduated).toBe(true);
+      expect(token!.poolAddress).toBe(state!.pumpswapPool);
+      expect((await snapshot())!.graduated).toBe(true);
+      expect(await prisma.discoveredToken.count({ where: { chain: CHAIN, tokenAddress: MINT } })).toBe(1);
+    });
+
+    it("moves to the pool's post-trade state on a later PumpSwap trade, and an older replay cannot roll it back", async () => {
+      await persistPumpfunBatch({ db: prisma, batch: batchAt(CREATE_FIXTURE, SLOT), source: "live stream" });
+      await persistPumpfunBatch({ db: prisma, batch: batchAt(PUMPSWAP_BUY_FIXTURE, SLOT + 10), source: "live stream" });
+      let s = await snapshot();
+      expect(s!.venue).toBe("PUMPSWAP_POOL");
+      expect(s!.liquidityQuote!.toFixed()).toBe("10482126905280");
+      // The last curve progress survives a pool trade rather than being erased.
+      expect(s!.bondingProgressBps).toBe(10_000);
+
+      const replay = await persistPumpfunBatch({ db: prisma, batch: batchAt(CREATE_FIXTURE, SLOT), source: "historical backfill" });
+      expect(replay.marketSnapshotsWritten).toBe(0);
+      s = await snapshot();
+      expect(s!.venue).toBe("PUMPSWAP_POOL");
+      expect(s!.blockNumber).toBe(BigInt(SLOT + 10));
+    });
   });
 });

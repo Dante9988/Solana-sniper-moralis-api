@@ -32,7 +32,7 @@ export const TokenMarketSchema = z
   .object({
     status: z.enum(["PENDING", "OK", "FAILED", "UNSUPPORTED"]),
     reason: z.string().nullable(),
-    venue: z.enum(["PONS_V2_BONDING_CURVE", "UNISWAP_V4_POOL"]).nullable(),
+    venue: z.enum(["PONS_V2_BONDING_CURVE", "UNISWAP_V4_POOL", "PUMPFUN_BONDING_CURVE", "PUMPSWAP_POOL"]).nullable(),
     blockNumber: z.string().nullable(),
     asOf: z.string().nullable().openapi({ description: "Timestamp of the block the values were read at." }),
     priceQuote: z.string().nullable().openapi({ description: "Whole quote units per whole token (spot)." }),
@@ -41,7 +41,7 @@ export const TokenMarketSchema = z
     marketCapUsd: z.string().nullable(),
     liquidityQuote: z.string().nullable(),
     liquidityUsd: z.string().nullable(),
-    liquidityBasis: z.enum(["CURVE_REAL_QUOTE", "POOL_FULL_RANGE_EQUIVALENT"]).nullable(),
+    liquidityBasis: z.enum(["CURVE_REAL_QUOTE", "POOL_FULL_RANGE_EQUIVALENT", "POOL_QUOTE_RESERVE"]).nullable().openapi({ description: "POOL_QUOTE_RESERVE (PumpSwap): the pool's quote-side vault balance." }),
     bondingProgressPct: z.number().nullable().openapi({ description: "Share of the curve's sellable allocation bought out (graduation triggers at 100)." }),
     quoteRaised: z.string().nullable(),
     graduationThreshold: z.string().nullable(),
@@ -51,6 +51,10 @@ export const TokenMarketSchema = z
     /** Trade-volume windows from indexed trades; null until computed while indexing covers the present. */
     volume5mUsd: z.string().nullable(),
     volume1hUsd: z.string().nullable(),
+    /** Phase 7E.4.4 — whole quote units, for chains without a trusted USD rate (Solana). */
+    volume5mQuote: z.string().nullable(),
+    volume1hQuote: z.string().nullable(),
+    activityAsOf: z.string().nullable().openapi({ description: "When the 5m/1h activity windows were last computed." }),
     volumeBaselineHourlyUsd: z.string().nullable().openapi({ description: "Average hourly USD volume over the six hours before the last hour." }),
     volumeSurge: z.string().nullable().openapi({ description: "Last-hour volume ÷ that baseline (baseline floored at $50)." }),
     trades1h: z.number().int().nullable(),
@@ -69,10 +73,20 @@ export const TokenMarketSchema = z
   })
   .openapi("TokenMarket");
 
+/** Phase 7E.4.4 — the chains OnlyPump discovers. */
+export const CatalogChainSchema = z.enum(["robinhood", "solana"]);
+
 export const DiscoveredTokenSchema = z
   .object({
-    chain: z.literal("robinhood"),
+    chain: CatalogChainSchema,
     venue: z.string(),
+    /** Phase 7E.4.4 — the launchpad in product vocabulary ("pons", "pumpfun", later "launchlab"). */
+    launchpad: z.string(),
+    /**
+     * Phase 7E.4.4 — one lifecycle vocabulary for every launchpad. `bonding_complete`: the curve sold
+     * out but no destination pool is proven yet — NOT graduated. `graduated`: the chain proved the pool.
+     */
+    lifecycle: z.object({ phase: z.enum(["bonding", "bonding_complete", "graduated", "unknown"]) }).openapi("TokenLifecycle"),
     tokenAddress: z.string(),
     deployer: z.string(),
     poolAddress: z.string().nullable(),
@@ -90,6 +104,9 @@ export const DiscoveredTokenSchema = z
         usdFeed: z.string().nullable(),
       })
       .openapi("QuoteAssetRef"),
+    /** Phase 7E.4.4 — verified on-chain decimals; null until read. Use these to scale raw trade amounts. */
+    tokenDecimals: z.number().int().nullable(),
+    quoteDecimals: z.number().int().nullable(),
     /** Standard ERC-20 name()/symbol() — same enrichment tick as supply. Null while enrichment is PENDING. */
     name: z.string().nullable(),
     symbol: z.string().nullable(),
@@ -103,6 +120,8 @@ export const DiscoveredTokenSchema = z
       })
       .openapi("TokenLogo"),
     description: z.string().nullable(),
+    /** Phase 7E.4.4 — Pump.fun's metadata URI from its CreateEvent (recorded, never fetched). Null elsewhere. */
+    metadataUri: z.string().nullable(),
     socials: TokenSocialsSchema,
     /** "FOUND" | "UNAVAILABLE" | null (V1 tokens, which have no metadata pipeline yet) — a one-shot outcome, never retried once set (see discoveryV2Listener.ts). */
     richMetadataStatus: z.enum(["FOUND", "UNAVAILABLE"]).nullable(),
@@ -134,7 +153,7 @@ export const DiscoveredTokenSchema = z
 
 export const ChainTradeSchema = z
   .object({
-    chain: z.literal("robinhood"),
+    chain: CatalogChainSchema,
     venue: z.string(),
     tokenAddress: z.string(),
     poolAddress: z.string().nullable(),
@@ -176,30 +195,52 @@ export const RobinhoodTokenListQuerySchema = z.object({
   txns1hMin: countFilter(), buys1hMin: countFilter(), sells1hMin: countFilter(), traders1hMin: countFilter(),
 });
 
-export const RobinhoodTokenListResponseSchema = z
-  .object({
-    tokens: z.array(DiscoveredTokenSchema),
-    nextCursor: z.string().nullable(),
-    /** Phase 7D.4 — rows matching the filters (canonical only), for honest result counts. */
-    total: z.number().int(),
-    /** Phase 7D.4 — present for lifecycle=trending: whether indexed trades cover the present, and why not. */
-    trending: z
-      .object({
-        available: z.boolean(),
-        basis: z.literal("TRADE_VOLUME"),
-        indexedUntil: z.string().nullable(),
-        lagSeconds: z.number().int().nullable(),
-        reason: z.string().nullable(),
-        computedAt: z.string(),
-      })
-      .optional(),
-    observedAt: z.string(),
-  })
-  .openapi("RobinhoodTokenListResponse");
+const TrendingStatusSchema = z.object({
+  available: z.boolean(),
+  basis: z.literal("TRADE_VOLUME"),
+  indexedUntil: z.string().nullable(),
+  lagSeconds: z.number().int().nullable(),
+  reason: z.string().nullable(),
+  computedAt: z.string(),
+});
+
+const tokenListResponseShape = {
+  tokens: z.array(DiscoveredTokenSchema),
+  nextCursor: z.string().nullable(),
+  /** Phase 7D.4 — rows matching the filters (canonical only), for honest result counts. */
+  total: z.number().int(),
+  /** Phase 7D.4 — present for lifecycle=trending: whether indexed trades cover the present, and why not. */
+  trending: TrendingStatusSchema.optional(),
+  /** Phase 7E.4.4 — the chains this page actually covers. */
+  chains: z.array(CatalogChainSchema),
+  /**
+   * Phase 7E.4.4 — requested chains that could not honestly answer this request (e.g. Solana under a
+   * USD filter or Trending), and why. The page is ordered correctly over `chains` only.
+   */
+  excludedChains: z.array(z.object({ chain: CatalogChainSchema, reason: z.string() })),
+  observedAt: z.string(),
+};
+
+export const RobinhoodTokenListResponseSchema = z.object(tokenListResponseShape).openapi("RobinhoodTokenListResponse");
+
+/** Phase 7E.4.4 — GET /api/v1/tokens and /api/v1/tokens/solana. */
+export const TokenListResponseSchema = z.object(tokenListResponseShape).openapi("TokenListResponse");
+
+export const TokenListQuerySchema = RobinhoodTokenListQuerySchema.extend({
+  chain: z.enum(["all", "robinhood", "solana"]).optional().default("all"),
+});
 
 export const RobinhoodTradeListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
 });
+
+export const SolanaMintParamSchema = z
+  .object({ mint: z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/).openapi({ example: "AsEP39Zd1LkxPUCjZArqCdscTtTDxkqD3GVjLo9Apump" }) })
+  .openapi("SolanaMintParam");
+
+export const TokenDetailResponseSchema = z
+  .object({ token: DiscoveredTokenSchema, trades: z.array(ChainTradeSchema), observedAt: z.string() })
+  .openapi("TokenDetailResponse");
 
 export const RobinhoodTokenDetailResponseSchema = z
   .object({
@@ -279,13 +320,29 @@ export const DiscoveryChainsResponseSchema = z
     chains: z.array(
       z.object({
         chain: z.enum(["robinhood", "solana"]),
-        discovery: z.enum(["AVAILABLE", "UNAVAILABLE"]),
-        providers: z.array(z.object({ id: z.string(), label: z.string(), status: z.enum(["AVAILABLE", "UNAVAILABLE"]), reason: z.string().nullable() })),
+        /** DEGRADED (7E.4.4): indexed tokens are served, but ingestion is not currently live. */
+        discovery: z.enum(["AVAILABLE", "DEGRADED", "UNAVAILABLE"]),
+        providers: z.array(
+          z.object({
+            id: z.string(),
+            label: z.string(),
+            /** IN_DEVELOPMENT (7E.4.4): being built; nothing from it is shown yet. */
+            status: z.enum(["AVAILABLE", "DEGRADED", "IN_DEVELOPMENT", "UNAVAILABLE"]),
+            reason: z.string().nullable(),
+          })
+        ),
         reason: z.string().nullable(),
+        /** Phase 7E.4.4 — when this chain's ingestion last committed progress; null if never. */
+        lastIngestedAt: z.string().nullable().optional(),
       })
     ),
   })
   .openapi("DiscoveryChainsResponse");
+
+/** Phase 7E.4.4 — GET /api/v1/tokens/solana/status. */
+export const SolanaStatusResponseSchema = z
+  .object({ status: IngestionHealthStatusSchema, streams: z.array(SourceHealthDetailSchema), observedAt: z.string() })
+  .openapi("SolanaStatusResponse");
 
 /**
  * Phase 7D.5.1 — MoonPay hosted checkout.

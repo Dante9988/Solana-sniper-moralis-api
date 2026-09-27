@@ -43,7 +43,7 @@ export interface RecentTrade {
   logIndex: number;
   block: string;
   timestamp: string;
-  venue: "BONDING_CURVE" | "UNISWAP_V4";
+  venue: "BONDING_CURVE" | "UNISWAP_V4" | "PUMPSWAP";
 }
 
 export interface TokenMarketData {

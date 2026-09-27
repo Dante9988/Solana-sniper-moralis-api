@@ -71,7 +71,7 @@ function worstOf(a: IngestionHealthStatus, b: IngestionHealthStatus): IngestionH
   return STATUS_SEVERITY[a] >= STATUS_SEVERITY[b] ? a : b;
 }
 
-function classifySource(state: CheckpointHealthState | null, now: Date, config: Pick<RobinhoodChainConfig, "healthLaggingBlocks" | "healthStaleMs" | "healthErrorWindowMs">): IngestionHealthStatus {
+export function classifySource(state: CheckpointHealthState | null, now: Date, config: Pick<RobinhoodChainConfig, "healthLaggingBlocks" | "healthStaleMs" | "healthErrorWindowMs">): IngestionHealthStatus {
   if (!state) return "UNAVAILABLE"; // never had a single successful tick
 
   if (state.reorgUnresolvedAt !== null) return "REORG_RECOVERY";
@@ -94,7 +94,7 @@ function classifySource(state: CheckpointHealthState | null, now: Date, config: 
   return "LIVE";
 }
 
-function toDetail(source: string, state: CheckpointHealthState | null, now: Date, status: IngestionHealthStatus): SourceHealthDetail {
+export function toDetail(source: string, state: CheckpointHealthState | null, now: Date, status: IngestionHealthStatus): SourceHealthDetail {
   const blocksBehind = state && state.lastObservedChainHeight !== null ? (state.lastObservedChainHeight - state.lastHeight).toString() : null;
   const secondsSinceLastSuccess = state?.lastSuccessAt ? Math.floor((now.getTime() - state.lastSuccessAt.getTime()) / 1000) : null;
   return {
@@ -157,4 +157,19 @@ export async function computeIngestionHealth(db: PrismaClient, config: Pick<Robi
     },
     observedAt: now.toISOString(),
   };
+}
+
+/**
+ * Phase 7E.4.4 — one stream's health by the same rules, for a source outside the Pons set (the
+ * Solana Pump.fun worker). Durable checkpoint only: Solana has no live-head session table; its worker
+ * starts at the head on a first run and closes any later gap from its own checkpoint.
+ */
+export async function computeSourceHealth(
+  db: PrismaClient,
+  source: string,
+  config: Pick<RobinhoodChainConfig, "healthLaggingBlocks" | "healthStaleMs" | "healthErrorWindowMs">,
+  now: Date = new Date()
+): Promise<SourceHealthDetail> {
+  const state = await new CheckpointStore(db).getHealthState(source);
+  return toDetail(source, state, now, classifySource(state, now, config));
 }

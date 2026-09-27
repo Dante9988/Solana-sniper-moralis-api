@@ -18,6 +18,7 @@ import { decodePumpCompleteEvent, decodePumpCreateEvent, decodeCompletePumpAmmMi
 import type { NormalizedLifecycleTransition, NormalizedTokenDiscovered, NormalizedTradeExecuted } from "../discovery/types";
 import { normalizeTradeEvent } from "../pump/normalizeTrade";
 import { pumpfunAdapter } from "./pumpfunAdapter";
+import { observeCurveTrade, observePoolTrade, type PumpfunMarketObservation } from "./pumpfunMarketState";
 import type { RawPumpfunEvent, SolanaBlockRef } from "./pumpfunAdapter";
 
 /** Pump.fun bonding-curve events this step maps. Anything else is counted, never dropped silently. */
@@ -71,6 +72,11 @@ export interface DecodedPumpfunBatch {
   readonly identities: readonly string[];
   /** Recognized Pump.fun events this version does not map yet (e.g. PumpSwap's, until §14). */
   readonly unmappedEventNames: readonly string[];
+  /**
+   * Phase 7E.4.4 — the curve/pool state each trade left behind, keyed by the trade's canonical
+   * `sourceIndex` so persistence stores it only alongside a trade it actually accepted.
+   */
+  readonly marketObservations?: ReadonlyMap<number, PumpfunMarketObservation>;
 }
 
 /**
@@ -128,6 +134,7 @@ export function decodePumpfunTransaction(params: DecodePumpfunParams): DecodedPu
   const lifecycle: NormalizedLifecycleTransition[] = [];
   const identities: string[] = [];
   const unmappedEventNames: string[] = [];
+  const marketObservations = new Map<number, PumpfunMarketObservation>();
 
   for (const envelope of envelopes) {
     if (!isMapped(envelope)) {
@@ -149,7 +156,12 @@ export function decodePumpfunTransaction(params: DecodePumpfunParams): DecodedPu
     if (token) discovered.push(token);
 
     const trade = pumpfunAdapter.decodeTrade(raw);
-    if (trade) trades.push(trade);
+    if (trade) {
+      trades.push(trade);
+      const observation =
+        observeCurveTrade(envelope) ?? observePoolTrade(envelope, trade.tokenAddress, trade.quoteAddress, tx.meta.postTokenBalances);
+      if (observation) marketObservations.set(trade.provenance.sourceIndex, observation);
+    }
 
     const transition = pumpfunAdapter.decodeLifecycle(raw);
     if (transition) lifecycle.push(transition);
@@ -157,7 +169,7 @@ export function decodePumpfunTransaction(params: DecodePumpfunParams): DecodedPu
     if (token || trade || transition) identities.push(eventIdentityKey(eventIdentityOf(envelope)));
   }
 
-  return { signature, slot: block.slot, blockTime: block.blockTime, discovered, trades, lifecycle, identities, unmappedEventNames };
+  return { signature, slot: block.slot, blockTime: block.blockTime, discovered, trades, lifecycle, identities, unmappedEventNames, marketObservations };
 }
 
 /**

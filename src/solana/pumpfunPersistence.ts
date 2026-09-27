@@ -30,6 +30,7 @@ import { PUMP_PROGRAM_ID } from "../pump/discriminators";
 import type { NormalizedLifecycleTransition, NormalizedTokenDiscovered, NormalizedTradeExecuted } from "../discovery/types";
 import { decodeSolanaSourceIndex } from "./pumpfunAdapter";
 import type { DecodedPumpfunBatch } from "./pumpfunDecode";
+import { marketCapQuote, priceQuoteX36, type PumpfunMarketObservation } from "./pumpfunMarketState";
 
 /** Which ingestion path produced a row. `PumpLifecycleEvent.source`'s existing vocabulary. */
 export type SolanaIngestionSource = "live stream" | "historical backfill" | "block reconciliation";
@@ -76,6 +77,8 @@ export interface PersistPumpfunResult {
   readonly lifecycleStateAdvanced: number;
   /** Facts that could not be written because a required chain fact was missing (fail closed). */
   readonly skippedIncomplete: number;
+  /** Phase 7E.4.4 — market snapshots advanced from a trade's curve/pool state. */
+  readonly marketSnapshotsWritten: number;
 }
 
 const EMPTY: PersistPumpfunResult = {
@@ -90,6 +93,7 @@ const EMPTY: PersistPumpfunResult = {
   lifecycleDuplicate: 0,
   lifecycleStateAdvanced: 0,
   skippedIncomplete: 0,
+  marketSnapshotsWritten: 0,
 };
 
 export interface PersistPumpfunParams {
@@ -130,7 +134,7 @@ export async function persistPumpfunBatch(params: PersistPumpfunParams): Promise
       }
       const known = await tx.discoveredToken.findUnique({
         where: { chain_tokenAddress: { chain: trade.chain, tokenAddress: trade.tokenAddress } },
-        select: { id: true, quoteAddress: true, quoteDecimals: true },
+        select: { id: true, quoteAddress: true, quoteDecimals: true, tokenDecimals: true, supply: true },
       });
       if (!known) {
         // The token was created before this listener started observing. Its trades are real, but
@@ -171,6 +175,13 @@ export async function persistPumpfunBatch(params: PersistPumpfunParams): Promise
       const written = await upsertChainTrade(tx, trade, blockTime);
       if (written) result.tradesPersisted += 1;
       else result.tradesDuplicate += 1;
+
+      const observation = batch.marketObservations?.get(trade.provenance.sourceIndex);
+      if (observation) {
+        if (await upsertMarketSnapshot(tx, known, observation, BigInt(trade.provenance.sourceHeight), trade.provenance.sourceIndex, blockTime)) {
+          result.marketSnapshotsWritten += 1;
+        }
+      }
     }
 
     for (const transition of batch.lifecycle) {
@@ -281,6 +292,61 @@ async function upsertChainTrade(tx: Tx, trade: NormalizedTradeExecuted, blockTim
   return created.count > 0;
 }
 
+/**
+ * Phase 7E.4.4 — the token's live market state, from the curve or pool state its latest trade left.
+ *
+ * Written in the same database transaction as the trade, so a reader never sees a price that no
+ * stored trade explains. Only moves forward in (slot, sourceIndex): recovery replays history out of
+ * order by design, and an older state must never overwrite a newer one.
+ *
+ * Fails closed: without the token's verified decimals and supply there is no honest market cap, so
+ * nothing is written. `graduated` is never set from a trade — only a proven migration sets it (see
+ * advanceLifecycleState), exactly as §14 requires of the lifecycle itself.
+ */
+async function upsertMarketSnapshot(
+  tx: Tx,
+  token: { quoteAddress: string; quoteDecimals: number | null; tokenDecimals: number | null; supply: Prisma.Decimal | null },
+  observation: PumpfunMarketObservation,
+  slot: bigint,
+  sourceIndex: number,
+  blockTime: Date
+): Promise<boolean> {
+  if (token.tokenDecimals === null || token.quoteDecimals === null || token.supply === null) return false;
+  const supply = BigInt(token.supply.toFixed(0));
+  const price = priceQuoteX36(observation).toString();
+  const cap = marketCapQuote(observation, supply).toString();
+  const onCurve = observation.venue === "PUMPFUN_BONDING_CURVE";
+  const progress = onCurve ? observation.progressBps : null;
+  const raised = onCurve ? observation.realQuote.toString() : null;
+  const ready = onCurve && observation.curveComplete;
+
+  const rows = await tx.$executeRaw`
+    INSERT INTO "TokenMarketSnapshot" (
+      id, chain, "tokenAddress", venue, status, "lastError", "blockNumber", "blockTimestamp", "observationIndex",
+      "quoteAddress", "quoteDecimals", "tokenDecimals", "totalSupply", "priceQuoteX36", "marketCapQuote",
+      "liquidityQuote", "bondingProgressBps", "quoteRaised", "readyToGraduate", "valuationBasis", "updatedAt"
+    ) VALUES (
+      gen_random_uuid()::text, 'solana', ${observation.mint}, ${observation.venue}, 'OK', NULL, ${slot}, ${blockTime}, ${sourceIndex},
+      ${token.quoteAddress}, ${token.quoteDecimals}, ${token.tokenDecimals}, ${supply.toString()}::numeric, ${price}::numeric, ${cap}::numeric,
+      ${observation.realQuote.toString()}::numeric, ${progress}, ${raised}::numeric, ${ready}, 'FDV', now()
+    )
+    ON CONFLICT (chain, "tokenAddress") DO UPDATE SET
+      venue = EXCLUDED.venue, status = 'OK', "lastError" = NULL,
+      "blockNumber" = EXCLUDED."blockNumber", "blockTimestamp" = EXCLUDED."blockTimestamp", "observationIndex" = EXCLUDED."observationIndex",
+      "quoteAddress" = EXCLUDED."quoteAddress", "quoteDecimals" = EXCLUDED."quoteDecimals", "tokenDecimals" = EXCLUDED."tokenDecimals",
+      "totalSupply" = EXCLUDED."totalSupply", "priceQuoteX36" = EXCLUDED."priceQuoteX36", "marketCapQuote" = EXCLUDED."marketCapQuote",
+      "liquidityQuote" = EXCLUDED."liquidityQuote",
+      -- A pool trade says nothing about the curve: keep the last curve progress rather than erase it.
+      "bondingProgressBps" = COALESCE(EXCLUDED."bondingProgressBps", "TokenMarketSnapshot"."bondingProgressBps"),
+      "quoteRaised" = COALESCE(EXCLUDED."quoteRaised", "TokenMarketSnapshot"."quoteRaised"),
+      "readyToGraduate" = EXCLUDED."readyToGraduate" OR "TokenMarketSnapshot"."readyToGraduate",
+      "valuationBasis" = 'FDV', "updatedAt" = now()
+    WHERE ("TokenMarketSnapshot"."blockNumber", COALESCE("TokenMarketSnapshot"."observationIndex", -1))
+        < (EXCLUDED."blockNumber", EXCLUDED."observationIndex")
+       OR "TokenMarketSnapshot"."blockNumber" IS NULL`;
+  return rows > 0;
+}
+
 async function insertLifecycleEvent(
   tx: Tx,
   transition: NormalizedLifecycleTransition,
@@ -350,6 +416,7 @@ async function advanceLifecycleState(tx: Tx, transition: NormalizedLifecycleTran
         lastEventSlot: slot,
       },
     });
+    await mirrorPhaseOntoToken(tx, transition);
     return true;
   }
 
@@ -369,5 +436,27 @@ async function advanceLifecycleState(tx: Tx, transition: NormalizedLifecycleTran
       lastEventSlot: slot,
     },
   });
+  await mirrorPhaseOntoToken(tx, transition);
   return true;
+}
+
+/**
+ * Phase 7E.4.4 — carries a PROVEN phase onto the rows discovery reads, so the token list can filter
+ * by lifecycle without knowing Pump.fun's state machine.
+ *
+ *   bonding_complete   CompleteEvent: the curve sold out. NOT graduated — the pool may be several
+ *                      slots away, and until it exists there is nowhere to trade.
+ *   pumpswap           CompletePumpAmmMigrationEvent named the pool: graduated, with that pool.
+ */
+async function mirrorPhaseOntoToken(tx: Tx, transition: NormalizedLifecycleTransition): Promise<void> {
+  const key = { chain_tokenAddress: { chain: transition.chain, tokenAddress: transition.tokenAddress } };
+  if (transition.phase === "pumpswap" && transition.destinationPool) {
+    await tx.discoveredToken.updateMany({
+      where: { chain: transition.chain, tokenAddress: transition.tokenAddress },
+      data: { graduated: true, poolAddress: transition.destinationPool },
+    });
+    await tx.tokenMarketSnapshot.updateMany({ where: key.chain_tokenAddress, data: { graduated: true, readyToGraduate: false, bondingProgressBps: 10_000 } });
+  } else if (transition.phase === "bonding_complete") {
+    await tx.tokenMarketSnapshot.updateMany({ where: key.chain_tokenAddress, data: { readyToGraduate: true, bondingProgressBps: 10_000 } });
+  }
 }

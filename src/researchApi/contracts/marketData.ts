@@ -38,7 +38,7 @@ const RecentTradeSchema = z
     logIndex: z.number().int(),
     block: z.string(),
     timestamp: z.string(),
-    venue: z.enum(["BONDING_CURVE", "UNISWAP_V4"]),
+    venue: z.enum(["BONDING_CURVE", "UNISWAP_V4", "PUMPSWAP"]),
   })
   .openapi("MarketRecentTrade");
 
