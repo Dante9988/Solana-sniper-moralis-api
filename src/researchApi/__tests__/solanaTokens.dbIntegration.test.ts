@@ -94,6 +94,9 @@ describe.skipIf(!RUN_DB_TESTS)("Solana discovery routes — real Postgres + real
     expect(row.market.liquidityUsd).toBeNull();
     expect(row.market.trades1h).toBe(1);
     expect(row.market.volume1hQuote).toBe("85.005359057");
+    // Age comes from the launch's own block time, not from when OnlyPump indexed it.
+    expect(Date.parse(row.launchedAt)).toBeLessThan(Date.now());
+    expect(row.launchedAt).not.toBe(row.observedAt);
     expect(res.body.tokens.every((t: { chain: string }) => t.chain === "solana")).toBe(true);
   });
 

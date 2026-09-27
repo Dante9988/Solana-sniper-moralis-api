@@ -135,6 +135,8 @@ export const DiscoveredTokenSchema = z
     sourceTxHash: z.string(),
     sourceIndex: z.number().int(),
     observedAt: z.string(),
+    /** Phase 7E.4.4 — the launch's own chain time when known (Solana: the CreateEvent's block time). Null elsewhere; use observedAt. */
+    launchedAt: z.string().nullable(),
     graduated: z.boolean(),
     /** V1 only (polled graduationStatus()) — stay null for Pons V2 rows. */
     graduationPairedPrincipal: z.string().nullable(),

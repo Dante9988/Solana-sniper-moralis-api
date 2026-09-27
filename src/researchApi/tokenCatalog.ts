@@ -145,6 +145,7 @@ export interface SerializeTokenContext {
   readonly logoStatus?: ImageStatus;
   readonly market?: TokenMarketSnapshot | null;
   readonly solanaState?: string | null;
+  readonly launchedAt?: Date | null;
 }
 
 export function serializeToken(row: DiscoveredToken, context: SerializeTokenContext = {}) {
@@ -194,6 +195,9 @@ export function serializeToken(row: DiscoveredToken, context: SerializeTokenCont
     sourceTxHash: row.sourceTxHash,
     sourceIndex: row.sourceIndex,
     observedAt: row.observedAt.toISOString(),
+    // Phase 7E.4.4 — the launch's own chain time where it is known. `observedAt` is when OnlyPump
+    // indexed the token, which for a token whose create was backfilled can be long after launch.
+    launchedAt: context.launchedAt?.toISOString() ?? null,
     graduated: row.graduated,
     graduationPairedPrincipal: decimalToString(row.graduationPairedPrincipal),
     graduationThreshold: decimalToString(row.graduationThreshold),
@@ -248,6 +252,19 @@ async function snapshotsFor(db: PrismaClient, rows: Pick<DiscoveredToken, "chain
   }
 }
 
+/** A Solana token's launch time: its CreateEvent's block time, as persisted with the lifecycle event. */
+async function solanaLaunchTimesFor(db: PrismaClient, rows: Pick<DiscoveredToken, "chain" | "tokenAddress">[]): Promise<Map<string, Date>> {
+  const mints = rows.filter((r) => r.chain === "solana").map((r) => r.tokenAddress);
+  if (mints.length === 0) return new Map();
+  try {
+    const created = await db.pumpLifecycleEvent.findMany({ where: { mint: { in: mints }, eventType: "created" }, select: { mint: true, blockTime: true } });
+    return new Map(created.map((c) => [c.mint, c.blockTime]));
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, "launch times unavailable");
+    return new Map();
+  }
+}
+
 async function solanaStatesFor(db: PrismaClient, rows: Pick<DiscoveredToken, "chain" | "tokenAddress">[]): Promise<Map<string, string>> {
   const mints = rows.filter((r) => r.chain === "solana").map((r) => r.tokenAddress);
   if (mints.length === 0) return new Map();
@@ -279,12 +296,13 @@ async function logoStatusesSafely(db: PrismaClient, rows: DiscoveredToken[]): Pr
 
 /** Serializes a set of rows with their snapshots, lifecycle states and logo statuses, in one pass. */
 export async function serializeTokens(db: PrismaClient, rows: DiscoveredToken[]) {
-  const [statuses, snapshots, states] = await Promise.all([logoStatusesSafely(db, rows), snapshotsFor(db, rows), solanaStatesFor(db, rows)]);
+  const [statuses, snapshots, states, launches] = await Promise.all([logoStatusesSafely(db, rows), snapshotsFor(db, rows), solanaStatesFor(db, rows), solanaLaunchTimesFor(db, rows)]);
   return rows.map((row) =>
     serializeToken(row, {
       logoStatus: row.chain === "robinhood" ? statuses.get(row.tokenAddress.toLowerCase()) : undefined,
       market: snapshots.get(keyOf(row.chain, row.tokenAddress)) ?? null,
       solanaState: states.get(row.tokenAddress) ?? null,
+      launchedAt: row.chain === "solana" ? launches.get(row.tokenAddress) ?? null : null,
     })
   );
 }

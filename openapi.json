@@ -357,6 +357,12 @@
           "observedAt": {
             "type": "string"
           },
+          "launchedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "graduated": {
             "type": "boolean"
           },
@@ -435,6 +441,7 @@
           "sourceTxHash",
           "sourceIndex",
           "observedAt",
+          "launchedAt",
           "graduated",
           "graduationPairedPrincipal",
           "graduationThreshold",

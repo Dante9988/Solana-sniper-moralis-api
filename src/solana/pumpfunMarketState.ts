@@ -92,9 +92,13 @@ export function curveProgressBps(reserves: {
 export function observeCurveTrade(envelope: DecodedEventEnvelope): PumpfunMarketObservation | null {
   if (envelope.emittingProgram !== PUMP_PROGRAM_ID || envelope.eventName !== "TradeEvent") return null;
   const event = decodePumpTradeEvent(envelope.payload);
-  const virtualQuote = BigInt(event.virtualSolReserves);
+  // The QUOTE reserve pair, not the SOL pair. A curve quoted in another mint (USDC, a stock token,
+  // another pump token — 26 of the first 352 tokens seen live on 2026-09-27) reports its reserves
+  // only in virtual/real_quote_reserves, with the SOL pair at 0 (pump_trade_non_sol_quote.json). On a
+  // SOL curve both pairs are equal (every SOL fixture), so the quote pair is right for every curve.
+  const virtualQuote = BigInt(event.virtualQuoteReserves);
   const virtualToken = BigInt(event.virtualTokenReserves);
-  const realQuote = BigInt(event.realSolReserves);
+  const realQuote = BigInt(event.realQuoteReserves);
   const realToken = BigInt(event.realTokenReserves);
   if (virtualToken === 0n) return null;
   return {

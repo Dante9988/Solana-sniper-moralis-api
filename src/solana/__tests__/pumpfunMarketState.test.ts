@@ -52,6 +52,26 @@ describe("Pump.fun bonding progress (per-token, from the event's own reserves)",
   });
 });
 
+describe("Pump.fun curves quoted in a non-SOL mint", () => {
+  it("reads the curve from the quote reserves — the SOL reserves are zero there", () => {
+    const tx = load("pump_trade_non_sol_quote.json");
+    const observation = observeCurveTrade(findEvents(tx).find((e) => e.eventName === "TradeEvent")!)!;
+    expect(observation.quoteReserve).toBe(892_043_238_102n);
+    expect(observation.realQuote).toBe(3_611_082_819n);
+    expect(priceQuoteX36(observation)).toBeGreaterThan(0n);
+    // (888,432,155,283 initial virtual quote) — a small, real, non-zero progress.
+    expect(observation.progressBps).toBeGreaterThan(0);
+    expect(observation.progressBps).toBeLessThan(100);
+  });
+
+  it("gives the same answer for a SOL curve, where the two reserve pairs are equal", () => {
+    const tx = load("pump_create_and_dev_buy_with_completion.json");
+    const observation = observeCurveTrade(findEvents(tx).find((e) => e.eventName === "TradeEvent")!)!;
+    expect(observation.quoteReserve).toBe(115_005_359_057n);
+    expect(observation.realQuote).toBe(85_005_359_057n);
+  });
+});
+
 describe("Pump.fun price and market cap", () => {
   it("prices the curve at virtualQuote / virtualToken and values total supply at that price", () => {
     const tx = load("pump_create_and_dev_buy_with_completion.json");
